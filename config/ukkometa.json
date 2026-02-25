@@ -1,0 +1,23 @@
+{
+  "project": "ukkometa",
+  "context": {
+    "siteName": "Ukkometa.fi",
+    "url": "https://ukkometa.fi",
+    "industry": "Web design, SEO, and digital marketing agency — Finland",
+    "audience": "Finnish SMEs, startups, local businesses looking for web design and SEO services",
+    "goal": "First paying client. Rank for Finnish web design and SEO search terms.",
+    "maturity": "pre-launch, not yet indexed"
+  },
+  "target": {
+    "url": "https://ukkometa.fi",
+    "domain": "ukkometa.fi",
+    "role": "target"
+  },
+  "competitors": [
+    { "url": "https://www.tulos.fi", "domain": "tulos.fi", "role": "competitor" },
+    { "url": "https://www.makia.fi", "domain": "makia.fi", "role": "competitor" },
+    { "url": "https://www.reaktor.com", "domain": "reaktor.com", "role": "competitor" },
+    { "url": "https://www.crasman.fi", "domain": "crasman.fi", "role": "competitor" }
+  ],
+  "_note": "Update competitors with actual Finnish web design / SEO agencies you want to track"
+}

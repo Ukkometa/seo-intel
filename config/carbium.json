@@ -1,0 +1,27 @@
+{
+  "project": "carbium",
+  "context": {
+    "siteName": "Carbium",
+    "url": "https://carbium.io",
+    "industry": "Solana blockchain infrastructure — RPC, DEX, data streams, execution layer",
+    "audience": "Solana developers, bot builders, trading teams, DeFi protocols, researchers",
+    "goal": "Position as the execution-layer standard for Solana. Win developers from Helius/QuickNode.",
+    "maturity": "early stage, strong infra, limited SEO presence"
+  },
+  "target": {
+    "url": "https://carbium.io",
+    "domain": "carbium.io",
+    "role": "target"
+  },
+  "competitors": [
+    { "url": "https://helius.dev", "domain": "helius.dev", "role": "competitor" },
+    { "url": "https://www.quicknode.com", "domain": "quicknode.com", "role": "competitor" },
+    { "url": "https://triton.one", "domain": "triton.one", "role": "competitor" },
+    { "url": "https://www.alchemy.com", "domain": "alchemy.com", "role": "competitor" },
+    { "url": "https://birdeye.so", "domain": "birdeye.so", "role": "competitor" },
+    { "url": "https://vybe.network", "domain": "vybe.network", "role": "competitor" },
+    { "url": "https://jup.ag", "domain": "jup.ag", "role": "competitor" },
+    { "url": "https://drift.trade", "domain": "drift.trade", "role": "competitor" },
+    { "url": "https://web3.okx.com", "domain": "web3.okx.com", "role": "competitor" }
+  ]
+}

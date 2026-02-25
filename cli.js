@@ -9,6 +9,7 @@ import chalk from 'chalk';
 import { crawlDomain } from './crawler/index.js';
 import { extractPage } from './extractor/qwen.js';
 import { buildAnalysisPrompt } from './analysis/prompt-builder.js';
+import { getNextCrawlTarget, needsAnalysis, getCrawlStatus, loadAllConfigs } from './scheduler.js';
 import {
   getDb, upsertDomain, upsertPage, insertExtraction,
   insertKeywords, insertHeadings, insertLinks,
@@ -242,6 +243,152 @@ function printAnalysisSummary(a, project) {
       console.log(`  ${chalk.magenta('*')} /${p.slug} — "${p.title}"`);
     });
     console.log();
+  }
+}
+
+// ── RUN (cron-friendly) ────────────────────────────────────────────────────
+program
+  .command('run')
+  .description('Smart cron run: crawl next stale domain, analyze if needed, exit when done')
+  .action(async () => {
+    const db = getDb();
+    const next = getNextCrawlTarget(db);
+
+    if (!next) {
+      console.log(chalk.green('✅ All domains fresh. Nothing to crawl.'));
+      console.log('DONE');
+      process.exit(0);
+    }
+
+    console.log(chalk.bold.cyan(`\n🔍 Cron run: crawling ${next.domain} [${next.role}] (project: ${next.project})\n`));
+
+    // Upsert domain
+    upsertDomain(db, { domain: next.domain, project: next.project, role: next.role });
+    const domainRow = db.prepare('SELECT id FROM domains WHERE domain = ? AND project = ?')
+      .get(next.domain, next.project);
+    const domainId = domainRow.id;
+
+    let pageCount = 0;
+    for await (const page of crawlDomain(next.url)) {
+      const pageRes = upsertPage(db, {
+        domainId,
+        url: page.url,
+        statusCode: page.status,
+        wordCount: page.wordCount,
+        loadMs: page.loadMs,
+        isIndexable: page.isIndexable,
+      });
+      const pageId = pageRes.lastInsertRowid ||
+        db.prepare('SELECT id FROM pages WHERE url = ?').get(page.url)?.id;
+
+      if (!pageId) continue;
+
+      process.stdout.write(chalk.gray(`  [${pageCount + 1}] ${page.url.slice(0, 70)} → extracting...`));
+      const extraction = await extractPage(page);
+      insertExtraction(db, { pageId, data: extraction });
+      insertKeywords(db, pageId, extraction.keywords);
+      insertHeadings(db, pageId, page.headings);
+      insertLinks(db, pageId, page.links);
+      process.stdout.write(chalk.green(' ✓\n'));
+      pageCount++;
+    }
+
+    console.log(chalk.green(`\n✅ Crawled ${pageCount} pages from ${next.domain}`));
+
+    // Check if analysis needed for this project
+    if (needsAnalysis(db, next.project)) {
+      console.log(chalk.yellow(`\n🧠 New crawl data detected — running analysis for ${next.project}...`));
+      await runAnalysis(next.project, db);
+    }
+
+    // Check if more stale domains remain
+    const remaining = getNextCrawlTarget(db);
+    if (remaining) {
+      console.log(chalk.yellow(`\n⏳ More stale domains: ${remaining.domain} (${remaining.project}). Next cron run will handle it.`));
+    } else {
+      console.log(chalk.bold.green('\n🎉 All domains are now fresh!'));
+    }
+
+    process.exit(0);
+  });
+
+// ── STATUS ─────────────────────────────────────────────────────────────────
+program
+  .command('status')
+  .description('Show crawl freshness status for all domains')
+  .action(() => {
+    const db = getDb();
+    const rows = getCrawlStatus(db);
+
+    if (!rows.length) {
+      console.log(chalk.yellow('No domains configured. Check config/ directory.'));
+      return;
+    }
+
+    console.log(chalk.bold.cyan('\n📊 SEO Intel — Crawl Status\n'));
+    console.log('Project      Domain                         Role        Last Crawled  Age    Window  Status');
+    console.log('─'.repeat(100));
+    for (const r of rows) {
+      const daysStr = r.daysAgo === '—' ? '—      ' : `${r.daysAgo}d ago `;
+      console.log(
+        `${r.project.padEnd(12)} ${r.domain.padEnd(30)} ${r.role.padEnd(11)} ${r.lastCrawled.padEnd(13)} ${daysStr.padEnd(7)} ${r.freshnessWindow.padEnd(7)} ${r.status}`
+      );
+    }
+    console.log();
+  });
+
+// ── Shared analysis runner ─────────────────────────────────────────────────
+async function runAnalysis(project, db) {
+  const configs = loadAllConfigs();
+  const config = configs.find(c => c.project === project);
+  if (!config) return;
+
+  const summary       = getCompetitorSummary(db, project);
+  const keywordMatrix = getKeywordMatrix(db, project);
+  const headings      = getHeadingStructure(db, project);
+
+  const target      = summary.find(s => s.role === 'target');
+  const competitors = summary.filter(s => s.role === 'competitor');
+  if (!target) return;
+
+  target.domain = config.target.domain;
+  competitors.forEach((c, i) => { c.domain = config.competitors[i]?.domain || c.domain; });
+
+  const prompt = buildAnalysisPrompt({
+    project, target, competitors, keywordMatrix,
+    headingStructure: headings, context: config.context,
+  });
+
+  writeFileSync(join(__dirname, `reports/${project}-prompt-${Date.now()}.txt`), prompt, 'utf8');
+
+  const result = await callGemini(prompt);
+  if (!result) { console.error(chalk.red('Gemini returned no response.')); return; }
+
+  try {
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    const analysis = JSON.parse(jsonMatch[0]);
+    const outPath = join(__dirname, `reports/${project}-analysis-${Date.now()}.json`);
+    writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
+
+    // Save to DB
+    db.prepare(`
+      INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, raw)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      project, Date.now(), 'gemini',
+      JSON.stringify(analysis.keyword_gaps || []),
+      JSON.stringify(analysis.long_tails || []),
+      JSON.stringify(analysis.quick_wins || []),
+      JSON.stringify(analysis.new_pages || []),
+      JSON.stringify(analysis.content_gaps || []),
+      JSON.stringify(analysis.positioning || {}),
+      result,
+    );
+
+    printAnalysisSummary(analysis, project);
+    console.log(chalk.green(`\n✅ Analysis saved: ${outPath}`));
+  } catch (err) {
+    console.error(chalk.red(`Could not parse analysis JSON: ${err.message}`));
   }
 }
 

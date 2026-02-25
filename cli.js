@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import { program } from 'commander';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
@@ -163,7 +163,6 @@ program
   .command('report <project>')
   .description('Print latest analysis as readable markdown')
   .action((project) => {
-    const { readdirSync } = await import('fs');
     const files = readdirSync(join(__dirname, 'reports'))
       .filter(f => f.startsWith(`${project}-analysis-`))
       .sort().reverse();

@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { sanitize, extractSelective } from './sanitize.js';
+import { checkRobots, getCrawlDelay } from './robots.js';
 
 const CRAWL_DELAY  = parseInt(process.env.CRAWL_DELAY_MS  || '1500');
 const MAX_PAGES    = parseInt(process.env.CRAWL_MAX_PAGES  || '50');
@@ -28,6 +29,13 @@ export async function* crawlDomain(startUrl, opts = {}) {
       const url = queue.shift();
       if (visited.has(url)) continue;
       visited.add(url);
+
+      // Respect robots.txt before fetching
+      const { allowed, crawlDelayMs } = await checkRobots(url);
+      if (!allowed) {
+        console.log(`[robots] Skipping disallowed: ${url}`);
+        continue;
+      }
 
       const page = await context.newPage();
       const t0 = Date.now();
@@ -146,8 +154,8 @@ export async function* crawlDomain(startUrl, opts = {}) {
         await page.close().catch(() => {});
       }
 
-      // Polite crawl delay
-      await new Promise(r => setTimeout(r, CRAWL_DELAY));
+      // Polite crawl delay — honour robots.txt Crawl-delay, never less than 1.5s
+      await new Promise(r => setTimeout(r, Math.max(crawlDelayMs, CRAWL_DELAY)));
     }
   } finally {
     await browser.close();

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -9,9 +9,9 @@ let _db = null;
 
 export function getDb(dbPath = './seo-intel.db') {
   if (_db) return _db;
-  _db = new Database(dbPath);
-  _db.pragma('journal_mode = WAL');
-  _db.pragma('foreign_keys = ON');
+  _db = new DatabaseSync(dbPath);
+  _db.exec('PRAGMA journal_mode = WAL');
+  _db.exec('PRAGMA foreign_keys = ON');
 
   // Apply schema
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf8');
@@ -55,31 +55,30 @@ export function insertExtraction(db, { pageId, data }) {
 }
 
 export function insertKeywords(db, pageId, keywords) {
-  const stmt = db.prepare(`
-    INSERT INTO keywords (page_id, keyword, location) VALUES (?, ?, ?)
-  `);
-  const insertMany = db.transaction((kws) => {
-    for (const kw of kws) stmt.run(pageId, kw.keyword.toLowerCase(), kw.location);
-  });
-  insertMany(keywords);
+  const stmt = db.prepare(`INSERT INTO keywords (page_id, keyword, location) VALUES (?, ?, ?)`);
+  db.exec('BEGIN');
+  try {
+    for (const kw of keywords) stmt.run(pageId, kw.keyword.toLowerCase(), kw.location);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
 export function insertHeadings(db, pageId, headings) {
   const stmt = db.prepare(`INSERT INTO headings (page_id, level, text) VALUES (?, ?, ?)`);
-  const insertMany = db.transaction((hs) => {
-    for (const h of hs) stmt.run(pageId, h.level, h.text);
-  });
-  insertMany(headings);
+  db.exec('BEGIN');
+  try {
+    for (const h of headings) stmt.run(pageId, h.level, h.text);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
 export function insertLinks(db, sourceId, links) {
-  const stmt = db.prepare(`
-    INSERT INTO links (source_id, target_url, anchor_text, is_internal) VALUES (?, ?, ?, ?)
-  `);
-  const insertMany = db.transaction((ls) => {
-    for (const l of ls) stmt.run(sourceId, l.url, l.anchor, l.isInternal ? 1 : 0);
-  });
-  insertMany(links);
+  const stmt = db.prepare(`INSERT INTO links (source_id, target_url, anchor_text, is_internal) VALUES (?, ?, ?, ?)`);
+  db.exec('BEGIN');
+  try {
+    for (const l of links) stmt.run(sourceId, l.url, l.anchor, l.isInternal ? 1 : 0);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
 export function getCompetitorSummary(db, project) {

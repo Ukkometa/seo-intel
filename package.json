@@ -1,0 +1,19 @@
+{
+  "name": "seo-intel",
+  "version": "0.1.0",
+  "description": "Local Ahrefs-style SEO competitor intelligence. Crawl → SQLite → cloud analysis.",
+  "type": "module",
+  "scripts": {
+    "crawl": "node cli.js crawl",
+    "analyze": "node cli.js analyze",
+    "report": "node cli.js report"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "playwright": "^1.43.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0"
+  }
+}

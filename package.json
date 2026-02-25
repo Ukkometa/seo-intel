@@ -9,7 +9,6 @@
     "report": "node cli.js report"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
     "playwright": "^1.43.0",
     "dotenv": "^16.4.5",
     "node-fetch": "^3.3.2",

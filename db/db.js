@@ -28,28 +28,34 @@ export function upsertDomain(db, { domain, project, role }) {
   `).run(domain, project, role, Date.now(), Date.now());
 }
 
-export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable }) {
+export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable, clickDepth = 0, publishedDate = null, modifiedDate = null }) {
   return db.prepare(`
-    INSERT INTO pages (domain_id, url, crawled_at, status_code, word_count, load_ms, is_indexable)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pages (domain_id, url, crawled_at, status_code, word_count, load_ms, is_indexable, click_depth, published_date, modified_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(url) DO UPDATE SET
-      crawled_at = excluded.crawled_at,
-      status_code = excluded.status_code,
-      word_count = excluded.word_count,
-      load_ms = excluded.load_ms
-  `).run(domainId, url, Date.now(), statusCode, wordCount, loadMs, isIndexable ? 1 : 0);
+      crawled_at     = excluded.crawled_at,
+      status_code    = excluded.status_code,
+      word_count     = excluded.word_count,
+      load_ms        = excluded.load_ms,
+      click_depth    = excluded.click_depth,
+      published_date = excluded.published_date,
+      modified_date  = excluded.modified_date
+  `).run(domainId, url, Date.now(), statusCode, wordCount, loadMs, isIndexable ? 1 : 0, clickDepth, publishedDate, modifiedDate);
 }
 
 export function insertExtraction(db, { pageId, data }) {
   return db.prepare(`
     INSERT OR REPLACE INTO extractions
-      (page_id, title, meta_desc, h1, product_type, pricing_tier, cta_primary, tech_stack, schema_types, extracted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (page_id, title, meta_desc, h1, product_type, pricing_tier, cta_primary,
+       tech_stack, schema_types, search_intent, primary_entities, extracted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     pageId, data.title, data.meta_desc, data.h1,
     data.product_type, data.pricing_tier, data.cta_primary,
     JSON.stringify(data.tech_stack || []),
     JSON.stringify(data.schema_types || []),
+    data.search_intent || 'Informational',
+    JSON.stringify(data.primary_entities || []),
     Date.now()
   );
 }

@@ -58,11 +58,14 @@ program
           wordCount: page.wordCount,
           loadMs: page.loadMs,
           isIndexable: page.isIndexable,
+          clickDepth: page.depth ?? 0,
+          publishedDate: page.publishedDate || null,
+          modifiedDate: page.modifiedDate || null,
         });
         const pageId = pageRes.lastInsertRowid || db.prepare('SELECT id FROM pages WHERE url = ?').get(page.url).id;
 
         // Extract with Qwen
-        process.stdout.write(chalk.gray(`  [${pageCount + 1}] ${page.url.slice(0, 80)} → extracting...`));
+        process.stdout.write(chalk.gray(`  [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 75)} → extracting...`));
         const extraction = await extractPage(page);
         insertExtraction(db, { pageId, data: extraction });
         insertKeywords(db, pageId, extraction.keywords);
@@ -276,13 +279,16 @@ program
         wordCount: page.wordCount,
         loadMs: page.loadMs,
         isIndexable: page.isIndexable,
+        clickDepth: page.depth ?? 0,
+        publishedDate: page.publishedDate || null,
+        modifiedDate: page.modifiedDate || null,
       });
       const pageId = pageRes.lastInsertRowid ||
         db.prepare('SELECT id FROM pages WHERE url = ?').get(page.url)?.id;
 
       if (!pageId) continue;
 
-      process.stdout.write(chalk.gray(`  [${pageCount + 1}] ${page.url.slice(0, 70)} → extracting...`));
+      process.stdout.write(chalk.gray(`  [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 65)} → extracting...`));
       const extraction = await extractPage(page);
       insertExtraction(db, { pageId, data: extraction });
       insertKeywords(db, pageId, extraction.keywords);

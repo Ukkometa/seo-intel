@@ -4,6 +4,7 @@ import { checkRobots, getCrawlDelay } from './robots.js';
 
 const CRAWL_DELAY  = parseInt(process.env.CRAWL_DELAY_MS  || '1500');
 const MAX_PAGES    = parseInt(process.env.CRAWL_MAX_PAGES  || '50');
+const MAX_DEPTH    = parseInt(process.env.CRAWL_MAX_DEPTH  || '3');   // BFS depth limit
 const TIMEOUT      = parseInt(process.env.CRAWL_TIMEOUT_MS || '15000');
 
 /**
@@ -15,7 +16,8 @@ const TIMEOUT      = parseInt(process.env.CRAWL_TIMEOUT_MS || '15000');
 export async function* crawlDomain(startUrl, opts = {}) {
   const base = new URL(startUrl);
   const visited = new Set();
-  const queue = [startUrl];
+  // BFS queue: each entry carries {url, depth}
+  const queue = [{ url: startUrl, depth: 0 }];
   let count = 0;
 
   const browser = await chromium.launch({ headless: true });
@@ -26,7 +28,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
 
   try {
     while (queue.length > 0 && count < MAX_PAGES) {
-      const url = queue.shift();
+      const { url, depth } = queue.shift();
       if (visited.has(url)) continue;
       visited.add(url);
 
@@ -118,21 +120,66 @@ export async function* crawlDomain(startUrl, opts = {}) {
         const robotsMeta = await page.$eval('meta[name="robots"]', el => el.content).catch(() => '');
         const isIndexable = !robotsMeta.toLowerCase().includes('noindex');
 
-        // Queue new internal URLs
-        for (const link of internalLinks) {
-          try {
-            const u = new URL(link.url);
-            // Skip non-HTML resources
-            if (/\.(pdf|png|jpg|jpeg|gif|svg|css|js|woff|ico)$/i.test(u.pathname)) continue;
-            if (!visited.has(link.url) && !queue.includes(link.url)) {
-              queue.push(link.url);
-            }
-          } catch {}
+        // Extract published / modified dates from meta tags and JSON-LD
+        const publishedDate = await page.evaluate(() => {
+          const metas = [
+            'meta[property="article:published_time"]',
+            'meta[name="date"]',
+            'meta[name="pubdate"]',
+            'meta[itemprop="datePublished"]',
+          ];
+          for (const sel of metas) {
+            const el = document.querySelector(sel);
+            if (el?.content) return el.content;
+          }
+          // JSON-LD fallback
+          for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+            try {
+              const d = JSON.parse(el.textContent);
+              if (d.datePublished) return d.datePublished;
+            } catch {}
+          }
+          return null;
+        }).catch(() => null);
+
+        const modifiedDate = await page.evaluate(() => {
+          const metas = [
+            'meta[property="article:modified_time"]',
+            'meta[name="last-modified"]',
+            'meta[itemprop="dateModified"]',
+          ];
+          for (const sel of metas) {
+            const el = document.querySelector(sel);
+            if (el?.content) return el.content;
+          }
+          for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+            try {
+              const d = JSON.parse(el.textContent);
+              if (d.dateModified) return d.dateModified;
+            } catch {}
+          }
+          return null;
+        }).catch(() => null);
+
+        // Queue new internal URLs (BFS — only if within depth limit)
+        if (depth < MAX_DEPTH) {
+          for (const link of internalLinks) {
+            try {
+              const u = new URL(link.url);
+              // Skip non-HTML resources
+              if (/\.(pdf|png|jpg|jpeg|gif|svg|css|js|woff|ico)$/i.test(u.pathname)) continue;
+              const alreadyQueued = queue.some(q => q.url === link.url);
+              if (!visited.has(link.url) && !alreadyQueued) {
+                queue.push({ url: link.url, depth: depth + 1 });
+              }
+            } catch {}
+          }
         }
 
         count++;
         yield {
           url,
+          depth,
           status,
           loadMs,
           wordCount,
@@ -146,6 +193,8 @@ export async function* crawlDomain(startUrl, opts = {}) {
           bodyText: sanitize(bodyText, 2000),
           schemaTypes,
           vitals,
+          publishedDate,
+          modifiedDate,
         };
 
       } catch (err) {

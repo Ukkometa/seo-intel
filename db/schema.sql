@@ -10,29 +10,34 @@ CREATE TABLE IF NOT EXISTS domains (
 );
 
 CREATE TABLE IF NOT EXISTS pages (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  domain_id   INTEGER NOT NULL REFERENCES domains(id),
-  url         TEXT UNIQUE NOT NULL,
-  crawled_at  INTEGER NOT NULL,
-  status_code INTEGER,
-  word_count  INTEGER,
-  load_ms     INTEGER,
-  is_indexable INTEGER DEFAULT 1,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain_id     INTEGER NOT NULL REFERENCES domains(id),
+  url           TEXT UNIQUE NOT NULL,
+  crawled_at    INTEGER NOT NULL,
+  status_code   INTEGER,
+  word_count    INTEGER,
+  load_ms       INTEGER,
+  is_indexable  INTEGER DEFAULT 1,
+  click_depth   INTEGER DEFAULT 0,   -- BFS depth from homepage (0 = homepage)
+  published_date TEXT,               -- ISO string or null
+  modified_date  TEXT,               -- ISO string or null
   FOREIGN KEY (domain_id) REFERENCES domains(id)
 );
 
 CREATE TABLE IF NOT EXISTS extractions (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  page_id         INTEGER UNIQUE NOT NULL REFERENCES pages(id),
-  title           TEXT,
-  meta_desc       TEXT,
-  h1              TEXT,
-  product_type    TEXT,
-  pricing_tier    TEXT,  -- 'free' | 'freemium' | 'paid' | 'enterprise' | 'none'
-  cta_primary     TEXT,
-  tech_stack      TEXT,  -- JSON array
-  schema_types    TEXT,  -- JSON array (Article, Product, FAQ, etc.)
-  extracted_at    INTEGER NOT NULL
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id          INTEGER UNIQUE NOT NULL REFERENCES pages(id),
+  title            TEXT,
+  meta_desc        TEXT,
+  h1               TEXT,
+  product_type     TEXT,
+  pricing_tier     TEXT,             -- 'free' | 'freemium' | 'paid' | 'enterprise' | 'none'
+  cta_primary      TEXT,
+  tech_stack       TEXT,             -- JSON array
+  schema_types     TEXT,             -- JSON array (Article, Product, FAQ, etc.)
+  search_intent    TEXT,             -- 'Informational' | 'Navigational' | 'Commercial' | 'Transactional'
+  primary_entities TEXT,             -- JSON array of 3-7 core concept strings
+  extracted_at     INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS headings (
@@ -43,10 +48,12 @@ CREATE TABLE IF NOT EXISTS headings (
 );
 
 CREATE TABLE IF NOT EXISTS keywords (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  page_id   INTEGER NOT NULL REFERENCES pages(id),
-  keyword   TEXT NOT NULL,
-  location  TEXT NOT NULL  -- 'title' | 'h1' | 'h2' | 'meta' | 'body'
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id             INTEGER NOT NULL REFERENCES pages(id),
+  keyword             TEXT NOT NULL,
+  location            TEXT NOT NULL,  -- 'title' | 'h1' | 'h2' | 'meta' | 'body'
+  search_volume       INTEGER,        -- monthly search volume (null until API populated)
+  keyword_difficulty  INTEGER         -- 0-100 (null until API populated)
 );
 
 CREATE TABLE IF NOT EXISTS links (

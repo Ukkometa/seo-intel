@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 
 const OLLAMA_URL   = process.env.OLLAMA_URL   || 'http://192.168.0.227:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen3:8b';
-const OLLAMA_CTX   = parseInt(process.env.OLLAMA_CTX || '16384');
+const OLLAMA_CTX   = parseInt(process.env.OLLAMA_CTX || '8192');
 
 const EXTRACTION_SCHEMA = {
   title:            'string — page title (clean, no brand suffix)',

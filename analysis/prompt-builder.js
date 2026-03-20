@@ -41,6 +41,18 @@ Respond in structured JSON matching the output schema at the end of this prompt.
 **Business goal:** ${context.goal}
 **Current SEO maturity:** ${context.maturity || 'early stage'}
 
+### Site Architecture
+${context.site_architecture ? `
+${context.site_architecture.note}
+
+Available publishing properties (use these when recommending where to place content):
+${context.site_architecture.properties.map(p =>
+  `- **${p.id}** (${p.url}, platform: ${p.platform})\n  Best for: ${p.best_for}\n  Difficulty: ${p.difficulty}${p.seo_note ? `\n  SEO note: ${p.seo_note}` : ''}`
+).join('\n')}
+
+For each content recommendation, rank ALL available properties as placement options (1st = best fit, 2nd = acceptable, 3rd = fallback). Consider: SEO impact, publishing difficulty, content type fit, and the subdomain authority caveat above.
+` : 'No site architecture configured — recommend generic URL slugs.'}
+
 ---
 
 ## TARGET SITE DATA
@@ -131,7 +143,7 @@ Respond ONLY with valid JSON in this exact structure:
 {
   "keyword_gaps": [
     {
-      "keyword": "string",
+      "keyword": "string — 2-4 word SEO keyword phrase (NOT single words, e.g. 'solana rpc provider', 'blockchain data api')",
       "intent": "informational|commercial|navigational|transactional",
       "competitor_count": number,
       "difficulty": "low|medium|high",
@@ -146,7 +158,12 @@ Respond ONLY with valid JSON in this exact structure:
       "intent": "string",
       "page_type": "blog|landing|doc|faq|comparison|glossary",
       "priority": "high|medium|low",
-      "notes": "string"
+      "notes": "string",
+      "placement": [
+        { "rank": 1, "property": "main|blog|docs", "url": "string — full suggested URL or path", "reason": "string" },
+        { "rank": 2, "property": "main|blog|docs", "url": "string", "reason": "string" },
+        { "rank": 3, "property": "main|blog|docs", "url": "string", "reason": "string" }
+      ]
     }
   ],
   "content_gaps": [
@@ -168,12 +185,16 @@ Respond ONLY with valid JSON in this exact structure:
   ],
   "new_pages": [
     {
-      "slug": "string",
       "title": "string",
       "target_keyword": "string",
       "content_angle": "string",
       "why": "string",
-      "priority": "high|medium|low"
+      "priority": "high|medium|low",
+      "placement": [
+        { "rank": 1, "property": "main|blog|docs", "url": "string — full suggested URL e.g. blog.carbium.io/helius-alternative", "reason": "string — why this is the best fit" },
+        { "rank": 2, "property": "main|blog|docs", "url": "string", "reason": "string" },
+        { "rank": 3, "property": "main|blog|docs", "url": "string", "reason": "string" }
+      ]
     }
   ],
   "technical_gaps": [

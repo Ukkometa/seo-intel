@@ -1,0 +1,21 @@
+{
+  "project": "risunouto",
+  "context": {
+    "siteName": "Risunouto.fi",
+    "url": "https://risunouto.fi",
+    "industry": "Kotipuutarhanhoito ja puutarhapalvelut Suomessa",
+    "audience": "Suomalaiset kotipuutarhurit, mökinomistajat, kiinteistönomistajat",
+    "goal": "Olla paras suomalainen puutarhapalveluiden hakukonenäkyvyydessä",
+    "maturity": "early stage, limited SEO presence"
+  },
+  "target": {
+    "url": "https://risunouto.fi",
+    "domain": "risunouto.fi",
+    "role": "target"
+  },
+  "competitors": [
+    { "url": "https://www.hakevuori.fi", "domain": "hakevuori.fi", "role": "competitor" },
+    { "url": "https://www.koura-autot.fi", "domain": "koura-autot.fi", "role": "competitor" },
+    { "url": "https://www.pihasiistiksi.fi", "domain": "pihasiistiksi.fi", "role": "competitor" }
+  ]
+}

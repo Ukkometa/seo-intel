@@ -149,11 +149,15 @@ AVAILABLE COMMANDS (run these from ${ROOT}):
 - node cli.js setup-web → opens web wizard at http://localhost:3000/setup
 - node cli.js crawl <project> → crawl domains
 - node cli.js extract <project> → extract with local AI
+- node cli.js analyze <project> → run gap analysis
 - node cli.js html <project> → generate dashboard
 - node cli.js serve → start dashboard server
 - node cli.js status → show system status
 - node cli.js competitors <project> → manage domains
 - node cli.js auth → show auth connections
+- node cli.js export-actions <project> [--scope technical|competitive|suggestive|all] [--format json|brief] → agentic export (technical free, rest Solo)
+- node cli.js competitive-actions <project> [--vs domain] [--format json|brief] → competitive gap export (Solo)
+- node cli.js suggest-usecases <project> [--scope docs|product-pages|onboarding|all] [--format json|brief] → suggest what to build (Solo)
 
 TO INSTALL THINGS:
 - npm install (in ${ROOT}) → install Node dependencies

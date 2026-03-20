@@ -10,168 +10,138 @@ description: >
 
 # SEO Intel
 
-Local-first SEO competitive intelligence. Crawl → Extract → Analyze → Act.
+Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
+
+**OpenClaw is the recommended primary experience.** Standalone local Qwen handles extraction fine. But analysis, gap synthesis, and "what should I build next" reasoning needs a real model — Opus, Sonnet, GPT — and OpenClaw routes that automatically. No API keys to manage, no model config, just results.
 
 ## Install
 
 ```bash
 npm i -g seo-intel
-seo-intel setup
+seo-intel setup      # detects OpenClaw automatically, configures everything
 ```
-
-OpenClaw users: setup auto-detects OpenClaw and routes AI through connected models.
 
 ## Pipeline
 
-| Stage | Command | Gate | Engine |
+```
+Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → Export Actions → Implement
+```
+
+| Stage | Command | Gate | Best engine |
 |---|---|---|---|
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
-| Extract | `seo-intel extract <project>` | Solo | Ollama (local) |
-| Analyze | `seo-intel analyze <project>` | Solo | Cloud AI or local |
+| Extract | `seo-intel extract <project>` | Solo | Ollama/Qwen local |
+| Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
+| Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (full) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (limited) / Solo (full) | HTML |
-| Export | `seo-intel export-actions <project>` | Free (technical) / Solo (full) | SQL + heuristics |
 
 ## Core Commands
 
 ```bash
-seo-intel setup                    # First-time wizard
+seo-intel setup                    # First-time wizard — detects OpenClaw
 seo-intel crawl <project>          # Crawl target + competitors
-seo-intel extract <project>        # AI extraction (needs Ollama)
-seo-intel analyze <project>        # Gap analysis
+seo-intel extract <project>        # Local AI extraction (Ollama)
+seo-intel analyze <project>        # Strategic gap analysis
 seo-intel html <project>           # Generate dashboard
 seo-intel serve                    # Web dashboard at localhost:3000
-seo-intel status                   # Crawl freshness + data summary
-seo-intel guide                    # Interactive chapter-based guide
+seo-intel status                   # Data freshness + summary
+seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel export <project>         # Raw data export (JSON/CSV)
 ```
 
-## Agentic Exports (The Power Feature)
+## Agentic Export Commands
 
-Three export scopes that turn crawl data into actionable intelligence:
+These turn crawl data into prioritized implementation briefs. The right inputs for coding agents, docs writers, or any downstream workflow.
 
-### Technical SEO
+### Technical Audit (Free tier)
 ```bash
 seo-intel export-actions <project> --scope technical
 seo-intel export-actions <project> --scope technical --format json
 ```
-Works on FREE tier. Finds: missing schemas, broken links, orphan pages, thin content, deep pages, missing H1/meta, canonical issues.
+Finds: missing schemas, broken links, orphan pages, thin content, deep pages, missing H1/meta, canonical issues. Works without AI — pure crawl data.
 
-### Competitive SEO
+### Competitive Gaps (Solo)
 ```bash
-seo-intel export-actions <project> --scope competitive
-seo-intel export-actions <project> --scope competitive --vs helius.dev
-seo-intel competitive-actions <project>  # shortcut
+seo-intel competitive-actions <project>
+seo-intel competitive-actions <project> --vs helius.dev
+seo-intel competitive-actions <project> --format json
 ```
-Solo tier. Finds: content gaps, keyword gaps, schema coverage delta, topic authority gaps, missing trust pages.
+Finds: content gaps, keyword gaps, schema coverage delta, topic authority gaps, missing trust/comparison pages. Needs extraction + analysis to have run first.
 
-### Suggestive SEO
+### Suggest What to Build (Solo)
 ```bash
 seo-intel suggest-usecases <project>
 seo-intel suggest-usecases <project> --scope docs
 seo-intel suggest-usecases <project> --scope product-pages
 seo-intel suggest-usecases <project> --scope onboarding
 ```
-Solo tier. Infers what pages/features SHOULD exist based on competitor patterns. Scopes: docs, product-pages, dashboards, onboarding, all.
+Infers what pages, docs, or features should exist based on competitor patterns. The differentiating feature — uses the local intelligence DB to reason about what's missing, not just what's broken.
 
-### Output Formats
-- `--format brief` (default) → human/agent-readable markdown
-- `--format json` → structured JSON for automation pipelines
-
-## Suggestive SEO Pattern (Agent Workflow)
-
-This is the key differentiated workflow. When the user wants to improve their site based on competitor intelligence:
-
-### Step 1 — Ensure fresh data
+### Combined
 ```bash
-seo-intel crawl <project>     # if stale (check with `seo-intel status`)
-seo-intel extract <project>   # if extractions outdated
-seo-intel analyze <project>   # regenerate analysis
+seo-intel export-actions <project> --scope all --format json
+seo-intel export-actions <project> --scope all --format brief
 ```
 
-### Step 2 — Generate action exports
-```bash
-seo-intel export-actions <project> --format json --output /tmp/actions.json
-```
-Read the output. It contains prioritized actions with evidence and implementation hints.
+## OpenClaw Workflow (Recommended)
 
-### Step 3 — Cross-reference with workspace
-Before implementing, check what already exists:
-- Read the user's project docs/pages to avoid duplicating existing content
-- Check MEMORY.md for recently completed work
-- Filter actions to only what's genuinely missing
+When running inside OpenClaw, the full intelligence loop becomes conversational:
 
-### Step 4 — Generate implementation briefs
-For each high-priority action, create a focused brief:
-- What to build (page title, slug, structure)
-- Why it matters (competitor evidence, SEO value)
-- Content outline (headings, key points to cover)
-- Where it goes (file path, navigation placement)
+### "What should I build next?"
+1. Run `seo-intel suggest-usecases <project> --format json`
+2. Read the output — it contains prioritized suggestions with competitor evidence
+3. Cross-reference against workspace context (what's already built)
+4. Generate implementation briefs for the top actions
+5. Spawn a coding/docs agent to execute
+6. Re-crawl after shipping to measure delta
 
-### Step 5 — Execute or delegate
-Either implement directly or spawn a coding agent with the brief.
+### "Where are my biggest competitive gaps?"
+1. Run `seo-intel competitive-actions <project> --format json`
+2. Analyze: which gaps are highest priority, which competitors are strongest in each area
+3. Map gaps to existing projects/docs/roadmap
+4. Produce a prioritized action plan
 
-### Step 6 — Re-crawl and measure
-After implementation, re-crawl to measure the delta. The loop: crawl → analyze → export → implement → re-crawl.
+### "What's technically broken on my site?"
+1. Run `seo-intel export-actions <project> --scope technical --format json`
+2. Triage by priority: critical → high → medium
+3. Assign quick wins (missing H1, meta) vs structural work (canonical chains, orphans)
 
-## Direct DB Access (Advanced)
+## Direct DB Queries (Advanced)
 
-The SQLite database at `<project-dir>/seo-intel.db` can be queried directly for custom analysis.
-See [references/db-schema.md](references/db-schema.md) for table definitions.
+The SQLite DB at `~/Desktop/Spiderbrain/seo-intel/seo-intel.db` can be queried directly for custom reasoning. See [references/db-schema.md](references/db-schema.md).
 
-Useful queries:
+Key pattern — what competitors have that target doesn't:
 ```sql
--- Pages competitor has that target doesn't (by heading topics)
+-- Topic clusters in competitor pages missing from target
 SELECT DISTINCT h.text FROM headings h
 JOIN pages p ON p.id = h.page_id
 JOIN domains d ON d.id = p.domain_id
-WHERE d.role = 'competitor' AND h.level <= 2
+WHERE d.role = 'competitor' AND d.project = 'myproject' AND h.level <= 2
 AND h.text NOT IN (
   SELECT h2.text FROM headings h2
   JOIN pages p2 ON p2.id = h2.page_id
   JOIN domains d2 ON d2.id = p2.domain_id
-  WHERE d2.role = 'target' AND h2.level <= 2
-);
-
--- Schema types competitors use but target doesn't
-SELECT DISTINCT ps.schema_type FROM page_schemas ps
-JOIN pages p ON p.id = ps.page_id
-JOIN domains d ON d.id = p.domain_id
-WHERE d.role = 'competitor' AND d.project = ?
-AND ps.schema_type NOT IN (
-  SELECT ps2.schema_type FROM page_schemas ps2
-  JOIN pages p2 ON p2.id = ps2.page_id
-  JOIN domains d2 ON d2.id = p2.domain_id
-  WHERE d2.role = 'target' AND d2.project = ?
+  WHERE d2.role = 'target' AND d2.project = 'myproject' AND h2.level <= 2
 );
 ```
 
 ## Cron Scheduling
 
-For ongoing monitoring, set up daily crawls and weekly analysis:
-
 ```bash
-# Daily crawl at 14:00
+# Daily crawl (14:00 recommended)
 seo-intel crawl <project>
 
-# Weekly analysis + brief on Sundays
-seo-intel analyze <project>
-seo-intel export-actions <project> --format brief
+# Weekly analysis + brief (Sunday)
+seo-intel analyze <project> && seo-intel export-actions <project> --format brief
 ```
 
-Use OpenClaw cron for scheduling. The weekly brief makes an excellent proactive notification.
+Wire via OpenClaw cron for proactive weekly briefings delivered to your chat.
 
-## Tier Summary
+## Pricing
 
-| Feature | Free | Solo |
+| Tier | Price | Features |
 |---|---|---|
-| Crawl (unlimited) | ✅ | ✅ |
-| Raw data export | ✅ | ✅ |
-| Technical SEO export | ✅ | ✅ |
-| Crawl-only dashboard | ✅ | ✅ |
-| AI extraction | ❌ | ✅ |
-| AI analysis | ❌ | ✅ |
-| Full dashboard | ❌ | ✅ |
-| Competitive exports | ❌ | ✅ |
-| Suggestive SEO | ❌ | ✅ |
+| Free | €0 | Unlimited crawl, technical exports, crawl-only dashboard |
+| Solo | €19.99/mo or €199/yr | Full AI pipeline, all exports, full dashboard |
 
-Solo: €19.99/mo or €199/yr at ukkometa.fi/seo-intel, or $9.99/mo at froggo.pro.
+Solo via [ukkometa.fi/seo-intel](https://ukkometa.fi/seo-intel) or [froggo.pro](https://froggo.pro) ($9.99/mo).

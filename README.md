@@ -46,51 +46,45 @@ seo-intel setup              # agent-powered if OpenClaw is running
 ## Usage
 
 ```bash
-# Crawl your site + competitors
-seo-intel crawl myproject
+# Full pipeline
+seo-intel crawl myproject       # crawl target + competitors
+seo-intel extract myproject     # local AI extraction (Ollama)
+seo-intel analyze myproject     # competitive gap analysis
+seo-intel html myproject        # generate dashboard
+seo-intel serve                 # open dashboard at localhost:3000
 
-# Extract structured data with local AI
-seo-intel extract myproject
-
-# Run competitive analysis (cloud AI)
-seo-intel analyze myproject
-
-# Generate HTML dashboard
-seo-intel html myproject
-
-# Start dashboard server
-seo-intel serve
-
-# Full pipeline in one command
-seo-intel run myproject
-
-# Check system status
-seo-intel status
+# Agentic exports — turn data into implementation briefs
+seo-intel export-actions myproject --scope technical   # free: broken links, missing schemas, orphans
+seo-intel export-actions myproject --scope all         # full: technical + competitive + suggestive
+seo-intel competitive-actions myproject --vs rival.com # what competitors have that you don't
+seo-intel suggest-usecases myproject --scope docs      # infer what pages/docs should exist
 ```
 
 ## Commands
 
-### Free (Open Source)
+### Free
 
 | Command | Description |
 |---------|-------------|
-| `setup` | Interactive wizard — uses OpenClaw agent if available |
+| `setup` | First-time wizard — auto-detects OpenClaw for agent-powered setup |
 | `crawl <project>` | Crawl target + competitor sites |
-| `extract <project>` | Extract data using local AI (Ollama) |
 | `status` | System status, crawl freshness, license info |
-| `report <project>` | Print analysis summary |
-| `html <project>` | Generate HTML dashboard |
+| `html <project>` | Generate crawl-only dashboard |
 | `serve` | Start local dashboard server (port 3000) |
-| `competitors <project>` | List/add/remove competitor domains |
+| `export-actions <project> --scope technical` | Technical SEO audit from crawl data |
 | `schemas <project>` | Schema.org coverage analysis |
 | `update` | Check for updates |
 
-### Pro ($49 one-time — [froggo.pro](https://froggo.pro/seo-intel))
+### Solo (€19.99/mo · [ukkometa.fi/seo-intel](https://ukkometa.fi/seo-intel))
 
 | Command | Description |
 |---------|-------------|
+| `extract <project>` | Local AI extraction via Ollama |
 | `analyze <project>` | Full competitive gap analysis |
-| `keywords <project>` | Keyword gap matrix + opportunity finder |
+| `export-actions <project>` | All export scopes (technical + competitive + suggestive) |
+| `competitive-actions <project>` | Competitive gap export with `--vs domain` filter |
+| `suggest-usecases <project>` | Infer what pages/features to build from competitor data |
+| `keywords <project>` | Keyword gap matrix |
 | `run <project>` | Full pipeline: crawl → extract → analyze → report |
 | `brief <project>` | AI content briefs for gap topics |
 | `velocity <project>` | Content publishing velocity tracker |

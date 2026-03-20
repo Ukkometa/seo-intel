@@ -9,6 +9,83 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const PROGRESS_FILE = join(__dirname, '.extraction-progress.json');
 const REPORTS_DIR = join(__dirname, 'reports');
 
+
+function buildActionsMarkdown(payload) {
+  const grouped = (payload.actions || []).reduce((acc, action) => {
+    const area = action.area || 'other';
+    if (!acc[area]) acc[area] = [];
+    acc[area].push(action);
+    return acc;
+  }, {});
+
+  const lines = [
+    `# SEO Intel Actions — ${payload.project}`,
+    '',
+    `- Generated: ${payload.generatedAt || new Date().toISOString()}`,
+    `- Scope: ${payload.scope || 'all'}`,
+    `- Total actions: ${(payload.actions || []).length}`,
+    `- Priority mix: critical ${payload.summary?.critical || 0}, high ${payload.summary?.high || 0}, medium ${payload.summary?.medium || 0}, low ${payload.summary?.low || 0}`,
+    '',
+    '## Summary',
+    '',
+    `- Critical: ${payload.summary?.critical || 0}`,
+    `- High: ${payload.summary?.high || 0}`,
+    `- Medium: ${payload.summary?.medium || 0}`,
+    `- Low: ${payload.summary?.low || 0}`,
+    '',
+  ];
+
+  const orderedAreas = ['technical', 'content', 'schema', 'structure', 'other'];
+  for (const area of orderedAreas) {
+    const items = grouped[area] || [];
+    if (!items.length) continue;
+    lines.push(`## ${area.charAt(0).toUpperCase() + area.slice(1)}`);
+    lines.push('');
+    for (const action of items) {
+      lines.push(`### ${action.title}`);
+      lines.push(`- ID: ${action.id}`);
+      lines.push(`- Type: ${action.type}`);
+      lines.push(`- Priority: ${action.priority}`);
+      lines.push(`- Why: ${action.why}`);
+      if (action.evidence?.length) {
+        lines.push('- Evidence:');
+        for (const item of action.evidence) lines.push(`  - ${item}`);
+      }
+      if (action.implementationHints?.length) {
+        lines.push('- Implementation hints:');
+        for (const item of action.implementationHints) lines.push(`  - ${item}`);
+      }
+      lines.push('');
+    }
+  }
+
+  if (!(payload.actions || []).length) {
+    lines.push('## No actions found');
+    lines.push('');
+    lines.push('- The current dataset did not surface any qualifying actions for this scope.');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+function getExportHistory() {
+  if (!existsSync(REPORTS_DIR)) return [];
+  return readdirSync(REPORTS_DIR)
+    .filter(name => /-actions-.*\.(json|md)$/i.test(name))
+    .map(name => {
+      const match = name.match(/^(.*?)-actions-(.*)\.(json|md)$/i);
+      return {
+        name,
+        project: match?.[1] || null,
+        stamp: match?.[2] || null,
+        format: (match?.[3] || '').toLowerCase(),
+        url: `/reports/${name}`,
+      };
+    })
+    .sort((a, b) => a.name < b.name ? 1 : -1);
+}
+
 // ── MIME types ──
 const MIME = {
   '.html': 'text/html',
@@ -17,6 +94,7 @@ const MIME = {
   '.json': 'application/json',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.md': 'text/markdown; charset=utf-8',
 };
 
 // ── Read progress with PID liveness check (mirrors cli.js) ──
@@ -163,7 +241,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (req.method === 'GET' && path.startsWith('/reports/') && path.endsWith('.html')) {
+  if (req.method === 'GET' && path.startsWith('/reports/')) {
     const fileName = path.replace('/reports/', '');
     if (fileName.includes('..') || fileName.includes('/')) { res.writeHead(400); res.end('Bad path'); return; }
     serveFile(res, join(REPORTS_DIR, fileName));
@@ -242,6 +320,72 @@ async function handleRequest(req, res) {
     } catch (e) {
       json(res, 500, { error: e.message });
     }
+    return;
+  }
+
+
+  // ─── API: Export actions ───
+  if (req.method === 'POST' && path === '/api/export-actions') {
+    try {
+      const body = await readBody(req);
+      const { project } = body;
+      const scope = ['technical', 'competitive', 'suggestive', 'all'].includes(body.scope) ? body.scope : 'all';
+      if (!project) { json(res, 400, { error: 'Missing project' }); return; }
+
+      const progress = readProgress();
+      if (progress?.status === 'running') {
+        json(res, 409, { error: 'Job already running', progress });
+        return;
+      }
+
+      const args = ['cli.js', 'export-actions', project, '--scope', scope, '--format', 'json'];
+      const child = spawn(process.execPath, args, {
+        cwd: __dirname,
+        env: { ...process.env, FORCE_COLOR: '0' },
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+      child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+      child.on('error', err => { json(res, 500, { error: err.message }); });
+      child.on('close', code => {
+        if (res.writableEnded) return;
+        if (code !== 0) {
+          json(res, 500, { error: (stderr || stdout || `export-actions exited with code ${code}`).trim() });
+          return;
+        }
+
+        const jsonStart = stdout.indexOf('{');
+        const jsonEnd = stdout.lastIndexOf('}');
+        const rawJson = jsonStart >= 0 && jsonEnd >= jsonStart ? stdout.slice(jsonStart, jsonEnd + 1) : stdout.trim();
+
+        try {
+          const data = JSON.parse(rawJson);
+          const stamp = Date.now();
+          const baseName = `${project}-actions-${stamp}`;
+          writeFileSync(join(REPORTS_DIR, `${baseName}.json`), JSON.stringify(data, null, 2), 'utf8');
+          writeFileSync(join(REPORTS_DIR, `${baseName}.md`), buildActionsMarkdown(data), 'utf8');
+          json(res, 200, { success: true, data });
+        } catch (err) {
+          json(res, 500, {
+            error: 'Failed to parse export output',
+            details: err.message,
+            output: stdout.trim(),
+            stderr: stderr.trim(),
+          });
+        }
+      });
+    } catch (e) {
+      json(res, 500, { error: e.message });
+    }
+    return;
+  }
+
+  // ─── API: Export history ───
+  if (req.method === 'GET' && path === '/api/export-history') {
+    json(res, 200, { success: true, items: getExportHistory() });
     return;
   }
 
@@ -330,6 +474,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`    GET  /setup         → Setup Wizard`);
   console.log(`    GET  /api/progress  → Live extraction progress`);
   console.log(`    GET  /api/projects  → Available projects`);
+  console.log(`    GET  /api/export-history → List saved action exports`);
   console.log(`    POST /api/crawl     → Start crawl { project, stealth? }`);
-  console.log(`    POST /api/extract   → Start extract { project, stealth? }\n`);
+  console.log(`    POST /api/extract   → Start extract { project, stealth? }`);
+  console.log(`    POST /api/export-actions → Run export-actions { project, scope }\n`);
 });

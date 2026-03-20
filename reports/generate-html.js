@@ -1317,6 +1317,61 @@ function buildHtmlTemplate(data, opts = {}) {
     .ki-priority-high   { color: var(--color-success); font-weight: 600; }
     .ki-priority-medium { color: var(--color-warning); }
     .ki-priority-low    { color: var(--text-muted); }
+
+
+    .actions-panel {
+      max-width: var(--max-width);
+      margin: 0 auto 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .actions-grid {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .actions-sidebar, .actions-viewer {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 14px;
+    }
+    .actions-buttons { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 12px; }
+    .actions-btn {
+      background: #1a1a1a; color: var(--text-primary); border:1px solid var(--border-subtle); border-radius: var(--radius);
+      padding: 9px 12px; font-size: 0.74rem; cursor:pointer; transition: all 0.2s ease;
+    }
+    .actions-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+    .actions-btn.primary { background: rgba(232,213,163,0.08); border-color: rgba(232,213,163,0.28); }
+    .actions-btn:disabled { opacity: 0.65; cursor: wait; }
+    .actions-history-list { display:flex; flex-direction:column; gap:8px; margin-top:10px; max-height:420px; overflow:auto; }
+    .actions-history-item {
+      display:block; width:100%; text-align:left; background:#141414; color:var(--text-secondary); border:1px solid var(--border-subtle);
+      border-radius: var(--radius); padding:10px; cursor:pointer; font-size:0.68rem;
+    }
+    .actions-history-item:hover { border-color: var(--accent-purple); color: var(--text-primary); }
+    .actions-viewer {
+      min-height: 420px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.72rem; line-height: 1.7; color: var(--text-secondary);
+      overflow: auto;
+    }
+    .actions-viewer h1, .actions-viewer h2, .actions-viewer h3 { color: var(--text-primary); margin: 16px 0 8px; font-family: var(--font-display); }
+    .actions-viewer ul { margin: 0 0 12px 18px; }
+    .actions-viewer li { margin-bottom: 6px; }
+    .actions-viewer pre { background:#0c0c0c; border:1px solid var(--border-subtle); padding:12px; border-radius: var(--radius); overflow:auto; }
+    .actions-viewer code { color: var(--accent-gold); }
+    .actions-meta { font-size:0.68rem; color:var(--text-muted); display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+    .actions-empty { color: var(--text-muted); }
+    .actions-locked {
+      max-width: var(--max-width); margin: 0 auto 16px; background: linear-gradient(180deg, rgba(232,213,163,0.05), rgba(124,109,235,0.05));
+      border: 1px solid rgba(232,213,163,0.18); border-radius: var(--radius); padding: 22px;
+    }
+    @media (max-width: 860px) {
+      .actions-grid { grid-template-columns: 1fr; }
+    }
+
   </style>
 </head>`;
 
@@ -1635,6 +1690,18 @@ function buildHtmlTemplate(data, opts = {}) {
         </div>
       </div>
 
+
+      <div class="actions-locked">
+        <h2><span class="icon"><i class="fa-solid fa-lock"></i></span> Action Exports</h2>
+        <p style="font-size:0.74rem;color:var(--text-secondary);margin-bottom:10px;max-width:680px;">Technical Audit, Competitive Gaps, and Suggest What to Build live here on Solo. Generate implementation-ready exports, browse history, and read them directly in the dashboard.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <span class="actions-btn" style="cursor:default;">Technical Audit</span>
+          <span class="actions-btn" style="cursor:default;">Competitive Gaps</span>
+          <span class="actions-btn" style="cursor:default;">Suggest What to Build</span>
+        </div>
+        <a href="https://froggo.pro/seo-intel" target="_blank" style="display:inline-block;padding:10px 18px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.78rem;font-weight:600;text-decoration:none;">Upgrade to Solo</a>
+      </div>
+
       <!-- UPGRADE CTA -->
       <div style="text-align:center;padding:36px 24px;margin-bottom:16px;background:var(--bg-card);border:1px solid rgba(232,213,163,0.12);border-radius:var(--radius);">
         <i class="fa-solid fa-chart-column" style="font-size:1.2rem;color:var(--accent-gold);margin-bottom:10px;display:block;"></i>
@@ -1807,6 +1874,210 @@ function buildHtmlTemplate(data, opts = {}) {
       </div>
     </div>
   </details>
+
+  <div class="actions-panel">
+    <h2><span class="icon"><i class="fa-solid fa-list-check"></i></span> Action Exports</h2>
+    <div class="actions-grid">
+      <div class="actions-sidebar">
+        <div style="font-size:0.72rem;color:var(--text-muted);">Generate implementation-ready action exports from the live project data. Requires <code>seo-intel serve</code>.</div>
+        <div class="actions-buttons">
+          <button class="actions-btn primary" id="actionsBtnTechnical${suffix}">Technical Audit</button>
+          <button class="actions-btn" id="actionsBtnCompetitive${suffix}">Competitive Gaps</button>
+          <button class="actions-btn" id="actionsBtnSuggestive${suffix}">Suggest What to Build</button>
+          <button class="actions-btn" id="actionsBtnAll${suffix}">Generate Action Export</button>
+        </div>
+        <div id="actionsStatus${suffix}" style="font-size:0.68rem;color:var(--text-muted);"></div>
+        <div style="margin-top:14px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;">Export History</div>
+        <div class="actions-history-list" id="actionsHistory${suffix}">
+          <div class="actions-empty">Loading saved exports…</div>
+        </div>
+      </div>
+      <div class="actions-viewer" id="actionsViewer${suffix}">
+        <div class="actions-empty">Pick a scope to generate an export, or open a previous export from history.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const suffix = ${JSON.stringify(suffix)};
+      const project = ${JSON.stringify(project)};
+      const viewer = document.getElementById('actionsViewer' + suffix);
+      const historyEl = document.getElementById('actionsHistory' + suffix);
+      const statusEl = document.getElementById('actionsStatus' + suffix);
+      const buttonMap = {
+        technical: document.getElementById('actionsBtnTechnical' + suffix),
+        competitive: document.getElementById('actionsBtnCompetitive' + suffix),
+        suggestive: document.getElementById('actionsBtnSuggestive' + suffix),
+        all: document.getElementById('actionsBtnAll' + suffix),
+      };
+      const labels = {
+        technical: 'Technical Audit',
+        competitive: 'Competitive Gaps',
+        suggestive: 'Suggest What to Build',
+        all: 'Generate Action Export',
+      };
+      const isServed = window.location.protocol.startsWith('http');
+
+      function escapeHtml(value) {
+        return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function renderMarkdown(md) {
+        let html = escapeHtml(md || '');
+        html = html.replace(/\`\`\`([\s\S]*?)\`\`\`/g, function(_, code) { return '<pre><code>' + code.trim() + '</code></pre>'; });
+        html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/^- (.*)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) { return '<ul>' + match + '</ul>'; });
+        html = html.replace(/\n\n/g, '</p><p>');
+        html = '<p>' + html + '</p>';
+        html = html.replace(/<p>(\s*)<(h1|h2|h3|ul|pre)>/g, '<$2>').replace(/<\/(h1|h2|h3|ul|pre)>(\s*)<\/p>/g, '</$1>');
+        return html;
+      }
+
+      function payloadToMarkdown(payload) {
+        const actions = Array.isArray(payload?.actions) ? payload.actions : [];
+        const summary = payload?.summary || {};
+        const grouped = actions.reduce((acc, action) => {
+          const area = action.area || 'other';
+          (acc[area] ||= []).push(action);
+          return acc;
+        }, {});
+        const lines = [
+          '# SEO Intel Actions — ' + (payload?.project || project),
+          '',
+          '- Generated: ' + (payload?.generatedAt || new Date().toISOString()),
+          '- Scope: ' + (payload?.scope || 'all'),
+          '- Total actions: ' + actions.length,
+          '- Priority mix: critical ' + (summary.critical || 0) + ', high ' + (summary.high || 0) + ', medium ' + (summary.medium || 0) + ', low ' + (summary.low || 0),
+          '',
+          '## Summary',
+          '',
+          '- Critical: ' + (summary.critical || 0),
+          '- High: ' + (summary.high || 0),
+          '- Medium: ' + (summary.medium || 0),
+          '- Low: ' + (summary.low || 0),
+          ''
+        ];
+        ['technical', 'content', 'schema', 'structure', 'other'].forEach(function(area) {
+          const items = grouped[area] || [];
+          if (!items.length) return;
+          lines.push('## ' + area.charAt(0).toUpperCase() + area.slice(1));
+          lines.push('');
+          items.forEach(function(action) {
+            lines.push('### ' + (action.title || 'Untitled action'));
+            lines.push('- ID: ' + (action.id || 'n/a'));
+            lines.push('- Type: ' + (action.type || 'n/a'));
+            lines.push('- Priority: ' + (action.priority || 'n/a'));
+            lines.push('- Why: ' + (action.why || ''));
+            if (action.evidence?.length) {
+              lines.push('- Evidence:');
+              action.evidence.forEach(function(item) { lines.push('  - ' + item); });
+            }
+            if (action.implementationHints?.length) {
+              lines.push('- Implementation hints:');
+              action.implementationHints.forEach(function(item) { lines.push('  - ' + item); });
+            }
+            lines.push('');
+          });
+        });
+        if (!actions.length) {
+          lines.push('## No actions found', '', '- The current dataset did not surface any qualifying actions for this scope.', '');
+        }
+        return lines.join('
+');
+      }
+
+      function showMarkdown(markdown, sourceLabel, scope) {
+        const meta = '<div class="actions-meta"><span>Project: ' + escapeHtml(project) + '</span>' +
+          (scope ? '<span>Scope: ' + escapeHtml(scope) + '</span>' : '') +
+          '<span>Source: ' + escapeHtml(sourceLabel || 'history') + '</span></div>';
+        viewer.innerHTML = meta + renderMarkdown(markdown);
+      }
+
+      function showPayload(payload, sourceLabel) {
+        showMarkdown(payloadToMarkdown(payload), sourceLabel || 'live export', payload?.scope || 'all');
+      }
+
+      function setBusy(scope, busy) {
+        Object.entries(buttonMap).forEach(function(entry) {
+          const key = entry[0];
+          const btn = entry[1];
+          if (!btn) return;
+          btn.disabled = busy;
+          btn.innerHTML = busy && key === scope
+            ? '<i class="fa-solid fa-spinner fa-spin"></i> ' + labels[key]
+            : labels[key];
+        });
+      }
+
+      function loadHistory() {
+        fetch('/api/export-history').then(function(r) { return r.json(); }).then(function(data) {
+          const items = (data.items || []).filter(function(item) { return item.project === project; });
+          if (!items.length) {
+            historyEl.innerHTML = '<div class="actions-empty">No exports saved yet.</div>';
+            return;
+          }
+          historyEl.innerHTML = items.map(function(item) {
+            return '<button class="actions-history-item" data-url="' + item.url + '" data-format="' + item.format + '" data-name="' + escapeHtml(item.name) + '"><strong style="display:block;color:var(--text-primary);">' + escapeHtml(item.format.toUpperCase()) + '</strong><span>' + escapeHtml(item.name) + '</span></button>';
+          }).join('');
+          historyEl.querySelectorAll('.actions-history-item').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+              const url = btn.getAttribute('data-url');
+              const format = btn.getAttribute('data-format');
+              const name = btn.getAttribute('data-name');
+              fetch(url).then(function(r) { return format === 'json' ? r.json() : r.text(); }).then(function(content) {
+                if (format === 'json') showPayload(content, name);
+                else showMarkdown(content, name);
+              }).catch(function(err) {
+                viewer.innerHTML = '<div class="actions-empty">Failed to load export: ' + escapeHtml(err.message) + '</div>';
+              });
+            });
+          });
+        }).catch(function(err) {
+          historyEl.innerHTML = '<div class="actions-empty">History unavailable: ' + escapeHtml(err.message) + '</div>';
+        });
+      }
+
+      function runExport(scope) {
+        if (!isServed) {
+          alert('Run seo-intel serve to use action exports from the dashboard.');
+          return;
+        }
+        statusEl.textContent = 'Generating ' + labels[scope] + '…';
+        setBusy(scope, true);
+        fetch('/api/export-actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, scope: scope, format: 'json' }),
+        }).then(function(r) {
+          return r.json().then(function(data) { return { ok: r.ok, data: data }; });
+        }).then(function(result) {
+          if (!result.ok || result.data.error) throw new Error(result.data.error || 'Export failed');
+          statusEl.textContent = labels[scope] + ' ready.';
+          showPayload(result.data.data, 'live export');
+          loadHistory();
+        }).catch(function(err) {
+          statusEl.textContent = 'Export failed.';
+          viewer.innerHTML = '<div class="actions-empty">' + escapeHtml(err.message) + '</div>';
+        }).finally(function() {
+          setBusy(scope, false);
+        });
+      }
+
+      Object.keys(buttonMap).forEach(function(scope) {
+        if (buttonMap[scope]) buttonMap[scope].addEventListener('click', function() { runExport(scope); });
+      });
+
+      if (!isServed) {
+        statusEl.innerHTML = '<i class="fa-solid fa-plug"></i> Run <code>seo-intel serve</code> to generate exports here.';
+      }
+      loadHistory();
+    })();
+  </script>
 
   <div class="dashboard">
 

@@ -19,8 +19,10 @@ CREATE TABLE IF NOT EXISTS pages (
   load_ms       INTEGER,
   is_indexable  INTEGER DEFAULT 1,
   click_depth   INTEGER DEFAULT 0,   -- BFS depth from homepage (0 = homepage)
+  first_seen_at  INTEGER,            -- epoch ms when this URL was first discovered
   published_date TEXT,               -- ISO string or null
   modified_date  TEXT,               -- ISO string or null
+  content_hash   TEXT,               -- SHA-256 of body text for incremental crawling
   FOREIGN KEY (domain_id) REFERENCES domains(id)
 );
 
@@ -90,9 +92,29 @@ CREATE TABLE IF NOT EXISTS analyses (
   raw           TEXT   -- full model response
 );
 
+CREATE TABLE IF NOT EXISTS page_schemas (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id     INTEGER NOT NULL REFERENCES pages(id),
+  schema_type TEXT NOT NULL,            -- '@type' value: Organization, Product, Article, FAQ, etc.
+  name        TEXT,                     -- schema name field
+  description TEXT,                     -- schema description field
+  rating      REAL,                     -- aggregateRating.ratingValue
+  rating_count INTEGER,                -- aggregateRating.reviewCount or ratingCount
+  price       TEXT,                     -- offers.price or priceRange
+  currency    TEXT,                     -- offers.priceCurrency
+  author      TEXT,                     -- author.name
+  date_published TEXT,                  -- datePublished from schema
+  date_modified  TEXT,                  -- dateModified from schema
+  image_url   TEXT,                     -- image or image.url
+  raw_json    TEXT NOT NULL,            -- full JSON-LD object for future queries
+  extracted_at INTEGER NOT NULL
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain_id);
 CREATE INDEX IF NOT EXISTS idx_keywords_page ON keywords(page_id);
 CREATE INDEX IF NOT EXISTS idx_keywords_kw ON keywords(keyword);
 CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id);
 CREATE INDEX IF NOT EXISTS idx_headings_page ON headings(page_id);
+CREATE INDEX IF NOT EXISTS idx_page_schemas_page ON page_schemas(page_id);
+CREATE INDEX IF NOT EXISTS idx_page_schemas_type ON page_schemas(schema_type);

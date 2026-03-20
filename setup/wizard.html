@@ -1,0 +1,2920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEO Intel &mdash; Setup Wizard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — matches SEO Intel dashboard exactly
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-card: #111111;
+  --bg-elevated: #161616;
+  --border-card: #222222;
+  --border-subtle: #262626;
+  --accent-gold: #e8d5a3;
+  --accent-purple: #7c6deb;
+  --color-success: #8ecba8;
+  --color-danger: #d98e8e;
+  --color-info: #8bbdd9;
+  --color-warning: #d9c78b;
+  --text-primary: #f0f0f0;
+  --text-secondary: #b8b8b8;
+  --text-muted: #555555;
+  --text-subtle: #888888;
+  --text-dark: #0a0a0a;
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --radius: 6px;
+  --max-width: 820px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  padding: 32px 24px;
+  min-height: 100vh;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-weight: 400;
+}
+
+/* ─── Header / Branding ──────────────────────────────────────────────── */
+.wizard-header {
+  max-width: var(--max-width);
+  margin: 0 auto 24px;
+  text-align: center;
+}
+.wizard-header h1 {
+  font-family: var(--font-display);
+  color: var(--text-primary);
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin-bottom: 4px;
+}
+.wizard-header .subtitle {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 300;
+}
+
+/* ─── Step Indicator ─────────────────────────────────────────────────── */
+.step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  max-width: var(--max-width);
+  margin: 0 auto 32px;
+  padding: 0 16px;
+}
+.step-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: all 0.25s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+.step-node .step-num {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 600;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: all 0.25s ease;
+}
+.step-node.completed {
+  cursor: pointer;
+  color: var(--accent-gold);
+}
+.step-node.completed .step-num {
+  border-color: var(--accent-gold);
+  background: var(--accent-gold);
+  color: var(--text-dark);
+}
+.step-node.completed:hover {
+  background: rgba(232, 213, 163, 0.06);
+}
+.step-node.active {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+  background: var(--bg-elevated);
+}
+.step-node.active .step-num {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+.step-connector {
+  width: 24px;
+  height: 1px;
+  background: var(--border-card);
+  flex-shrink: 0;
+}
+.step-connector.completed {
+  background: var(--accent-gold);
+}
+
+/* ─── Cards ──────────────────────────────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 22px;
+  border: 1px solid var(--border-card);
+  min-width: 0;
+  overflow: hidden;
+}
+.card h2 {
+  font-family: var(--font-display);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card h2 i {
+  color: var(--accent-gold);
+  font-size: 0.85rem;
+}
+
+/* ─── Step Panels ────────────────────────────────────────────────────── */
+.wizard-body {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+.step-panel {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+.step-panel.active {
+  display: block;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Dependency Checks (Step 1) ─────────────────────────────────────── */
+.dep-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.dep-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  transition: border-color 0.25s ease;
+}
+.dep-card.ok    { border-color: rgba(142, 203, 168, 0.35); }
+.dep-card.warn  { border-color: rgba(217, 199, 139, 0.35); }
+.dep-card.fail  { border-color: rgba(217, 142, 142, 0.35); }
+.dep-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  color: var(--text-muted);
+}
+.dep-card.ok   .dep-icon { color: var(--color-success); border-color: rgba(142,203,168,0.3); }
+.dep-card.warn .dep-icon { color: var(--color-warning); border-color: rgba(217,199,139,0.3); }
+.dep-card.fail .dep-icon { color: var(--color-danger);  border-color: rgba(217,142,142,0.3); }
+.dep-info { flex: 1; min-width: 0; }
+.dep-name {
+  font-weight: 500;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+.dep-detail {
+  font-size: 0.72rem;
+  color: var(--text-subtle);
+  word-break: break-word;
+}
+.dep-actions { margin-top: 8px; }
+
+/* ─── Buttons ────────────────────────────────────────────────────────── */
+.btn {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-card);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.btn:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  border-color: var(--border-card);
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+}
+.btn-gold {
+  background: var(--accent-gold);
+  color: var(--text-dark);
+  border-color: var(--accent-gold);
+  font-weight: 600;
+}
+.btn-gold:hover {
+  background: #d4c290;
+  border-color: #d4c290;
+  color: var(--text-dark);
+}
+.btn-gold:disabled {
+  background: var(--bg-elevated);
+  border-color: var(--border-card);
+  color: var(--text-muted);
+}
+.btn-gold:disabled:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-card);
+  color: var(--text-muted);
+}
+.btn-sm {
+  font-size: 0.68rem;
+  padding: 4px 10px;
+}
+.btn-danger {
+  color: var(--color-danger);
+  border-color: rgba(217, 142, 142, 0.3);
+}
+.btn-danger:hover {
+  border-color: var(--color-danger);
+  background: rgba(217, 142, 142, 0.08);
+  color: var(--color-danger);
+}
+
+/* ─── Step Navigation ────────────────────────────────────────────────── */
+.step-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-card);
+}
+
+/* ─── Log Output ─────────────────────────────────────────────────────── */
+.log-output {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.68rem;
+  line-height: 1.6;
+  color: var(--text-subtle);
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 12px;
+  display: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-output.visible { display: block; }
+.log-output .log-ok   { color: var(--color-success); }
+.log-output .log-err  { color: var(--color-danger); }
+.log-output .log-info { color: var(--color-info); }
+
+/* ─── Model Cards (Step 2) ───────────────────────────────────────────── */
+.model-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.model-section {
+  position: relative;
+}
+.model-section h3 {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.model-section h3 i { color: var(--accent-purple); font-size: 0.75rem; }
+.model-section .section-note {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.model-radio-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+.model-radio-card:hover {
+  border-color: var(--text-muted);
+}
+.model-radio-card.selected {
+  border-color: var(--accent-gold);
+  border-left: 3px solid var(--accent-gold);
+  background: rgba(232, 213, 163, 0.04);
+}
+.model-radio-card.legacy {
+  opacity: 0.55;
+}
+.model-radio-card.legacy:hover {
+  opacity: 0.75;
+}
+.model-radio-card.selected.legacy {
+  opacity: 0.85;
+}
+.model-radio-card.cloud-model {
+  border-left: 3px solid var(--accent-purple);
+}
+.model-radio-card.cloud-model.selected {
+  border-color: var(--accent-purple);
+  border-left: 3px solid var(--accent-purple);
+  background: rgba(168, 130, 232, 0.04);
+}
+.cloud-privacy-note {
+  font-size: 0.6rem;
+  color: var(--color-warning, #e8a838);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.model-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.model-card-name {
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+.model-badge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.model-badge.recommended {
+  background: rgba(232, 213, 163, 0.15);
+  color: var(--accent-gold);
+}
+.model-badge.installed {
+  background: rgba(142, 203, 168, 0.15);
+  color: var(--color-success);
+}
+.model-badge.configured {
+  background: rgba(142, 203, 168, 0.15);
+  color: var(--color-success);
+}
+.model-badge.no-fit {
+  background: rgba(217, 142, 142, 0.12);
+  color: var(--color-danger);
+}
+.model-card-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.model-meta-item {
+  font-size: 0.65rem;
+  color: var(--text-subtle);
+}
+.model-meta-item i {
+  margin-right: 3px;
+  font-size: 0.6rem;
+}
+.model-card-desc {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.model-pull-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Free tier: hide model selection entirely, show unified upgrade card */
+.is-free .model-columns {
+  display: none;
+}
+
+/* Page-level particle field — ambient on all tiers */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(1.5px 1.5px at 13% 27%, rgba(232, 213, 163, 0.16) 50%, transparent 50%),
+    radial-gradient(1px 1px at 67% 83%, rgba(232, 213, 163, 0.09) 50%, transparent 50%),
+    radial-gradient(2px 2px at 41% 11%, rgba(232, 213, 163, 0.13) 50%, transparent 50%),
+    radial-gradient(1px 1px at 89% 53%, rgba(232, 213, 163, 0.07) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 7% 71%, rgba(232, 213, 163, 0.11) 50%, transparent 50%),
+    radial-gradient(1px 1px at 53% 37%, rgba(232, 213, 163, 0.08) 50%, transparent 50%);
+  background-size: 220px 180px, 180px 260px, 310px 190px, 170px 290px, 260px 210px, 290px 170px;
+  animation: bgDrift 25s linear infinite;
+}
+body::after {
+  background-image:
+    radial-gradient(1px 1px at 31% 59%, rgba(183, 160, 110, 0.1) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 73% 17%, rgba(232, 213, 163, 0.11) 50%, transparent 50%),
+    radial-gradient(1px 1px at 19% 91%, rgba(232, 213, 163, 0.07) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 83% 43%, rgba(183, 160, 110, 0.09) 50%, transparent 50%),
+    radial-gradient(1px 1px at 47% 67%, rgba(232, 213, 163, 0.08) 50%, transparent 50%);
+  background-size: 250px 310px, 190px 230px, 330px 170px, 210px 280px, 270px 200px;
+  animation: bgDrift2 35s linear infinite;
+  opacity: 0.7;
+}
+
+/* Animated dot-grid upgrade overlay */
+.upgrade-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  z-index: 20;
+  pointer-events: all;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+}
+/* Individual overlays hidden — unified card replaces them */
+.is-free .upgrade-overlay {
+  display: none;
+}
+.upgrade-overlay-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 8, 10, 0.75);
+  backdrop-filter: blur(2px);
+}
+/* Animated particle field */
+.upgrade-overlay-dots {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.upgrade-overlay-dots::before,
+.upgrade-overlay-dots::after {
+  content: '';
+  position: absolute;
+  inset: -50%;
+  width: 200%;
+  height: 200%;
+  background-image:
+    radial-gradient(1.5px 1.5px at 13% 27%, rgba(232, 213, 163, 0.45) 50%, transparent 50%),
+    radial-gradient(1px 1px at 67% 83%, rgba(232, 213, 163, 0.25) 50%, transparent 50%),
+    radial-gradient(2px 2px at 41% 11%, rgba(232, 213, 163, 0.4) 50%, transparent 50%),
+    radial-gradient(1px 1px at 89% 53%, rgba(232, 213, 163, 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 7% 71%, rgba(232, 213, 163, 0.35) 50%, transparent 50%),
+    radial-gradient(1px 1px at 53% 37%, rgba(232, 213, 163, 0.28) 50%, transparent 50%);
+  background-size: 180px 150px, 150px 210px, 250px 160px, 140px 230px, 210px 170px, 230px 140px;
+  animation: bgDrift 25s linear infinite;
+}
+.upgrade-overlay-dots::after {
+  background-image:
+    radial-gradient(1px 1px at 31% 59%, rgba(183, 160, 110, 0.3) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 73% 17%, rgba(232, 213, 163, 0.35) 50%, transparent 50%),
+    radial-gradient(1px 1px at 19% 91%, rgba(232, 213, 163, 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 83% 43%, rgba(183, 160, 110, 0.25) 50%, transparent 50%),
+    radial-gradient(1px 1px at 47% 67%, rgba(232, 213, 163, 0.3) 50%, transparent 50%);
+  background-size: 200px 250px, 160px 190px, 270px 140px, 170px 230px, 220px 160px;
+  animation: bgDrift2 35s linear infinite;
+  opacity: 0.7;
+}
+/* Slow pulsing glow in center */
+.upgrade-overlay-dots .glow-orb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200px;
+  height: 200px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(232, 213, 163, 0.08) 0%, transparent 70%);
+  animation: glowPulse 3s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes particleDrift {
+  0%   { transform: translate(0, 0); }
+  100% { transform: translate(-40px, -30px); }
+}
+@keyframes particleDrift2 {
+  0%   { transform: translate(0, 0); }
+  100% { transform: translate(30px, -20px); }
+}
+/* Seamless looping drift — wanders and returns to origin */
+@keyframes bgDrift {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(-30px, -20px); }
+  50%  { transform: translate(-15px, -40px); }
+  75%  { transform: translate(20px, -15px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes bgDrift2 {
+  0%   { transform: translate(0, 0); }
+  20%  { transform: translate(25px, -35px); }
+  40%  { transform: translate(-10px, -20px); }
+  60%  { transform: translate(-30px, 10px); }
+  80%  { transform: translate(15px, -10px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes glowPulse {
+  0%   { opacity: 0.4; transform: translate(-50%, -50%) scale(0.8); }
+  50%  { opacity: 1;   transform: translate(-50%, -50%) scale(1.1); }
+  100% { opacity: 0.4; transform: translate(-50%, -50%) scale(0.8); }
+}
+.upgrade-overlay-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 0 20px;
+}
+.upgrade-overlay-icon {
+  font-size: 1.6rem;
+  opacity: 0.9;
+}
+.upgrade-overlay-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.03em;
+}
+.upgrade-overlay-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  max-width: 200px;
+  line-height: 1.5;
+}
+.btn-upgrade {
+  margin-top: 4px;
+  padding: 9px 20px;
+  background: var(--accent-gold);
+  color: #0a0a0a;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  pointer-events: all;
+  transition: opacity 0.2s;
+  text-decoration: none;
+  display: inline-block;
+}
+.btn-upgrade:hover { opacity: 0.88; }
+
+/* ─── API Key Input ──────────────────────────────────────────────────── */
+.api-key-section {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  display: none;
+}
+.api-key-section.visible { display: block; }
+.api-key-section label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.api-key-section .key-note {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.api-key-section .key-note a {
+  color: var(--accent-gold);
+  text-decoration: none;
+}
+.api-key-section .key-note a:hover { text-decoration: underline; }
+.input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.key-status {
+  font-size: 0.7rem;
+  margin-top: 6px;
+}
+.key-status.ok   { color: var(--color-success); }
+.key-status.fail { color: var(--color-danger); }
+
+/* ─── Form Inputs (Step 3) ───────────────────────────────────────────── */
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 5px;
+}
+.form-group .hint {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+input[type="text"],
+input[type="url"],
+input[type="number"],
+input[type="password"] {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  padding: 9px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+input:focus {
+  border-color: var(--accent-gold);
+}
+input::placeholder {
+  color: var(--text-muted);
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.slug-preview {
+  font-size: 0.65rem;
+  color: var(--accent-gold);
+  margin-top: 3px;
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+}
+
+/* ─── Dynamic Lists ──────────────────────────────────────────────────── */
+.dyn-list-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.dyn-list-item input { flex: 1; }
+.dyn-list-item .btn-remove {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+/* ─── Pill Selector (crawl mode) ─────────────────────────────────────── */
+.pill-group {
+  display: inline-flex;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+.pill-option {
+  padding: 7px 16px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-right: 1px solid var(--border-subtle);
+  user-select: none;
+}
+.pill-option:last-child { border-right: none; }
+.pill-option:hover { color: var(--text-secondary); background: var(--bg-elevated); }
+.pill-option.active {
+  background: var(--accent-gold);
+  color: var(--text-dark);
+  font-weight: 600;
+}
+.pill-option input[type="radio"] { display: none; }
+
+/* ─── Pipeline Test Cards (Step 4) ───────────────────────────────────── */
+.test-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: border-color 0.3s ease;
+}
+.test-card.running { border-color: rgba(139, 189, 217, 0.4); }
+.test-card.pass    { border-color: rgba(142, 203, 168, 0.4); }
+.test-card.fail    { border-color: rgba(217, 142, 142, 0.4); }
+.test-card.skip    { border-color: var(--border-subtle); opacity: 0.5; }
+.test-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  color: var(--text-muted);
+  transition: all 0.3s ease;
+}
+.test-card.running .test-icon { color: var(--color-info);    border-color: rgba(139,189,217,0.3); }
+.test-card.pass    .test-icon { color: var(--color-success); border-color: rgba(142,203,168,0.3); }
+.test-card.fail    .test-icon { color: var(--color-danger);  border-color: rgba(217,142,142,0.3); }
+.test-info { flex: 1; min-width: 0; }
+.test-name {
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+.test-detail {
+  font-size: 0.7rem;
+  color: var(--text-subtle);
+  word-break: break-word;
+}
+.test-latency {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.test-retry {
+  flex-shrink: 0;
+}
+
+/* ─── Spinner ────────────────────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.fa-spin-pulse { animation: spin 1s linear infinite; }
+
+/* ─── Done Screen (Step 5) ───────────────────────────────────────────── */
+.done-icon {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.done-icon i {
+  font-size: 2.8rem;
+  color: var(--color-success);
+}
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+.summary-table tr {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.summary-table td {
+  padding: 8px 0;
+  font-size: 0.78rem;
+}
+.summary-table td:first-child {
+  color: var(--text-muted);
+  font-weight: 500;
+  width: 140px;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+}
+.summary-table td:last-child {
+  color: var(--text-primary);
+}
+.cli-block {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.72rem;
+  color: var(--color-info);
+  line-height: 1.8;
+  position: relative;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+.cli-block .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.cli-block .prompt { color: var(--color-success); }
+.cli-block .comment { color: var(--text-muted); }
+
+/* ─── OpenClaw Banner ────────────────────────────────────────────────── */
+.openclaw-banner {
+  margin-top: 16px;
+}
+.openclaw-banner-recommended {
+  display: flex;
+  gap: 14px;
+  padding: 18px 16px;
+  background: linear-gradient(135deg, rgba(124,109,235,0.08), rgba(124,109,235,0.02));
+  border: 1px solid rgba(124,109,235,0.3);
+  border-radius: var(--radius);
+}
+.openclaw-banner-minimal {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.openclaw-banner-icon {
+  font-size: 1.3rem;
+  color: var(--accent-purple);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.openclaw-banner-title {
+  font-family: var(--font-display);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.openclaw-banner-desc {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.openclaw-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ─── Agent Chat Panel ───────────────────────────────────────────────── */
+.agent-panel {
+  display: none;
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+.agent-panel.active { display: block; }
+
+.agent-chat {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.agent-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(124,109,235,0.06);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.agent-chat-header h3 {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.agent-chat-header h3 i { color: var(--accent-purple); margin-right: 6px; }
+.agent-chat-header .btn { font-size: 0.68rem; padding: 4px 10px; }
+
+.agent-chat-messages {
+  padding: 16px;
+  max-height: 50vh;
+  min-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.agent-msg {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agent-msg.assistant {
+  background: rgba(124,109,235,0.08);
+  border: 1px solid rgba(124,109,235,0.15);
+  color: var(--text-secondary);
+  align-self: flex-start;
+}
+.agent-msg.user {
+  background: rgba(232,213,163,0.08);
+  border: 1px solid rgba(232,213,163,0.15);
+  color: var(--text-primary);
+  align-self: flex-end;
+}
+.agent-msg.system {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  align-self: center;
+  font-size: 0.72rem;
+  text-align: center;
+  max-width: 100%;
+}
+.agent-msg code {
+  background: rgba(0,0,0,0.3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.74rem;
+}
+.agent-msg pre {
+  background: rgba(0,0,0,0.3);
+  padding: 8px 10px;
+  border-radius: 4px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-size: 0.72rem;
+}
+.agent-typing {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 4px 0;
+  display: none;
+}
+.agent-typing.active { display: block; }
+.agent-typing i { animation: blink 1s infinite; }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+.agent-chat-input {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+}
+.agent-chat-input input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-family: var(--font-body);
+  outline: none;
+  transition: border-color 0.2s;
+}
+.agent-chat-input input:focus { border-color: var(--accent-purple); }
+.agent-chat-input input::placeholder { color: var(--text-muted); }
+.agent-chat-input .btn {
+  background: var(--accent-purple);
+  color: #fff;
+  padding: 8px 14px;
+}
+.agent-chat-input .btn:hover { background: #6b5ce0; }
+
+/* ─── GSC Step ───────────────────────────────────────────────────────── */
+.gsc-status-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.gsc-status-box.ok { border-color: var(--color-success); }
+.gsc-status-box.warn { border-color: var(--color-warning); }
+.gsc-status-box .gsc-status-icon { font-size: 1.2rem; }
+.gsc-status-box .gsc-status-text { font-size: 0.78rem; }
+.gsc-status-box .gsc-status-detail { font-size: 0.68rem; color: var(--text-muted); margin-top: 2px; }
+
+.gsc-methods {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.gsc-method-card {
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.gsc-method-card:hover:not(.disabled) { border-color: var(--accent-gold); }
+.gsc-method-card.active { border-color: var(--accent-gold); background: rgba(232, 213, 163, 0.05); }
+.gsc-method-icon { font-size: 1.4rem; margin-bottom: 8px; color: var(--accent-gold); }
+.gsc-method-title { font-weight: 600; font-size: 0.82rem; margin-bottom: 4px; }
+.gsc-method-desc { font-size: 0.7rem; color: var(--text-muted); line-height: 1.5; }
+
+.gsc-guide {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.gsc-guide-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--accent-gold);
+}
+.gsc-guide-steps {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  padding-left: 18px;
+  margin: 0;
+}
+.gsc-guide-steps strong { color: var(--text-primary); }
+.gsc-guide-steps a { text-decoration: underline; }
+
+.gsc-dropzone {
+  border: 2px dashed var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 32px 20px;
+  text-align: center;
+  transition: border-color 0.2s, background 0.2s;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.gsc-dropzone.dragover {
+  border-color: var(--accent-gold);
+  background: rgba(232, 213, 163, 0.05);
+}
+.gsc-browse {
+  color: var(--accent-gold);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.gsc-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.gsc-file-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  font-size: 0.7rem;
+}
+.gsc-file-chip.ok { border-color: var(--color-success); color: var(--color-success); }
+.gsc-file-chip.bad { border-color: var(--color-danger); color: var(--color-danger); }
+
+/* ─── Responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  body { padding: 16px 12px; }
+  .dep-grid { grid-template-columns: 1fr; }
+  .model-columns { grid-template-columns: 1fr; }
+  .form-row { grid-template-columns: 1fr; }
+  .step-indicator { flex-wrap: nowrap; gap: 0; overflow-x: auto; }
+  .step-connector { width: 12px; min-width: 12px; }
+  .step-node { padding: 4px 6px; font-size: 0.65rem; }
+  .step-node .step-num { width: 22px; height: 22px; font-size: 0.6rem; }
+  .step-node .step-label { display: none; }
+  .gsc-methods { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     HEADER
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="wizard-header">
+  <h1>SEO Intel</h1>
+  <div class="subtitle">Setup Wizard</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     STEP INDICATOR
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="step-indicator" id="stepIndicator">
+  <div class="step-node active" data-step="1" onclick="goToStep(1)">
+    <span class="step-num">1</span>
+    <span class="step-label">System</span>
+  </div>
+  <div class="step-connector" data-conn="1"></div>
+  <div class="step-node" data-step="2" onclick="goToStep(2)">
+    <span class="step-num">2</span>
+    <span class="step-label">Models</span>
+  </div>
+  <div class="step-connector" data-conn="2"></div>
+  <div class="step-node" data-step="3" onclick="goToStep(3)">
+    <span class="step-num">3</span>
+    <span class="step-label">Project</span>
+  </div>
+  <div class="step-connector" data-conn="3"></div>
+  <div class="step-node" data-step="4" onclick="goToStep(4)">
+    <span class="step-num">4</span>
+    <span class="step-label">GSC</span>
+  </div>
+  <div class="step-connector" data-conn="4"></div>
+  <div class="step-node" data-step="5" onclick="goToStep(5)">
+    <span class="step-num">5</span>
+    <span class="step-label">Test</span>
+  </div>
+  <div class="step-connector" data-conn="5"></div>
+  <div class="step-node" data-step="6" onclick="goToStep(6)">
+    <span class="step-num">6</span>
+    <span class="step-label">Done</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     WIZARD BODY
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="wizard-body">
+
+<!-- ─── Step 1: System Check ──────────────────────────────────────────── -->
+<div class="step-panel active" id="step1">
+  <div class="card">
+    <!-- License & Tier Section -->
+    <div id="licenseSection" style="margin-bottom:20px; padding:16px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius);">
+      <div id="licenseFree" style="display:none;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+          <i class="fa-solid fa-unlock" style="font-size:0.9rem; color:var(--text-muted);"></i>
+          <span style="font-weight:500; color:var(--text-primary); font-size:0.85rem;">Free Tier — Crawling & Raw Data</span>
+        </div>
+        <p style="font-size:0.72rem; color:var(--text-muted); margin-bottom:12px;">
+          You're set up for free crawling. Data stored in SQLite. Upgrade to Solo for AI analysis and dashboards.
+        </p>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input type="text" id="licenseKeyInput" placeholder="SI-xxxx-xxxx-xxxx-xxxx" style="flex:1; background:var(--bg-card); border:1px solid var(--border-card); border-radius:var(--radius); padding:8px 10px; color:var(--text-primary); font-family:var(--font-body); font-size:0.78rem;">
+          <button class="btn btn-gold" onclick="saveLicenseKey()" id="activateBtn" style="white-space:nowrap;">Activate →</button>
+        </div>
+        <p style="font-size:0.65rem; color:var(--text-muted); margin-top:6px;">
+          Get Solo at <a href="https://ukkometa.fi/seo-intel/" target="_blank" style="color:var(--accent-gold);">ukkometa.fi/seo-intel</a> or <a href="https://froggo.pro/seo-intel" target="_blank" style="color:var(--accent-purple);">froggo.pro</a>
+        </p>
+      </div>
+      <div id="licenseSolo" style="display:none;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <i class="fa-solid fa-star" style="font-size:0.9rem; color:var(--accent-gold);"></i>
+          <span style="font-weight:500; color:var(--accent-gold); font-size:0.85rem;">Solo — All Features Unlocked</span>
+        </div>
+        <p id="licenseKeyDisplay" style="font-size:0.7rem; color:var(--text-muted); margin-top:4px;"></p>
+      </div>
+    </div>
+
+    <!-- Pipeline Explanation -->
+    <div style="margin-bottom:20px; padding:16px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius);">
+      <div style="font-weight:500; color:var(--text-primary); font-size:0.85rem; margin-bottom:12px;">
+        <i class="fa-solid fa-diagram-project" style="color:var(--accent-gold); margin-right:6px;"></i> How SEO Intel Works
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px;">
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid var(--border-card);">
+          <i class="fa-solid fa-spider" style="font-size:1.1rem; color:var(--color-success); margin-bottom:6px; display:block;"></i>
+          <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Crawl</div>
+          <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Playwright fetches pages &rarr; SQLite</div>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(142,203,168,.12); color:var(--color-success); margin-top:4px; display:inline-block;">FREE</span>
+        </div>
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(232,213,163,.15);">
+          <i class="fa-solid fa-brain" style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:6px; display:block;"></i>
+          <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Extract</div>
+          <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Ollama reads each page locally</div>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(232,213,163,.12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
+        </div>
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(232,213,163,.15);">
+          <i class="fa-solid fa-chart-column" style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:6px; display:block;"></i>
+          <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Analyze</div>
+          <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Cloud AI analyzes full dataset</div>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(232,213,163,.12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
+        </div>
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(232,213,163,.15);">
+          <i class="fa-solid fa-map" style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:6px; display:block;"></i>
+          <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Dashboard</div>
+          <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Interactive HTML reports</div>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(232,213,163,.12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
+        </div>
+      </div>
+    </div>
+
+    <h2><i class="fa-solid fa-stethoscope"></i> System Check</h2>
+    <div class="dep-grid" id="depGrid">
+      <!-- Populated by JS -->
+    </div>
+
+    <!-- OpenClaw Setup Banner -->
+    <div id="openclawBanner" class="openclaw-banner" style="display:none;">
+      <div class="openclaw-banner-recommended" id="ocBannerRecommended" style="display:none;">
+        <div class="openclaw-banner-icon">
+          <!-- OpenClaw logo placeholder — replace with actual SVG when available -->
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="14" cy="14" r="13" stroke="currentColor" stroke-width="1.5" opacity="0.6"/>
+            <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="currentColor" opacity="0.8"/>
+          </svg>
+        </div>
+        <div class="openclaw-banner-content">
+          <div class="openclaw-banner-title">OpenClaw Setup Available</div>
+          <div class="openclaw-banner-desc">OpenClaw guides you through the entire setup conversationally — LLM configuration, cloud model routing, OAuth, and troubleshooting. <strong>Recommended for the best experience.</strong></div>
+          <div style="margin-top:10px; padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.72rem; color:var(--text-secondary); display:flex; align-items:center; gap:8px;">
+            <span style="color:var(--text-muted);">$</span>
+            <span id="clawhubCmd">clawhub install seo-intel</span>
+            <button class="btn btn-sm" style="margin-left:auto; padding:3px 8px; font-size:0.65rem;" onclick="navigator.clipboard.writeText('clawhub install seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
+          </div>
+          <div class="openclaw-banner-actions">
+            <button class="btn btn-gold" onclick="startAgentSetup()"><i class="fa-solid fa-play"></i> Start Setup</button>
+            <button class="btn" onclick="continueManualSetup()"><i class="fa-solid fa-list-check"></i> Continue Manually</button>
+          </div>
+        </div>
+      </div>
+      <div class="openclaw-banner-minimal" id="ocBannerMinimal" style="display:none;">
+        <div class="openclaw-banner-icon" style="color:var(--text-muted); font-size:1rem;">
+          <svg width="20" height="20" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="14" cy="14" r="13" stroke="currentColor" stroke-width="1.5" opacity="0.6"/>
+            <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="currentColor" opacity="0.8"/>
+          </svg>
+        </div>
+        <div class="openclaw-banner-content">
+          <div class="openclaw-banner-desc" style="color:var(--text-muted); font-size:0.72rem;">
+            <strong style="color:var(--text-secondary);">Tip:</strong> Run <code style="background:rgba(124,109,235,0.1); padding:1px 5px; border-radius:3px; color:var(--accent-purple);">clawhub install seo-intel</code> for guided agent setup with cloud model routing.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="installLog" class="log-output"></div>
+    <div style="display:flex; gap:10px; justify-content: flex-end; margin-top: 8px;">
+      <button class="btn" onclick="runSystemCheck()"><i class="fa-solid fa-arrows-rotate"></i> Re-check</button>
+    </div>
+
+    <div class="step-nav">
+      <div></div>
+      <button class="btn btn-gold" id="step1Next" disabled onclick="goToStep(2)">
+        Next <i class="fa-solid fa-arrow-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Step 2: Model Selection ───────────────────────────────────────── -->
+<div class="step-panel" id="step2">
+  <div class="card">
+    <h2><i class="fa-solid fa-microchip"></i> Model Selection</h2>
+    <div class="model-columns">
+      <div class="model-section" id="extractionSection">
+        <h3><i class="fa-solid fa-robot"></i> Extraction Tier</h3>
+        <p class="section-note">Local Ollama model for structured data extraction during crawl</p>
+        <div id="extractionModels">
+          <!-- Populated by JS -->
+        </div>
+        <!-- Custom model input -->
+        <div style="margin-top:12px; padding:10px; background:var(--bg-card); border:1px solid var(--border-card); border-radius:var(--radius);">
+          <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:6px;">
+            Or use your own model from <a href="https://ollama.com/search" target="_blank" style="color:var(--accent-gold);">ollama.com/search</a>
+          </p>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="text" id="customModelInput" placeholder="e.g. llama3.3:8b" style="flex:1; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); padding:6px 8px; color:var(--text-primary); font-family:var(--font-mono); font-size:0.72rem;">
+            <button class="btn btn-sm" onclick="useCustomModel()">Use</button>
+          </div>
+        </div>
+        <div class="model-pull-row" id="pullRow" style="display:none;">
+          <button class="btn btn-sm" id="pullBtn" onclick="pullModel()"><i class="fa-solid fa-download"></i> Pull Model</button>
+          <span id="pullStatus" style="font-size:0.7rem; color:var(--text-muted);"></span>
+        </div>
+        <div id="pullLog" class="log-output"></div>
+        <!-- Upgrade overlay for extraction (shown on free tier) -->
+        <div class="upgrade-overlay">
+          <div class="upgrade-overlay-bg"></div>
+          <div class="upgrade-overlay-dots"><div class="glow-orb"></div></div>
+          <div class="upgrade-overlay-content">
+            <div class="upgrade-overlay-icon"><i class="fa-solid fa-star" style="color:var(--accent-gold);"></i></div>
+            <div class="upgrade-overlay-title">Solo Feature</div>
+            <div class="upgrade-overlay-sub">AI extraction requires a Solo or Agency license</div>
+            <a class="btn-upgrade" href="https://ukkometa.fi/seo-intel/" target="_blank">Upgrade to Solo →</a>
+          </div>
+        </div>
+      </div>
+      <div class="model-section" id="analysisSection">
+        <h3><i class="fa-solid fa-brain"></i> Analysis Tier</h3>
+        <p class="section-note">Local Ollama model for competitive gap analysis (needs more VRAM than extraction)</p>
+        <div id="analysisModels">
+          <!-- Populated by JS -->
+        </div>
+        <!-- Custom analysis model input -->
+        <div style="margin-top:12px; padding:10px; background:var(--bg-card); border:1px solid var(--border-card); border-radius:var(--radius);">
+          <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:6px;">
+            Or use your own model from <a href="https://ollama.com/search" target="_blank" style="color:var(--accent-gold);">ollama.com/search</a>
+          </p>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="text" id="customAnalysisModelInput" placeholder="e.g. llama3.3:70b" style="flex:1; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); padding:6px 8px; color:var(--text-primary); font-family:var(--font-mono); font-size:0.72rem;">
+            <button class="btn btn-sm" onclick="useCustomAnalysisModel()">Use</button>
+          </div>
+        </div>
+        <div class="model-pull-row" id="analysisPullRow" style="display:none;">
+          <button class="btn btn-sm" id="analysisPullBtn" onclick="pullAnalysisModel()"><i class="fa-solid fa-download"></i> Pull Model</button>
+          <span id="analysisPullStatus" style="font-size:0.7rem; color:var(--text-muted);"></span>
+        </div>
+        <div id="analysisPullLog" class="log-output"></div>
+        <!-- OpenClaw cloud upgrade banner -->
+        <div style="margin-top:12px; padding:12px 14px; background:rgba(124,109,235,0.06); border:1px solid rgba(124,109,235,0.15); border-radius:var(--radius);">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <svg width="16" height="16" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
+              <circle cx="14" cy="14" r="13" stroke="var(--accent-purple)" stroke-width="1.5" opacity="0.6"/>
+              <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="var(--accent-purple)" opacity="0.8"/>
+            </svg>
+            <span style="font-size:0.75rem; font-weight:500; color:var(--text-primary);">Want cloud-quality analysis?</span>
+          </div>
+          <p style="font-size:0.68rem; color:var(--text-muted); line-height:1.5; margin-bottom:8px;">
+            Route analysis through Claude, GPT-4o, or DeepSeek for deeper strategic insights on large datasets.
+          </p>
+          <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+            <span style="color:var(--text-muted);">$</span>
+            <span>clawhub install seo-intel</span>
+            <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.6rem;" onclick="navigator.clipboard.writeText('clawhub install seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
+          </div>
+        </div>
+        <!-- Upgrade overlay (shown on free tier) -->
+        <div class="upgrade-overlay">
+          <div class="upgrade-overlay-bg"></div>
+          <div class="upgrade-overlay-dots"><div class="glow-orb"></div></div>
+          <div class="upgrade-overlay-content">
+            <div class="upgrade-overlay-icon"><i class="fa-solid fa-star" style="color:var(--accent-gold);"></i></div>
+            <div class="upgrade-overlay-title">Solo Feature</div>
+            <div class="upgrade-overlay-sub">AI analysis requires a Solo or Agency license</div>
+            <a class="btn-upgrade" href="https://ukkometa.fi/seo-intel/" target="_blank">Upgrade to Solo →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Unified upgrade card (free tier only) -->
+    <div id="unifiedUpgrade" style="display:none; position:relative; margin-top:0; padding:48px 32px; border:1px solid rgba(232,213,163,0.15); border-radius:var(--radius); overflow:hidden; text-align:center;">
+      <div class="upgrade-overlay-bg" style="position:absolute;inset:0;"></div>
+      <div class="upgrade-overlay-dots" style="position:absolute;inset:0;"><div class="glow-orb"></div></div>
+      <div style="position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; gap:14px;">
+        <div style="font-size:2rem;"><i class="fa-solid fa-star" style="color:var(--accent-gold);"></i></div>
+        <div style="font-size:1rem; font-weight:600; color:var(--text-primary); letter-spacing:0.03em;">AI-Powered Analysis</div>
+        <div style="font-size:0.78rem; color:var(--text-muted); max-width:380px; line-height:1.6;">
+          Solo unlocks local AI extraction (Ollama) and cloud-powered competitive analysis.
+          Your data stays on your machine — AI just makes it actionable.
+        </div>
+        <div style="display:flex; gap:24px; margin:8px 0; font-size:0.72rem; color:var(--text-secondary);">
+          <div style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-brain" style="color:var(--accent-gold); font-size:0.8rem;"></i> Ollama Extraction</div>
+          <div style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-chart-column" style="color:var(--accent-gold); font-size:0.8rem;"></i> Gap Analysis</div>
+          <div style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-map" style="color:var(--accent-gold); font-size:0.8rem;"></i> Dashboards</div>
+        </div>
+        <a class="btn-upgrade" href="https://ukkometa.fi/seo-intel/" target="_blank" style="margin-top:4px;">Upgrade to Solo →</a>
+        <div style="font-size:0.65rem; color:var(--text-muted); margin-top:2px;">
+          Skip this step — crawling works without AI. Upgrade anytime.
+        </div>
+      </div>
+    </div>
+
+    <div class="step-nav">
+      <button class="btn" onclick="goToStep(1)"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <button class="btn btn-gold" id="step2Next" onclick="goToStep(3)">
+        Next <i class="fa-solid fa-arrow-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Step 3: Project Configuration ─────────────────────────────────── -->
+<div class="step-panel" id="step3">
+  <div class="card">
+    <h2><i class="fa-solid fa-folder-open"></i> Project Configuration</h2>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Project Name</label>
+        <input type="text" id="cfgProjectName" placeholder="My SaaS Site" oninput="updateSlug()">
+        <div class="slug-preview" id="slugPreview"></div>
+      </div>
+      <div class="form-group">
+        <label>Target Domain</label>
+        <input type="url" id="cfgTargetUrl" placeholder="https://example.com">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Site Name</label>
+        <input type="text" id="cfgSiteName" placeholder="Example Inc">
+      </div>
+      <div class="form-group">
+        <label>Industry</label>
+        <input type="text" id="cfgIndustry" placeholder="e.g. Developer Tools, E-commerce">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Target Audience</label>
+        <input type="text" id="cfgAudience" placeholder="e.g. Web developers, small businesses">
+      </div>
+      <div class="form-group">
+        <label>SEO Goal</label>
+        <input type="text" id="cfgGoal" placeholder="e.g. Rank for developer tooling keywords">
+      </div>
+    </div>
+
+    <!-- Owned Subdomains -->
+    <div class="form-group">
+      <label>Owned Subdomains <span style="color:var(--text-muted); font-weight:300;">(optional)</span></label>
+      <div id="ownedList"></div>
+      <button class="btn btn-sm" onclick="addOwnedRow()" style="margin-top: 4px;"><i class="fa-solid fa-plus"></i> Add subdomain</button>
+    </div>
+
+    <!-- Competitors -->
+    <div class="form-group">
+      <label>Competitor Domains</label>
+      <div id="competitorList"></div>
+      <button class="btn btn-sm" onclick="addCompetitorRow()" style="margin-top: 4px;"><i class="fa-solid fa-plus"></i> Add competitor</button>
+    </div>
+
+    <!-- Crawl Settings -->
+    <div class="form-row">
+      <div class="form-group">
+        <label>Crawl Mode</label>
+        <div class="pill-group" id="crawlModePills">
+          <label class="pill-option active" onclick="selectCrawlMode('standard')">
+            <input type="radio" name="crawlMode" value="standard" checked> Standard
+          </label>
+          <label class="pill-option" onclick="selectCrawlMode('stealth')">
+            <input type="radio" name="crawlMode" value="stealth"> Stealth
+          </label>
+        </div>
+        <div id="crawlModeDesc" style="margin-top:8px; padding:8px 10px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); font-size:0.68rem; color:var(--text-muted); line-height:1.5;">
+          <strong style="color:var(--text-secondary);">Standard</strong> — Headless Chromium via Playwright. Fast (~1.5s/page). Respects robots.txt. Works on most sites. Use this unless you get blocked.
+        </div>
+
+        <!-- Estimated throughput -->
+        <div id="crawlEstimate" style="margin-top:10px; padding:10px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); display:none;">
+          <p style="font-size:0.7rem; font-weight:500; color:var(--text-secondary); margin-bottom:6px;">
+            <i class="fa-solid fa-gauge-high" style="margin-right:4px;"></i> Estimated Throughput
+          </p>
+          <table style="width:100%; font-size:0.65rem; color:var(--text-muted); border-collapse:collapse;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border-subtle);">
+                <th style="text-align:left; padding:3px 6px; color:var(--text-secondary);">Mode</th>
+                <th style="text-align:right; padding:3px 6px; color:var(--text-secondary);">Speed/page</th>
+                <th style="text-align:right; padding:3px 6px; color:var(--text-secondary);">Pages/day</th>
+              </tr>
+            </thead>
+            <tbody id="crawlEstimateBody">
+            </tbody>
+          </table>
+          <p style="font-size:0.6rem; color:var(--text-muted); margin-top:4px; font-style:italic;" id="crawlEstimateNote"></p>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Pages per Domain</label>
+        <input type="number" id="cfgPagesPerDomain" value="50" min="1" max="500">
+        <div class="hint">Max pages to crawl from each domain.</div>
+      </div>
+    </div>
+
+    <!-- Time Estimate -->
+    <div id="timeEstimate" style="margin-top:16px; padding:12px 14px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); display:none;">
+      <div style="font-size:0.75rem; font-weight:500; color:var(--text-secondary); margin-bottom:8px;">
+        <i class="fa-solid fa-clock" style="color:var(--accent-gold); margin-right:4px;"></i> Estimated Pipeline Time
+      </div>
+      <div id="timeEstimateBody" style="font-size:0.68rem; color:var(--text-muted); line-height:1.6;"></div>
+    </div>
+
+    <div id="configErrors" style="color: var(--color-danger); font-size: 0.72rem; margin-top: 8px;"></div>
+
+    <div class="step-nav">
+      <button class="btn" onclick="goToStep(2)"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <button class="btn btn-gold" onclick="saveConfig()">
+        Save &amp; Next <i class="fa-solid fa-arrow-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Step 4: Google Search Console ─────────────────────────────────── -->
+<div class="step-panel" id="step4">
+  <div class="card">
+    <h2><i class="fa-brands fa-google" style="color:#4285F4;"></i> Google Search Console</h2>
+    <div class="hint" style="margin-bottom: 16px;">
+      GSC data powers your ranking insights, CTR analysis, and wasted impressions detection.
+      You can skip this step and add it later.
+    </div>
+
+    <!-- GSC Status -->
+    <div id="gscStatus" class="gsc-status-box">
+      <div class="gsc-status-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
+      <div class="gsc-status-text">Checking for existing GSC data...</div>
+    </div>
+
+    <!-- Method Selection -->
+    <div id="gscMethodSelect" style="display:none; margin-top: 20px;">
+      <h3 style="font-size: 0.82rem; margin-bottom: 12px;">How would you like to connect GSC?</h3>
+
+      <div class="gsc-methods">
+        <!-- Method 1: CSV Upload -->
+        <div class="gsc-method-card active" onclick="selectGscMethod('csv')">
+          <div class="gsc-method-icon"><i class="fa-solid fa-file-csv"></i></div>
+          <div class="gsc-method-title">Upload CSV Export</div>
+          <div class="gsc-method-desc">Export data from Google Search Console and upload the CSV files here. Quick and works right away.</div>
+          <div class="badge" style="margin-top:8px;">Recommended</div>
+        </div>
+
+        <!-- Method 2: API (future) -->
+        <div class="gsc-method-card disabled" style="opacity:0.5; cursor:not-allowed;">
+          <div class="gsc-method-icon"><i class="fa-solid fa-plug"></i></div>
+          <div class="gsc-method-title">API Connection</div>
+          <div class="gsc-method-desc">Connect directly via Google service account for automatic data sync.</div>
+          <div class="badge" style="margin-top:8px; background: var(--bg-card);">Coming Soon</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CSV Upload Section -->
+    <div id="gscCsvSection" style="display:none; margin-top: 20px;">
+      <h3 style="font-size: 0.82rem; margin-bottom: 12px;"><i class="fa-solid fa-cloud-arrow-up"></i> Upload GSC CSV Files</h3>
+
+      <!-- How to export guide -->
+      <div class="gsc-guide">
+        <div class="gsc-guide-title"><i class="fa-solid fa-circle-info"></i> How to export from Google Search Console</div>
+        <ol class="gsc-guide-steps">
+          <li>Go to <a href="https://search.google.com/search-console" target="_blank" style="color:var(--accent-gold);">search.google.com/search-console</a></li>
+          <li>Select your property (domain)</li>
+          <li>Click <strong>Performance</strong> in the left sidebar</li>
+          <li>Set your date range (last 3 months recommended)</li>
+          <li>Click the <strong>Export</strong> button (top right) → <strong>Download CSV</strong></li>
+          <li>Unzip the downloaded file — you'll get Chart.csv, Queries.csv, Pages.csv, etc.</li>
+        </ol>
+      </div>
+
+      <!-- Drop zone -->
+      <div class="gsc-dropzone" id="gscDropzone"
+           ondragover="event.preventDefault(); this.classList.add('dragover');"
+           ondragleave="this.classList.remove('dragover');"
+           ondrop="handleGscDrop(event);">
+        <i class="fa-solid fa-cloud-arrow-up" style="font-size: 2rem; color: var(--accent-gold); margin-bottom: 8px;"></i>
+        <div>Drop CSV files here or <label class="gsc-browse" for="gscFileInput">browse</label></div>
+        <div class="hint">Accepts: Chart.csv, Queries.csv, Pages.csv, Countries.csv, Devices.csv</div>
+        <input type="file" id="gscFileInput" multiple accept=".csv" style="display:none;" onchange="handleGscFiles(this.files)">
+      </div>
+
+      <!-- Upload status -->
+      <div id="gscFileList" class="gsc-file-list"></div>
+      <div id="gscUploadStatus" style="margin-top: 10px;"></div>
+    </div>
+
+    <div class="step-nav">
+      <button class="btn" onclick="goToStep(3)"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <button class="btn" onclick="goToStep(5)" style="margin-right: auto; margin-left: 8px;">
+        Skip <i class="fa-solid fa-forward"></i>
+      </button>
+      <button class="btn btn-gold" id="gscNextBtn" onclick="goToStep(5)">
+        Next <i class="fa-solid fa-arrow-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Step 5: Pipeline Test ─────────────────────────────────────────── -->
+<div class="step-panel" id="step5">
+  <div class="card">
+    <h2><i class="fa-solid fa-vial"></i> Pipeline Test</h2>
+
+    <div id="testCards">
+      <div class="test-card" id="testOllama">
+        <div class="test-icon"><i class="fa-solid fa-server"></i></div>
+        <div class="test-info">
+          <div class="test-name">Ollama Connectivity</div>
+          <div class="test-detail" id="testOllamaDetail">Pending</div>
+        </div>
+        <div class="test-latency" id="testOllamaLatency"></div>
+      </div>
+      <div class="test-card" id="testApiKey">
+        <div class="test-icon"><i class="fa-solid fa-key"></i></div>
+        <div class="test-info">
+          <div class="test-name">API Key Validation</div>
+          <div class="test-detail" id="testApiKeyDetail">Pending</div>
+        </div>
+        <div class="test-latency" id="testApiKeyLatency"></div>
+      </div>
+      <div class="test-card" id="testCrawl">
+        <div class="test-icon"><i class="fa-solid fa-spider"></i></div>
+        <div class="test-info">
+          <div class="test-name">Test Crawl (1 page)</div>
+          <div class="test-detail" id="testCrawlDetail">Pending</div>
+        </div>
+        <div class="test-latency" id="testCrawlLatency"></div>
+      </div>
+      <div class="test-card" id="testExtraction">
+        <div class="test-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+        <div class="test-info">
+          <div class="test-name">Test Extraction</div>
+          <div class="test-detail" id="testExtractionDetail">Pending</div>
+        </div>
+        <div class="test-latency" id="testExtractionLatency"></div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top: 12px;">
+      <button class="btn btn-gold" id="runTestsBtn" onclick="runTests()"><i class="fa-solid fa-play"></i> Run All Tests</button>
+    </div>
+
+    <div class="step-nav">
+      <button class="btn" onclick="goToStep(4)"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <button class="btn btn-gold" id="step5Next" disabled onclick="buildSummaryAndFinish()">
+        Finish <i class="fa-solid fa-arrow-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Step 6: Done ──────────────────────────────────────────────────── -->
+<div class="step-panel" id="step6">
+  <div class="card">
+    <div class="done-icon"><i class="fa-solid fa-circle-check"></i></div>
+    <h2 style="justify-content:center;"><i class="fa-solid fa-flag-checkered"></i> Setup Complete</h2>
+
+    <table class="summary-table" id="summaryTable">
+      <!-- Populated by JS -->
+    </table>
+
+    <h3 style="font-family:var(--font-display); font-size:0.85rem; color:var(--text-primary); margin: 20px 0 10px; font-weight:600;">
+      <i class="fa-solid fa-terminal" style="color:var(--accent-purple); margin-right:6px;"></i> Next Steps
+    </h3>
+    <div class="cli-block" id="cliBlock">
+      <button class="btn btn-sm copy-btn" onclick="copyCli()"><i class="fa-regular fa-copy"></i></button>
+    </div>
+
+    <div style="text-align:center; margin-top: 24px;">
+      <a href="/" class="btn btn-gold" style="text-decoration:none;"><i class="fa-solid fa-chart-line"></i> Open Dashboard</a>
+    </div>
+  </div>
+</div>
+
+</div><!-- /wizard-body -->
+
+<!-- ─── Agent Chat Panel (shown when OpenClaw agent setup is chosen) ──── -->
+<div class="agent-panel" id="agentPanel">
+  <div class="agent-chat">
+    <div class="agent-chat-header">
+      <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Agent Setup</h3>
+      <button class="btn" onclick="exitAgentSetup()"><i class="fa-solid fa-list-check"></i> Switch to Manual</button>
+    </div>
+    <div class="agent-chat-messages" id="agentMessages">
+      <div class="agent-msg system">Connecting to OpenClaw agent...</div>
+    </div>
+    <div class="agent-typing" id="agentTyping"><i class="fa-solid fa-circle"></i> Agent is thinking...</div>
+    <div class="agent-chat-input">
+      <input type="text" id="agentInput" placeholder="Type your answer..." onkeydown="if(event.key==='Enter')sendAgentMessage()">
+      <button class="btn" onclick="sendAgentMessage()"><i class="fa-solid fa-paper-plane"></i></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  'use strict';
+
+  // ── Global State ──────────────────────────────────────────────────────
+  const state = {
+    currentStep: 1,
+    maxVisited: 1,
+    systemStatus: null,
+    modelData: null,
+    selectedExtraction: null,
+    selectedAnalysis: null,
+    savedApiKey: null,
+    savedApiProvider: null,
+    configSaved: false,
+    projectSlug: '',
+    crawlMode: 'standard',
+    testsPassed: false,
+    gscFiles: [],       // Files staged for upload
+    gscMethod: 'csv',   // 'csv' or 'api'
+    gscUploaded: false,
+    tier: 'free',       // 'free' | 'solo' | 'agency'
+  };
+
+  // ── API Helpers ───────────────────────────────────────────────────────
+  const API = {
+    async get(path) {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    async post(path, body) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || data.errors?.join(', ') || `HTTP ${res.status}`);
+      }
+      return res.json();
+    },
+    sse(path, body, onEvent) {
+      return new Promise((resolve, reject) => {
+        fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then(res => {
+          if (!res.ok) {
+            reject(new Error(`HTTP ${res.status}`));
+            return;
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          function pump() {
+            reader.read().then(({ value, done }) => {
+              if (done) { resolve(); return; }
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    onEvent(data);
+                  } catch {}
+                }
+              }
+              pump();
+            }).catch(reject);
+          }
+          pump();
+        }).catch(reject);
+      });
+    },
+  };
+
+  // ── Step Navigation ───────────────────────────────────────────────────
+  window.goToStep = function(n) {
+    // Only allow navigating to completed steps or the next step
+    if (n > state.maxVisited + 1) return;
+    if (n > state.currentStep + 1) return;
+
+    state.currentStep = n;
+    if (n > state.maxVisited) state.maxVisited = n;
+
+    // Update panels
+    document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('step' + n);
+    if (panel) panel.classList.add('active');
+
+    // Update indicator
+    document.querySelectorAll('.step-node').forEach(node => {
+      const s = parseInt(node.dataset.step);
+      node.classList.remove('active', 'completed');
+      if (s < n) node.classList.add('completed');
+      else if (s === n) node.classList.add('active');
+    });
+    document.querySelectorAll('.step-connector').forEach(conn => {
+      const c = parseInt(conn.dataset.conn);
+      conn.classList.toggle('completed', c < n);
+    });
+
+    // Step-specific initialization
+    if (n === 2 && !state.modelData) loadModels();
+    if (n === 3) updateCrawlEstimate();
+    if (n === 4) checkGscStatus();
+  };
+
+  // ── Step 1: System Check ──────────────────────────────────────────────
+  const DEP_DEFS = [
+    { key: 'node',       icon: 'fa-brands fa-node-js',     name: 'Node.js' },
+    { key: 'npm',        icon: 'fa-solid fa-cube',         name: 'npm' },
+    { key: 'npmDeps',    icon: 'fa-solid fa-cubes',        name: 'npm Dependencies' },
+    { key: 'playwright', icon: 'fa-solid fa-globe',        name: 'Playwright' },
+    { key: 'ollama',     icon: 'fa-solid fa-robot',        name: 'Ollama' },
+    { key: 'vram',       icon: 'fa-solid fa-memory',       name: 'GPU / VRAM' },
+    { key: 'openclaw',   icon: 'fa-solid fa-wand-magic-sparkles', name: 'OpenClaw' },
+  ];
+
+  function depStatus(status, key) {
+    switch (key) {
+      case 'node':
+        if (status.node.meetsMinimum) return { cls: 'ok', icon: 'fa-check', detail: status.node.version };
+        if (status.node.installed) return { cls: 'warn', icon: 'fa-exclamation', detail: `${status.node.version} (need v18+)` };
+        return { cls: 'fail', icon: 'fa-xmark', detail: 'Not found', action: null };
+      case 'npm':
+        if (status.npm.installed) return { cls: 'ok', icon: 'fa-check', detail: `v${status.npm.version}` };
+        return { cls: 'fail', icon: 'fa-xmark', detail: 'Not found' };
+      case 'npmDeps':
+        if (status.npmDeps.installed) return { cls: 'ok', icon: 'fa-check', detail: 'All installed' };
+        return { cls: 'fail', icon: 'fa-xmark', detail: `Missing: ${status.npmDeps.missing.slice(0,3).join(', ')}`, action: 'npm' };
+      case 'playwright':
+        if (status.playwright.installed && status.playwright.chromiumReady) return { cls: 'ok', icon: 'fa-check', detail: 'Chromium ready' };
+        if (status.playwright.installed) return { cls: 'warn', icon: 'fa-exclamation', detail: 'Installed, Chromium needs setup', action: 'playwright' };
+        return { cls: 'fail', icon: 'fa-xmark', detail: 'Not installed', action: 'playwright' };
+      case 'ollama':
+        if (status.ollama.available) return { cls: 'ok', icon: 'fa-check', detail: `${status.ollama.models.length} model(s) at ${status.ollama.host}` };
+        if (status.ollama.installed) return { cls: 'warn', icon: 'fa-exclamation', detail: 'Installed but not running or no models' };
+        return { cls: 'warn', icon: 'fa-exclamation', detail: 'Not installed (optional for extraction)' };
+      case 'vram':
+        if (status.vram.available) return { cls: 'ok', icon: 'fa-check', detail: `${status.vram.gpuName} \u2014 ${Math.round(status.vram.vramMB / 1024)}GB` };
+        return { cls: 'warn', icon: 'fa-exclamation', detail: 'No GPU detected' };
+      case 'openclaw':
+        if (status.openclaw?.canAgentSetup) return { cls: 'ok', icon: 'fa-check', detail: `v${status.openclaw.version} — gateway active` };
+        if (status.openclaw?.installed) return { cls: 'warn', icon: 'fa-exclamation', detail: `v${status.openclaw.version} — gateway offline` };
+        return { cls: 'warn', icon: 'fa-exclamation', detail: 'Not installed (optional)' };
+      default:
+        return { cls: '', icon: 'fa-question', detail: '' };
+    }
+  }
+
+  function renderDepGrid(status) {
+    const grid = document.getElementById('depGrid');
+    grid.innerHTML = '';
+    for (const def of DEP_DEFS) {
+      const s = depStatus(status, def.key);
+      const card = document.createElement('div');
+      card.className = 'dep-card ' + s.cls;
+      let actionsHtml = '';
+      if (s.action) {
+        actionsHtml = `<div class="dep-actions"><button class="btn btn-sm" onclick="installDep('${s.action}')"><i class="fa-solid fa-download"></i> Install</button></div>`;
+      }
+      card.innerHTML = `
+        <div class="dep-icon"><i class="${def.icon}"></i></div>
+        <div class="dep-info">
+          <div class="dep-name">${def.name}</div>
+          <div class="dep-detail"><i class="fa-solid ${s.icon}" style="margin-right:4px;"></i>${s.detail}</div>
+          ${actionsHtml}
+        </div>
+      `;
+      grid.appendChild(card);
+    }
+
+    // Enable Next if Node 18+ is detected
+    const nextBtn = document.getElementById('step1Next');
+    nextBtn.disabled = !status.node.meetsMinimum;
+
+    // Show OpenClaw banner
+    const banner = document.getElementById('openclawBanner');
+    const bannerRec = document.getElementById('ocBannerRecommended');
+    const bannerMin = document.getElementById('ocBannerMinimal');
+
+    if (status.openclaw?.canAgentSetup) {
+      banner.style.display = '';
+      bannerRec.style.display = 'flex';
+      bannerMin.style.display = 'none';
+    } else if (status.openclaw?.installed) {
+      banner.style.display = '';
+      bannerRec.style.display = 'none';
+      bannerMin.style.display = 'flex';
+    } else {
+      banner.style.display = '';
+      bannerRec.style.display = 'none';
+      bannerMin.style.display = 'flex';
+    }
+  }
+
+  window.runSystemCheck = async function() {
+    const grid = document.getElementById('depGrid');
+    grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:30px; color:var(--text-muted); font-size:0.8rem;"><i class="fa-solid fa-spinner fa-spin-pulse" style="margin-right:8px;"></i>Checking system...</div>';
+    document.getElementById('step1Next').disabled = true;
+    try {
+      state.systemStatus = await API.get('/api/setup/status');
+      renderDepGrid(state.systemStatus);
+    } catch (err) {
+      grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:30px; color:var(--color-danger); font-size:0.8rem;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>Failed to reach server: ${err.message}</div>`;
+    }
+  };
+
+  window.installDep = async function(action) {
+    const logEl = document.getElementById('installLog');
+    logEl.classList.add('visible');
+    logEl.innerHTML = '';
+    appendLog(logEl, `Starting ${action} install...\n`, 'info');
+
+    try {
+      await API.sse('/api/setup/install', { action }, (ev) => {
+        const cls = ev.status === 'error' ? 'err' : ev.status === 'done' ? 'ok' : 'info';
+        appendLog(logEl, ev.message + '\n', cls);
+      });
+      appendLog(logEl, 'Done! Re-checking system...\n', 'ok');
+      await runSystemCheck();
+    } catch (err) {
+      appendLog(logEl, 'Error: ' + err.message + '\n', 'err');
+    }
+  };
+
+  function appendLog(el, text, cls) {
+    const span = document.createElement('span');
+    span.className = 'log-' + cls;
+    span.textContent = text;
+    el.appendChild(span);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // ── Step 2: Model Selection ───────────────────────────────────────────
+  async function loadModels() {
+    const extDiv = document.getElementById('extractionModels');
+    const anaDiv = document.getElementById('analysisModels');
+    extDiv.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-muted); font-size:0.75rem;"><i class="fa-solid fa-spinner fa-spin-pulse"></i> Loading models...</div>';
+    anaDiv.innerHTML = extDiv.innerHTML;
+
+    try {
+      state.modelData = await API.get('/api/setup/models');
+      renderExtractionModels();
+      renderAnalysisModels();
+    } catch (err) {
+      extDiv.innerHTML = `<div style="color:var(--color-danger); font-size:0.75rem;">Failed: ${err.message}</div>`;
+      anaDiv.innerHTML = extDiv.innerHTML;
+    }
+  }
+
+  function renderExtractionModels() {
+    const div = document.getElementById('extractionModels');
+    div.innerHTML = '';
+    const models = [...(state.modelData.allExtraction || [])];
+    // Sort: installed first, then recommended, then by minVramMB
+    models.sort((a, b) => (b.installed ? 1 : 0) - (a.installed ? 1 : 0) || (b.recommended ? 1 : 0) - (a.recommended ? 1 : 0) || a.minVramMB - b.minVramMB);
+    const rec = state.modelData.extraction;
+
+    for (const m of models) {
+      const isRec = rec && rec.model && rec.model.id === m.id;
+      const isSelected = state.selectedExtraction === m.id || (!state.selectedExtraction && isRec);
+      if (isSelected) state.selectedExtraction = m.id;
+
+      const badges = [];
+      if (isRec && rec.autoRecommended) badges.push('<span class="model-badge recommended">recommended</span>');
+      if (m.installed) badges.push('<span class="model-badge installed">installed</span>');
+      if (!m.fitsVram && !m.installed) badges.push('<span class="model-badge no-fit">needs more VRAM</span>');
+
+      const card = document.createElement('div');
+      card.className = 'model-radio-card' + (isSelected ? ' selected' : '') + (m.legacy ? ' legacy' : '');
+      card.dataset.modelId = m.id;
+      card.innerHTML = `
+        <div class="model-card-header">
+          <span class="model-card-name">${m.name}</span>
+          <span>${badges.join(' ')}</span>
+        </div>
+        <div class="model-card-meta">
+          <span class="model-meta-item"><i class="fa-solid fa-memory"></i> ${m.vram}</span>
+          <span class="model-meta-item"><i class="fa-solid fa-gauge-high"></i> ${m.speed}</span>
+          <span class="model-meta-item"><i class="fa-solid fa-star"></i> ${m.quality}</span>
+        </div>
+        <div class="model-card-desc">${m.description}</div>
+      `;
+      card.addEventListener('click', () => selectExtractionModel(m.id));
+      div.appendChild(card);
+    }
+
+    updatePullRow();
+  }
+
+  function selectExtractionModel(id) {
+    state.selectedExtraction = id;
+    document.querySelectorAll('#extractionModels .model-radio-card').forEach(c => {
+      c.classList.toggle('selected', c.dataset.modelId === id);
+    });
+    updatePullRow();
+  }
+
+  function updatePullRow() {
+    const pullRow = document.getElementById('pullRow');
+    if (!state.selectedExtraction || !state.modelData) { pullRow.style.display = 'none'; return; }
+    const m = state.modelData.allExtraction.find(x => x.id === state.selectedExtraction);
+    if (m && !m.installed) {
+      pullRow.style.display = 'flex';
+      document.getElementById('pullStatus').textContent = `${m.id} is not installed yet.`;
+    } else {
+      pullRow.style.display = 'none';
+    }
+  }
+
+  window.pullModel = async function() {
+    if (!state.selectedExtraction) return;
+    const logEl = document.getElementById('pullLog');
+    logEl.classList.add('visible');
+    logEl.innerHTML = '';
+    const btn = document.getElementById('pullBtn');
+    btn.disabled = true;
+    appendLog(logEl, `Pulling ${state.selectedExtraction}...\n`, 'info');
+
+    try {
+      const host = (state.systemStatus && state.systemStatus.ollama.host) || 'http://localhost:11434';
+      let hadError = false;
+      await API.sse('/api/setup/install', { action: 'ollama-pull', model: state.selectedExtraction, host }, (ev) => {
+        const cls = ev.status === 'error' ? 'err' : ev.status === 'done' ? 'ok' : 'info';
+        if (ev.status === 'error') hadError = true;
+        appendLog(logEl, ev.message + '\n', cls);
+      });
+      if (hadError) {
+        appendLog(logEl, 'Pull encountered errors. Check model name and try again.\n', 'err');
+      } else {
+        appendLog(logEl, 'Model pulled successfully!\n', 'ok');
+        // Refresh model data
+        state.modelData = await API.get('/api/setup/models');
+        renderExtractionModels();
+      }
+    } catch (err) {
+      appendLog(logEl, 'Error: ' + err.message + '\n', 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  window.useCustomModel = function() {
+    const input = document.getElementById('customModelInput');
+    const modelId = input.value.trim();
+    if (!modelId) return;
+    state.selectedExtraction = modelId;
+    // Deselect all radio cards
+    document.querySelectorAll('#extractionModels .model-radio-card').forEach(c => {
+      c.classList.remove('selected');
+      const radio = c.querySelector('input[type="radio"]');
+      if (radio) radio.checked = false;
+    });
+    updatePullRow();
+    // Show the custom model in pull status
+    const pullRow = document.getElementById('pullRow');
+    pullRow.style.display = 'flex';
+    document.getElementById('pullStatus').textContent = `Custom: ${modelId} — click Pull to download`;
+  };
+
+  function renderAnalysisModels() {
+    const div = document.getElementById('analysisModels');
+    div.innerHTML = '';
+    const models = [...(state.modelData.allAnalysis || [])];
+    // Sort: installed first, then recommended, then by minVramMB
+    models.sort((a, b) => (b.installed ? 1 : 0) - (a.installed ? 1 : 0) || (b.recommended ? 1 : 0) - (a.recommended ? 1 : 0) || a.minVramMB - b.minVramMB);
+    const rec = state.modelData.analysis;
+
+    for (const m of models) {
+      const isRec = rec && rec.model && rec.model.id === m.id;
+      const isSelected = state.selectedAnalysis === m.id || (!state.selectedAnalysis && isRec);
+      if (isSelected) state.selectedAnalysis = m.id;
+
+      const badges = [];
+      if (m.recommended) badges.push('<span class="model-badge recommended">recommended</span>');
+      if (m.installed) badges.push('<span class="model-badge installed">installed</span>');
+      if (!m.fitsVram && m.vram) badges.push('<span class="model-badge vram-warn">needs more vram</span>');
+
+      const card = document.createElement('div');
+      card.className = 'model-radio-card' + (isSelected ? ' selected' : '') + (!m.fitsVram ? ' dimmed' : '');
+      card.dataset.modelId = m.id;
+      card.innerHTML = `
+        <div class="model-card-header">
+          <span class="model-card-name">${m.name}</span>
+          <span>${badges.join(' ')}</span>
+        </div>
+        <div class="model-card-meta">
+          <span class="model-meta-item"><i class="fa-solid fa-microchip"></i> ${m.vram}</span>
+          <span class="model-meta-item"><i class="fa-solid fa-arrows-left-right"></i> ${m.context}</span>
+          <span class="model-meta-item"><i class="fa-solid fa-star"></i> ${m.quality}</span>
+        </div>
+        <div class="model-card-desc">${m.description}</div>
+      `;
+      card.addEventListener('click', () => selectAnalysisModel(m.id));
+      div.appendChild(card);
+    }
+
+    // Show pull row if selected model is not installed
+    const selected = models.find(m => m.id === state.selectedAnalysis);
+    if (selected && !selected.installed) {
+      const pullRow = document.getElementById('analysisPullRow');
+      if (pullRow) {
+        pullRow.style.display = 'flex';
+        document.getElementById('analysisPullStatus').textContent = `${selected.name} not installed`;
+      }
+    }
+  }
+
+  function selectAnalysisModel(id) {
+    state.selectedAnalysis = id;
+    document.querySelectorAll('#analysisModels .model-radio-card').forEach(c => {
+      c.classList.toggle('selected', c.dataset.modelId === id);
+    });
+    // Update pull row
+    const models = state.modelData?.allAnalysis || [];
+    const selected = models.find(m => m.id === id);
+    const pullRow = document.getElementById('analysisPullRow');
+    if (pullRow) {
+      if (selected && !selected.installed) {
+        pullRow.style.display = 'flex';
+        document.getElementById('analysisPullStatus').textContent = `${selected.name} not installed`;
+      } else {
+        pullRow.style.display = 'none';
+      }
+    }
+  }
+
+  window.useCustomAnalysisModel = function() {
+    const input = document.getElementById('customAnalysisModelInput');
+    const modelId = input.value.trim();
+    if (!modelId) return;
+    state.selectedAnalysis = modelId;
+    document.querySelectorAll('#analysisModels .model-radio-card').forEach(c => c.classList.remove('selected'));
+    const pullRow = document.getElementById('analysisPullRow');
+    if (pullRow) {
+      pullRow.style.display = 'flex';
+      document.getElementById('analysisPullStatus').textContent = `Custom model: ${modelId}`;
+    }
+  };
+
+  window.pullAnalysisModel = async function() {
+    const modelId = state.selectedAnalysis;
+    if (!modelId) return;
+    const btn = document.getElementById('analysisPullBtn');
+    const statusEl = document.getElementById('analysisPullStatus');
+    const logEl = document.getElementById('analysisPullLog');
+    btn.disabled = true;
+    statusEl.textContent = 'Pulling...';
+    logEl.style.display = 'block';
+    logEl.textContent = '';
+
+    try {
+      const res = await fetch('/api/setup/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'pull-model', model: modelId }),
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        logEl.textContent += decoder.decode(value);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+      statusEl.textContent = 'Pull complete!';
+      // Refresh model data
+      state.modelData = await API.get('/api/setup/models');
+      renderAnalysisModels();
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // ── Step 3: Project Configuration ─────────────────────────────────────
+
+  function slugify(s) {
+    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  window.updateSlug = function() {
+    const name = document.getElementById('cfgProjectName').value;
+    const slug = slugify(name);
+    state.projectSlug = slug;
+    document.getElementById('slugPreview').textContent = slug ? 'config/' + slug + '.json' : '';
+  };
+
+  window.selectCrawlMode = function(mode) {
+    state.crawlMode = mode;
+    document.querySelectorAll('#crawlModePills .pill-option').forEach(p => {
+      p.classList.toggle('active', p.querySelector('input').value === mode);
+    });
+    // Update description
+    const descEl = document.getElementById('crawlModeDesc');
+    if (descEl) {
+      const descs = {
+        standard: '<strong style="color:var(--text-secondary);">Standard</strong> — Headless Chromium via Playwright. Fast (~1.5s/page). Respects robots.txt. Works on most sites. Use this unless you get blocked.',
+        stealth: '<strong style="color:var(--text-secondary);">Stealth</strong> — Headless Chromium with evasion patches. Realistic fingerprint, cookie persistence, user agent rotation. Slower (~3-4s/page). Ignores robots.txt. Use for Cloudflare-protected or bot-blocked sites.',
+      };
+      descEl.innerHTML = descs[mode] || descs.standard;
+    }
+    updateCrawlEstimate();
+  };
+
+  function updateCrawlEstimate() {
+    const el = document.getElementById('crawlEstimate');
+    const body = document.getElementById('crawlEstimateBody');
+    const note = document.getElementById('crawlEstimateNote');
+    if (!el) return;
+
+    // Get extraction model speed
+    const extractionId = state.selectedExtraction;
+    let extractionSpeed = 0;
+    if (state.modelData && extractionId) {
+      const m = (state.modelData.allExtraction || []).find(x => x.id === extractionId);
+      if (m && m.speed) {
+        const match = m.speed.match(/~?(\d+)s/);
+        if (match) extractionSpeed = parseInt(match[1]);
+      }
+    }
+
+    const modes = {
+      standard: { label: 'Standard', secPerPage: 2 + extractionSpeed },
+      stealth: { label: 'Stealth', secPerPage: 4 + extractionSpeed },
+      hybrid: { label: 'Hybrid', secPerPage: 3 + extractionSpeed },
+      manual: { label: 'Manual (curl)', secPerPage: 1 + extractionSpeed },
+    };
+
+    const pagesPerDomain = parseInt(document.getElementById('cfgPagesPerDomain')?.value) || 50;
+    const competitorCount = (document.querySelectorAll('#competitorList .dyn-list-item input') || []).length + 1;
+    const totalPages = pagesPerDomain * competitorCount;
+
+    const rows = Object.entries(modes).map(([key, m]) => {
+      const pagesPerDay = Math.floor(86400 / m.secPerPage);
+      const highlight = key === state.crawlMode ? 'color:var(--accent-gold); font-weight:500;' : '';
+      return `<tr style="${highlight}">
+        <td style="padding:3px 6px;">${m.label}${key === state.crawlMode ? ' ●' : ''}</td>
+        <td style="text-align:right; padding:3px 6px;">~${m.secPerPage}s</td>
+        <td style="text-align:right; padding:3px 6px;">~${pagesPerDay.toLocaleString()}</td>
+      </tr>`;
+    });
+
+    body.innerHTML = rows.join('');
+    const selectedMode = modes[state.crawlMode];
+    const estTime = Math.ceil((totalPages * selectedMode.secPerPage) / 60);
+    note.textContent = `~${totalPages} pages × ~${selectedMode.secPerPage}s = ~${estTime} min for full crawl${extractionSpeed ? ` (incl. ${extractionSpeed}s extraction per page)` : ''}`;
+    el.style.display = 'block';
+  }
+
+  // Dynamic list helpers
+  function addListRow(containerId, placeholder) {
+    const list = document.getElementById(containerId);
+    const item = document.createElement('div');
+    item.className = 'dyn-list-item';
+    item.innerHTML = `
+      <input type="text" placeholder="${placeholder}">
+      <button class="btn btn-sm btn-remove btn-danger" onclick="this.parentElement.remove()"><i class="fa-solid fa-xmark"></i></button>
+    `;
+    list.appendChild(item);
+    item.querySelector('input').focus();
+  }
+
+  window.addOwnedRow = function() { addListRow('ownedList', 'https://docs.example.com'); setTimeout(updateTimeEstimate, 100); };
+  window.addCompetitorRow = function() { addListRow('competitorList', 'https://competitor.com'); setTimeout(updateTimeEstimate, 100); };
+
+  function updateTimeEstimate() {
+    const el = document.getElementById('timeEstimate');
+    const body = document.getElementById('timeEstimateBody');
+    if (!el || !body) return;
+
+    const pagesPerDomain = parseInt(document.getElementById('cfgPagesPerDomain')?.value) || 50;
+    const competitors = getListValues('competitorList').length;
+    const owned = getListValues('ownedList').length;
+    const target = document.getElementById('cfgTargetUrl')?.value.trim() ? 1 : 0;
+    const totalDomains = target + owned + competitors;
+
+    if (totalDomains === 0) { el.style.display = 'none'; return; }
+
+    const totalPages = totalDomains * pagesPerDomain;
+    const mode = state.crawlMode || 'standard';
+    const crawlSec = mode === 'stealth' ? 3.5 : 1.5;
+    const extractSec = 3; // ~3s/page with qwen3.5:9b
+    const crawlMin = Math.ceil((totalPages * crawlSec) / 60);
+    const extractMin = Math.ceil((totalPages * extractSec) / 60);
+    const analyzeMin = totalPages > 200 ? 3 : 1; // analysis is one call
+
+    el.style.display = 'block';
+    body.innerHTML = `
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:8px;">
+        <div style="text-align:center; padding:8px; background:var(--bg-card); border-radius:var(--radius);">
+          <div style="font-size:0.85rem; font-weight:600; color:var(--color-success);">${totalDomains}</div>
+          <div style="font-size:0.6rem;">domains</div>
+        </div>
+        <div style="text-align:center; padding:8px; background:var(--bg-card); border-radius:var(--radius);">
+          <div style="font-size:0.85rem; font-weight:600; color:var(--color-info);">${totalPages.toLocaleString()}</div>
+          <div style="font-size:0.6rem;">total pages</div>
+        </div>
+        <div style="text-align:center; padding:8px; background:var(--bg-card); border-radius:var(--radius);">
+          <div style="font-size:0.85rem; font-weight:600; color:var(--accent-gold);">~${crawlMin + extractMin + analyzeMin} min</div>
+          <div style="font-size:0.6rem;">full pipeline</div>
+        </div>
+      </div>
+      <div style="font-size:0.62rem; color:var(--text-muted);">
+        <i class="fa-solid fa-spider" style="color:var(--color-success); width:14px;"></i> Crawl: ~${crawlMin} min (${crawlSec}s/page, ${mode})
+        &nbsp;&nbsp;
+        <i class="fa-solid fa-brain" style="color:var(--accent-gold); width:14px;"></i> Extract: ~${extractMin} min (Solo)
+        &nbsp;&nbsp;
+        <i class="fa-solid fa-chart-column" style="color:var(--accent-gold); width:14px;"></i> Analyze: ~${analyzeMin} min (Solo)
+      </div>
+      ${totalPages > 500 ? '<div style="font-size:0.6rem; color:var(--color-warning); margin-top:4px;"><i class="fa-solid fa-triangle-exclamation"></i> Large crawl — consider lowering pages per domain or running overnight.</div>' : ''}
+    `;
+  }
+
+  // Hook pages-per-domain input
+  document.getElementById('cfgPagesPerDomain')?.addEventListener('input', updateTimeEstimate);
+  document.getElementById('cfgTargetUrl')?.addEventListener('input', updateTimeEstimate);
+
+  function getListValues(containerId) {
+    const inputs = document.querySelectorAll('#' + containerId + ' .dyn-list-item input');
+    return Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
+  }
+
+  window.saveConfig = async function() {
+    const errEl = document.getElementById('configErrors');
+    errEl.textContent = '';
+
+    const projectName = document.getElementById('cfgProjectName').value.trim();
+    const targetUrl = document.getElementById('cfgTargetUrl').value.trim();
+    const siteName = document.getElementById('cfgSiteName').value.trim();
+    const industry = document.getElementById('cfgIndustry').value.trim();
+    const audience = document.getElementById('cfgAudience').value.trim();
+    const goal = document.getElementById('cfgGoal').value.trim();
+    const pagesPerDomain = parseInt(document.getElementById('cfgPagesPerDomain').value) || 50;
+
+    // Validation
+    const errors = [];
+    if (!projectName) errors.push('Project name is required.');
+    if (!targetUrl) errors.push('Target domain is required.');
+    if (!siteName) errors.push('Site name is required.');
+
+    if (targetUrl && !targetUrl.match(/^https?:\/\/.+\..+|^[a-z0-9-]+\.[a-z]{2,}/i)) {
+      errors.push('Target domain looks invalid.');
+    }
+
+    if (errors.length > 0) {
+      errEl.innerHTML = errors.map(e => '<div>' + e + '</div>').join('');
+      return;
+    }
+
+    const ownedUrls = getListValues('ownedList');
+    const competitorUrls = getListValues('competitorList');
+
+    const body = {
+      projectName,
+      targetUrl,
+      siteName,
+      industry,
+      audience,
+      goal,
+      competitors: competitorUrls.map(u => ({ url: u })),
+      owned: ownedUrls.map(u => ({ url: u })),
+      crawlMode: state.crawlMode,
+      pagesPerDomain,
+      ollamaHost: state.systemStatus?.ollama?.host || undefined,
+      extractionModel: state.selectedExtraction || undefined,
+    };
+
+    try {
+      const res = await API.post('/api/setup/config', body);
+      state.configSaved = true;
+      state.projectSlug = slugify(projectName);
+      goToStep(4);
+    } catch (err) {
+      errEl.innerHTML = '<div>Save failed: ' + err.message + '</div>';
+    }
+  };
+
+  // Init competitor rows
+  function initStep3() {
+    for (let i = 0; i < 3; i++) addCompetitorRow();
+  }
+
+  // ── Step 4: Pipeline Test ─────────────────────────────────────────────
+  const TEST_MAP = {
+    ollama:     { card: 'testOllama',     detail: 'testOllamaDetail',     latency: 'testOllamaLatency' },
+    'api-key':  { card: 'testApiKey',     detail: 'testApiKeyDetail',     latency: 'testApiKeyLatency' },
+    crawl:      { card: 'testCrawl',      detail: 'testCrawlDetail',      latency: 'testCrawlLatency' },
+    extraction: { card: 'testExtraction', detail: 'testExtractionDetail', latency: 'testExtractionLatency' },
+  };
+
+  function resetTests() {
+    for (const [, ids] of Object.entries(TEST_MAP)) {
+      const card = document.getElementById(ids.card);
+      card.className = 'test-card';
+      document.getElementById(ids.detail).textContent = 'Pending';
+      document.getElementById(ids.latency).textContent = '';
+    }
+  }
+
+  function setTestStatus(step, status, detail, latencyMs) {
+    const ids = TEST_MAP[step];
+    if (!ids) return;
+    const card = document.getElementById(ids.card);
+    card.className = 'test-card ' + status;
+    document.getElementById(ids.detail).textContent = detail;
+    if (latencyMs !== undefined && latencyMs !== null) {
+      document.getElementById(ids.latency).textContent = latencyMs + 'ms';
+    }
+    // Update icon
+    const iconEl = card.querySelector('.test-icon i');
+    if (status === 'running') iconEl.className = 'fa-solid fa-spinner fa-spin-pulse';
+    else if (status === 'pass') iconEl.className = 'fa-solid fa-circle-check';
+    else if (status === 'fail') iconEl.className = 'fa-solid fa-circle-xmark';
+    else if (status === 'skip') iconEl.className = 'fa-solid fa-circle-minus';
+    // Restore default icon for pending
+    else {
+      const defaults = { ollama: 'fa-server', 'api-key': 'fa-key', crawl: 'fa-spider', extraction: 'fa-wand-magic-sparkles' };
+      iconEl.className = 'fa-solid ' + (defaults[step] || 'fa-circle');
+    }
+  }
+
+  window.runTests = async function() {
+    const btn = document.getElementById('runTestsBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin-pulse"></i> Running...';
+    resetTests();
+
+    const targetUrl = document.getElementById('cfgTargetUrl').value.trim();
+    const ollamaHost = state.systemStatus?.ollama?.host || '';
+    const ollamaModel = state.selectedExtraction || '';
+
+    // Determine API provider and key
+    let apiProvider = state.savedApiProvider || '';
+    let apiKey = state.savedApiKey || '';
+
+    // If no saved key, check if we have a configured model
+    if (!apiKey && state.modelData) {
+      const m = state.modelData.allAnalysis.find(x => x.id === state.selectedAnalysis);
+      if (m && m.configured) {
+        apiProvider = m.provider;
+        // The server will use the .env key
+        apiKey = '__from_env__';
+      }
+    }
+
+    const body = { ollamaHost, ollamaModel, apiProvider, apiKey, targetUrl };
+
+    try {
+      let summaryResult = null;
+      await API.sse('/api/setup/test-pipeline', body, (ev) => {
+        if (ev.step === 'summary') {
+          summaryResult = ev;
+          return;
+        }
+        setTestStatus(ev.step, ev.status, ev.detail, ev.latencyMs);
+      });
+
+      if (summaryResult) {
+        state.testsPassed = summaryResult.status === 'pass' || summaryResult.status === 'partial';
+        document.getElementById('step5Next').disabled = false;
+      }
+    } catch (err) {
+      setTestStatus('ollama', 'fail', 'Connection failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-play"></i> Run All Tests';
+    }
+  };
+
+  // ── Step 4: GSC / Data Sources ──────────────────────────────────────────
+
+  async function checkGscStatus() {
+    const statusBox = document.getElementById('gscStatus');
+    const methodSelect = document.getElementById('gscMethodSelect');
+    const csvSection = document.getElementById('gscCsvSection');
+
+    statusBox.innerHTML = `
+      <div class="gsc-status-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
+      <div class="gsc-status-text">Checking for existing GSC data...</div>
+    `;
+
+    try {
+      const project = state.projectSlug || '';
+      const gsc = await API.get('/api/setup/gsc?project=' + encodeURIComponent(project));
+
+      if (gsc.hasData) {
+        statusBox.className = 'gsc-status-box ok';
+        statusBox.innerHTML = `
+          <div class="gsc-status-icon"><i class="fa-solid fa-circle-check" style="color:var(--color-success);"></i></div>
+          <div>
+            <div class="gsc-status-text">GSC data found</div>
+            <div class="gsc-status-detail">
+              Folder: <strong>${gsc.folder}</strong> &mdash;
+              ${gsc.found.length} files: ${gsc.found.join(', ')}
+              ${gsc.missing.length ? '<br>Missing: ' + gsc.missing.join(', ') : ''}
+            </div>
+          </div>
+        `;
+        state.gscUploaded = true;
+      } else if (gsc.allFolders && gsc.allFolders.length > 0) {
+        statusBox.className = 'gsc-status-box warn';
+        statusBox.innerHTML = `
+          <div class="gsc-status-icon"><i class="fa-solid fa-triangle-exclamation" style="color:var(--color-warning);"></i></div>
+          <div>
+            <div class="gsc-status-text">GSC folders found but no matching data for "${project || 'any project'}"</div>
+            <div class="gsc-status-detail">Available folders: ${gsc.allFolders.join(', ')}</div>
+          </div>
+        `;
+      } else {
+        statusBox.className = 'gsc-status-box';
+        statusBox.innerHTML = `
+          <div class="gsc-status-icon"><i class="fa-solid fa-circle-minus" style="color:var(--text-muted);"></i></div>
+          <div>
+            <div class="gsc-status-text">No GSC data found</div>
+            <div class="gsc-status-detail">Upload your Google Search Console export to enable ranking insights</div>
+          </div>
+        `;
+      }
+    } catch (err) {
+      statusBox.className = 'gsc-status-box';
+      statusBox.innerHTML = `
+        <div class="gsc-status-icon"><i class="fa-solid fa-circle-xmark" style="color:var(--color-danger);"></i></div>
+        <div class="gsc-status-text">Could not check GSC status: ${err.message}</div>
+      `;
+    }
+
+    // Always show method selection and CSV section
+    methodSelect.style.display = 'block';
+    csvSection.style.display = 'block';
+  }
+
+  window.selectGscMethod = function(method) {
+    state.gscMethod = method;
+    document.querySelectorAll('.gsc-method-card').forEach(c => c.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+  };
+
+  // File handling
+  const VALID_GSC_FILES = ['Chart.csv', 'Queries.csv', 'Pages.csv', 'Countries.csv', 'Devices.csv', 'Search appearance.csv', 'Filters.csv'];
+
+  window.handleGscDrop = function(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('dragover');
+    const files = event.dataTransfer.files;
+    handleGscFiles(files);
+  };
+
+  window.handleGscFiles = async function(fileList) {
+    const fileListEl = document.getElementById('gscFileList');
+    const statusEl = document.getElementById('gscUploadStatus');
+    state.gscFiles = [];
+
+    fileListEl.innerHTML = '';
+
+    for (const file of fileList) {
+      if (!file.name.endsWith('.csv')) {
+        fileListEl.innerHTML += `<div class="gsc-file-chip bad"><i class="fa-solid fa-xmark"></i> ${file.name} (not CSV)</div>`;
+        continue;
+      }
+
+      const isExpected = VALID_GSC_FILES.includes(file.name);
+      const content = await readFileAsBase64(file);
+      state.gscFiles.push({ name: file.name, content });
+
+      fileListEl.innerHTML += `<div class="gsc-file-chip ${isExpected ? 'ok' : ''}">
+        <i class="fa-solid fa-${isExpected ? 'check' : 'file'}"></i> ${file.name}
+      </div>`;
+    }
+
+    if (state.gscFiles.length > 0) {
+      statusEl.innerHTML = `<button class="btn btn-gold btn-sm" onclick="uploadGscFiles()">
+        <i class="fa-solid fa-cloud-arrow-up"></i> Upload ${state.gscFiles.length} file${state.gscFiles.length > 1 ? 's' : ''}
+      </button>`;
+    }
+  };
+
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        // Strip the data:...;base64, prefix
+        const base64 = reader.result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  window.uploadGscFiles = async function() {
+    const statusEl = document.getElementById('gscUploadStatus');
+    const project = state.projectSlug || 'default';
+
+    statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading...';
+
+    try {
+      const result = await API.post('/api/setup/gsc/upload', {
+        project,
+        files: state.gscFiles,
+      });
+
+      if (result.success) {
+        statusEl.innerHTML = `<div style="color:var(--color-success); font-size: 0.78rem;">
+          <i class="fa-solid fa-circle-check"></i> Uploaded ${result.saved.length} files to gsc/${result.folder}/
+        </div>`;
+        state.gscUploaded = true;
+        // Refresh status box
+        checkGscStatus();
+      } else {
+        statusEl.innerHTML = `<div style="color:var(--color-danger); font-size: 0.78rem;">
+          Upload failed: ${result.error || 'Unknown error'}
+        </div>`;
+      }
+    } catch (err) {
+      statusEl.innerHTML = `<div style="color:var(--color-danger); font-size: 0.78rem;">
+        Upload failed: ${err.message}
+      </div>`;
+    }
+  };
+
+  // ── Step 6: Done ──────────────────────────────────────────────────────
+  window.buildSummaryAndFinish = function() {
+    const table = document.getElementById('summaryTable');
+    const slug = state.projectSlug || 'my-project';
+
+    const rows = [
+      ['Project', slug],
+      ['Target Domain', document.getElementById('cfgTargetUrl').value || '-'],
+      ['Extraction', state.selectedExtraction || 'none'],
+      ['Analysis', state.selectedAnalysis || 'none'],
+      ['Crawl Mode', state.crawlMode],
+      ['Competitor Domains', getListValues('competitorList').length + ' configured'],
+      ['Search Console', state.gscUploaded ? 'Connected' : 'Not configured'],
+    ];
+
+    table.innerHTML = rows.map(r =>
+      `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`
+    ).join('');
+
+    // Populate CLI block — tier-aware
+    const block = document.getElementById('cliBlock');
+    const copyBtn = block.querySelector('.copy-btn').outerHTML;
+
+    if (state.tier === 'solo' || state.tier === 'agency') {
+      block.innerHTML = copyBtn +
+        `<span class="comment"># Run your first crawl</span>\n` +
+        `<span class="prompt">$</span> seo-intel crawl ${slug}\n\n` +
+        `<span class="comment"># AI gap analysis</span>\n` +
+        `<span class="prompt">$</span> seo-intel analyze ${slug}\n\n` +
+        `<span class="comment"># Open dashboard</span>\n` +
+        `<span class="prompt">$</span> seo-intel serve`;
+    } else {
+      block.innerHTML = copyBtn +
+        `<span class="comment"># Run your first crawl</span>\n` +
+        `<span class="prompt">$</span> seo-intel crawl ${slug}\n\n` +
+        `<span class="comment"># Browse your data</span>\n` +
+        `<span class="prompt">$</span> seo-intel serve\n\n` +
+        `<span class="comment"># Upgrade to Solo for AI analysis + dashboards</span>\n` +
+        `<span class="comment"># ukkometa.fi/seo-intel</span>`;
+    }
+
+    goToStep(6);
+  };
+
+  window.copyCli = function() {
+    const block = document.getElementById('cliBlock');
+    const text = block.innerText
+      .replace(/\n\s*\n/g, '\n')
+      .split('\n')
+      .filter(l => l.trim().startsWith('$') || l.trim().startsWith('#'))
+      .map(l => l.trim().replace(/^\$\s*/, ''))
+      .join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = block.querySelector('.copy-btn');
+      btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+      setTimeout(() => { btn.innerHTML = '<i class="fa-regular fa-copy"></i>'; }, 1500);
+    });
+  };
+
+  // ── OpenClaw Agent Setup ──────────────────────────────────────────────
+
+  let agentHistory = [];
+  let agentBusy = false;
+
+  window.startAgentSetup = function() {
+    // Hide wizard steps, show agent panel
+    document.querySelector('.wizard-body').style.display = 'none';
+    document.querySelector('.step-indicator').style.display = 'none';
+    document.getElementById('agentPanel').classList.add('active');
+
+    agentHistory = [];
+    const msgs = document.getElementById('agentMessages');
+    msgs.innerHTML = '<div class="agent-msg system">Starting agent-powered setup...</div>';
+
+    // Send initial context to agent
+    sendToAgent('I just ran the system check. Guide me through setting up SEO Intel step by step.');
+  };
+
+  window.exitAgentSetup = function() {
+    document.querySelector('.wizard-body').style.display = '';
+    document.querySelector('.step-indicator').style.display = '';
+    document.getElementById('agentPanel').classList.remove('active');
+  };
+
+  window.continueManualSetup = function() {
+    // Just hide the banner and let user proceed with wizard
+    document.getElementById('openclawBanner').style.display = 'none';
+  };
+
+  window.sendAgentMessage = function() {
+    const input = document.getElementById('agentInput');
+    const text = input.value.trim();
+    if (!text || agentBusy) return;
+    input.value = '';
+
+    addAgentMsg('user', text);
+    sendToAgent(text);
+  };
+
+  function addAgentMsg(role, text) {
+    const msgs = document.getElementById('agentMessages');
+    const div = document.createElement('div');
+    div.className = `agent-msg ${role}`;
+
+    // Simple markdown-ish rendering
+    let html = text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    div.innerHTML = html;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  async function sendToAgent(message) {
+    agentBusy = true;
+    const typing = document.getElementById('agentTyping');
+    typing.classList.add('active');
+
+    agentHistory.push({ role: 'user', content: message });
+
+    try {
+      const res = await API.post('/api/setup/agent/chat', {
+        message,
+        history: agentHistory.slice(0, -1), // all except current
+        systemCheck: state.systemStatus,
+      });
+
+      if (res.error) {
+        addAgentMsg('system', `⚠ ${res.error}${res.hint ? ` — ${res.hint}` : ''}`);
+      } else if (res.response) {
+        agentHistory.push({ role: 'assistant', content: res.response });
+        addAgentMsg('assistant', res.response);
+      }
+    } catch (err) {
+      addAgentMsg('system', `Connection error: ${err.message}`);
+    } finally {
+      agentBusy = false;
+      typing.classList.remove('active');
+      document.getElementById('agentInput').focus();
+    }
+  }
+
+  // ── License Management ───────────────────────────────────────────────
+
+  async function checkLicenseStatus() {
+    // Debug: ?tier=free forces free tier view
+    const urlParams = new URLSearchParams(window.location.search);
+    const debugTier = urlParams.get('tier');
+
+    try {
+      const data = await API.get('/api/license-status');
+      state.tier = debugTier || data.tier || 'free';
+      if (debugTier) {
+        updateLicenseUI({ tier: debugTier, valid: debugTier !== 'free', key: null });
+      } else {
+        updateLicenseUI(data);
+      }
+      updateTierUI();
+    } catch {
+      state.tier = debugTier || 'free';
+      updateLicenseUI({ tier: state.tier, valid: false, key: null });
+      updateTierUI();
+    }
+  }
+
+  function updateLicenseUI(data) {
+    const freeEl = document.getElementById('licenseFree');
+    const soloEl = document.getElementById('licenseSolo');
+    const keyDisplay = document.getElementById('licenseKeyDisplay');
+
+    if (data.tier !== 'free' && data.valid) {
+      freeEl.style.display = 'none';
+      soloEl.style.display = 'block';
+      keyDisplay.textContent = 'License: ' + (data.key || '***') + ' ✓';
+    } else {
+      freeEl.style.display = 'block';
+      soloEl.style.display = 'none';
+    }
+  }
+
+  function updateTierUI() {
+    const step2 = document.getElementById('step2');
+    const unifiedUpgrade = document.getElementById('unifiedUpgrade');
+
+    if (state.tier === 'free') {
+      step2.classList.add('is-free');
+      document.documentElement.classList.add('is-free');
+      if (unifiedUpgrade) unifiedUpgrade.style.display = 'block';
+    } else {
+      step2.classList.remove('is-free');
+      document.documentElement.classList.remove('is-free');
+      if (unifiedUpgrade) unifiedUpgrade.style.display = 'none';
+    }
+  }
+
+  window.saveLicenseKey = async function() {
+    const input = document.getElementById('licenseKeyInput');
+    const btn = document.getElementById('activateBtn');
+    const key = input.value.trim();
+    if (!key) return;
+
+    btn.textContent = 'Checking...';
+    btn.disabled = true;
+
+    try {
+      const data = await API.post('/api/save-license', { key });
+      if (data.ok && data.valid) {
+        state.tier = data.tier;
+        updateLicenseUI({ tier: data.tier, valid: true, key: key.slice(0, 7) + '...' + key.slice(-4) });
+        updateTierUI();
+      } else {
+        input.style.borderColor = 'var(--color-danger)';
+        btn.textContent = 'Invalid key';
+        setTimeout(() => { btn.textContent = 'Activate →'; btn.disabled = false; input.style.borderColor = ''; }, 2500);
+        return;
+      }
+    } catch {
+      btn.textContent = 'Error';
+      setTimeout(() => { btn.textContent = 'Activate →'; btn.disabled = false; }, 2000);
+      return;
+    }
+
+    btn.textContent = '✓ Activated';
+    btn.disabled = false;
+  };
+
+  // ── Init ──────────────────────────────────────────────────────────────
+  initStep3();
+  runSystemCheck();
+  checkLicenseStatus();
+
+})();
+</script>
+</body>
+</html>

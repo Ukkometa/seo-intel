@@ -1,0 +1,29 @@
+{
+  "project": "myproject",
+  "context": {
+    "siteName": "My Project",
+    "url": "https://example.com",
+    "industry": "Describe your industry and niche here",
+    "audience": "Who are your target users/customers?",
+    "goal": "What's your SEO objective? (e.g. outrank competitor X, grow organic traffic)",
+    "maturity": "early stage | growing | established"
+  },
+  "target": {
+    "domain": "example.com",
+    "maxPages": 200,
+    "crawlMode": "standard"
+  },
+  "competitors": [
+    {
+      "domain": "competitor1.com",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "competitor2.com",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    }
+  ],
+  "owned": []
+}

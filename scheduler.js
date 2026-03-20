@@ -54,7 +54,7 @@ export function getNextCrawlTarget(db) {
   const candidates = [];
 
   for (const config of configs) {
-    const allSites = [config.target, ...config.competitors];
+    const allSites = [config.target, ...(config.owned || []), ...config.competitors];
 
     for (const site of allSites) {
       const row = db.prepare(
@@ -62,7 +62,7 @@ export function getNextCrawlTarget(db) {
       ).get(site.domain, config.project);
 
       const lastCrawled = row?.last_crawled || 0;
-      const window = site.role === 'target' ? FRESHNESS.target : FRESHNESS.competitor;
+      const window = site.role === 'competitor' ? FRESHNESS.competitor : FRESHNESS.target;
       const staleSince = now - lastCrawled;
       const isStale = staleSince > window;
 
@@ -81,8 +81,8 @@ export function getNextCrawlTarget(db) {
 
   if (!candidates.length) return null;
 
-  // Targets first, then oldest competitor
-  const targets = candidates.filter(c => c.role === 'target');
+  // Owned properties + target site first, then oldest competitor
+  const targets = candidates.filter(c => c.role !== 'competitor');
   if (targets.length) return targets[0];
 
   // Oldest competitor (most stale first)
@@ -115,14 +115,14 @@ export function getCrawlStatus(db) {
   const rows = [];
 
   for (const config of configs) {
-    const allSites = [config.target, ...config.competitors];
+    const allSites = [config.target, ...(config.owned || []), ...config.competitors];
     for (const site of allSites) {
       const row = db.prepare(
         'SELECT last_crawled FROM domains WHERE domain = ? AND project = ?'
       ).get(site.domain, config.project);
 
       const lastCrawled = row?.last_crawled;
-      const window = site.role === 'target' ? FRESHNESS.target : FRESHNESS.competitor;
+      const window = site.role === 'competitor' ? FRESHNESS.competitor : FRESHNESS.target;
       const isStale = !lastCrawled || (now - lastCrawled) > window;
       const daysAgo = lastCrawled ? Math.round((now - lastCrawled) / 86400000) : null;
 
@@ -133,7 +133,7 @@ export function getCrawlStatus(db) {
         lastCrawled: lastCrawled ? new Date(lastCrawled).toISOString().split('T')[0] : 'never',
         daysAgo: daysAgo ?? '—',
         status: isStale ? '🔴 stale' : '✅ fresh',
-        freshnessWindow: site.role === 'target' ? '7d' : '14d',
+        freshnessWindow: site.role === 'competitor' ? '14d' : '7d',
       });
     }
   }

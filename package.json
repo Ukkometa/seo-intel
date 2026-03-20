@@ -1,18 +1,64 @@
 {
   "name": "seo-intel",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "Local Ahrefs-style SEO competitor intelligence. Crawl → SQLite → cloud analysis.",
   "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "froggo.pro",
+  "homepage": "https://froggo.pro/seo-intel",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/froggo-pro/seo-intel"
+  },
+  "keywords": [
+    "seo",
+    "competitor-analysis",
+    "web-crawler",
+    "content-intelligence",
+    "search-console",
+    "ollama",
+    "local-first"
+  ],
+  "bin": {
+    "seo-intel": "./cli.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "files": [
+    "cli.js",
+    "server.js",
+    "scheduler.js",
+    "seo-audit.js",
+    "lib/",
+    "setup/",
+    "config/setup-wizard.js",
+    "config/example.json",
+    "crawler/",
+    "db/db.js",
+    "db/schema.sql",
+    "exports/",
+    "reports/generate-html.js",
+    "reports/generate-site-graph.js",
+    "reports/gsc-loader.js",
+    ".env.example",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "crawl": "node cli.js crawl",
     "analyze": "node cli.js analyze",
-    "report": "node cli.js report"
+    "report": "node cli.js report",
+    "setup": "node cli.js setup",
+    "serve": "node cli.js serve",
+    "postinstall": "echo '\\n  Run: seo-intel setup\\n'"
   },
   "dependencies": {
-    "playwright": "^1.43.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
     "dotenv": "^16.4.5",
     "node-fetch": "^3.3.2",
-    "chalk": "^5.3.0",
-    "commander": "^12.0.0"
+    "playwright": "^1.43.0",
+    "turndown": "^7.2.2"
   }
 }

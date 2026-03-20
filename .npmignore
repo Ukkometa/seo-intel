@@ -1,0 +1,53 @@
+# Database files
+db/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Generated reports & dashboards
+reports/
+*.html
+
+# GSC data (user-specific)
+gsc/
+
+# Environment & secrets
+.env
+.env.local
+
+# Development
+.claude/
+docs/
+froggo-package/
+scripts/
+skill/
+node_modules/
+
+# Internal dev docs
+CLAUDE_CODE_BRIEF_*.md
+SECURITY*.md
+SECURITY-*.md
+PRODUCT_STATUS.md
+agent-task*.md
+FROGGO_PACKAGE_SPEC.md
+COMMANDS.md
+
+# Personal configs
+config/carbium.json
+config/ukkometa.json
+config/risunouto.json
+
+# Misc dev files
+carbium
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+npm-debug.log*

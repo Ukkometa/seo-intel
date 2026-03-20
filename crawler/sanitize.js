@@ -2,6 +2,7 @@
  * Sanitize scraped text before sending to any AI model.
  * Defense against prompt injection from malicious web content.
  */
+import TurndownService from 'turndown';
 
 // Patterns that look like prompt injection attempts
 const INJECTION_PATTERNS = [
@@ -86,4 +87,38 @@ export async function extractSelective(page, selectors = ['h1', 'h2', 'h3', 'p',
     } catch {}
   }
   return removeInjections(parts.join('\n').replace(/\s{3,}/g, '\n\n').trim());
+}
+
+/**
+ * Extract page content as clean Markdown via Turndown.
+ * Tries <main> or <article> first for focused content, falls back to <body>.
+ * Strips nav/footer/header/aside/script/style before conversion.
+ */
+const turndown = new TurndownService({
+  headingStyle: 'atx',
+  codeBlockStyle: 'fenced',
+  bulletListMarker: '-',
+});
+// Skip images in markdown output (no value for SEO text extraction)
+turndown.addRule('removeImages', { filter: 'img', replacement: () => '' });
+
+export async function extractAsMarkdown(page) {
+  // Get focused content HTML — prefer <main> or <article>, fall back to <body>
+  const html = await page.evaluate(() => {
+    const el = document.querySelector('main') || document.querySelector('article') || document.body;
+    if (!el) return '';
+    // Clone to avoid mutating the live DOM
+    const clone = el.cloneNode(true);
+    // Strip non-content elements
+    for (const tag of ['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'iframe']) {
+      clone.querySelectorAll(tag).forEach(n => n.remove());
+    }
+    return clone.innerHTML;
+  }).catch(() => '');
+
+  if (!html) return '';
+
+  const md = turndown.turndown(html);
+  const cleaned = removeInjections(md);
+  return truncate(cleaned, 2000);
 }

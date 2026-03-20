@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "seo-intel-dashboard",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["cli.js", "serve"],
+      "port": 3000
+    }
+  ]
+}

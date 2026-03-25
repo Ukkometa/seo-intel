@@ -54,6 +54,7 @@ body {
   max-width: var(--max-width);
   margin: 0 auto 24px;
   text-align: center;
+  position: relative;
 }
 .wizard-header h1 {
   font-family: var(--font-display);
@@ -1172,6 +1173,7 @@ input::placeholder {
 <div class="wizard-header">
   <h1>SEO Intel</h1>
   <div class="subtitle">Setup Wizard</div>
+  <a href="http://localhost:3000/?autorun=setup-classic" title="Run setup in Terminal instead" style="position:absolute;top:14px;right:18px;font-size:0.68rem;color:var(--color-muted,#888);text-decoration:none;opacity:0.7;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i class="fa-solid fa-terminal"></i> Terminal setup</a>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1297,8 +1299,8 @@ input::placeholder {
           <div class="openclaw-banner-desc">OpenClaw guides you through the entire setup conversationally — LLM configuration, cloud model routing, OAuth, and troubleshooting. <strong>Recommended for the best experience.</strong></div>
           <div style="margin-top:10px; padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.72rem; color:var(--text-secondary); display:flex; align-items:center; gap:8px;">
             <span style="color:var(--text-muted);">$</span>
-            <span id="clawhubCmd">clawhub install seo-intel</span>
-            <button class="btn btn-sm" style="margin-left:auto; padding:3px 8px; font-size:0.65rem;" onclick="navigator.clipboard.writeText('clawhub install seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
+            <span id="clawhubCmd">clawhub install ukkometa/seo-intel</span>
+            <button class="btn btn-sm" style="margin-left:auto; padding:3px 8px; font-size:0.65rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
           </div>
           <div class="openclaw-banner-actions">
             <button class="btn btn-gold" onclick="startAgentSetup()"><i class="fa-solid fa-play"></i> Start Setup</button>
@@ -1315,7 +1317,7 @@ input::placeholder {
         </div>
         <div class="openclaw-banner-content">
           <div class="openclaw-banner-desc" style="color:var(--text-muted); font-size:0.72rem;">
-            <strong style="color:var(--text-secondary);">Tip:</strong> Run <code style="background:rgba(124,109,235,0.1); padding:1px 5px; border-radius:3px; color:var(--accent-purple);">clawhub install seo-intel</code> for guided agent setup with cloud model routing.
+            <strong style="color:var(--text-secondary);">Tip:</strong> Run <code style="background:rgba(124,109,235,0.1); padding:1px 5px; border-radius:3px; color:var(--accent-purple);">clawhub install ukkometa/seo-intel</code> for guided agent setup with cloud model routing.
           </div>
         </div>
       </div>
@@ -1337,8 +1339,32 @@ input::placeholder {
 
 <!-- ─── Step 2: Model Selection ───────────────────────────────────────── -->
 <div class="step-panel" id="step2">
-  <div class="card">
+  <div style="display:grid; grid-template-columns:1fr 260px; gap:16px; align-items:start;">
+  <div class="card" style="margin-bottom:0; min-width:0;">
     <h2><i class="fa-solid fa-microchip"></i> Model Selection</h2>
+
+    <!-- Ollama Hosts -->
+    <div id="ollamaHostsPanel" style="margin-bottom:16px; padding:12px 14px; background:var(--bg-card); border:1px solid var(--border-card); border-radius:var(--radius);">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <span style="font-size:0.72rem; font-weight:600; color:var(--text-muted); letter-spacing:0.04em; text-transform:uppercase;">Ollama Hosts</span>
+        <button class="btn btn-sm" onclick="addOllamaHost()" style="padding:3px 8px; font-size:0.6rem;"><i class="fa-solid fa-plus"></i> Add LAN Host</button>
+      </div>
+      <div id="ollamaHostList" style="display:flex; flex-direction:column; gap:6px;">
+        <!-- Populated by JS on load -->
+      </div>
+      <div id="addHostRow" style="display:none; margin-top:8px;">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="text" id="newHostInput" placeholder="http://192.168.1.100:11434" style="flex:1; padding:6px 8px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); color:var(--text-primary); font-family:var(--font-mono); font-size:0.7rem;">
+          <button class="btn btn-sm" onclick="pingAndAddHost()" id="pingHostBtn" style="padding:4px 10px; font-size:0.62rem;"><i class="fa-solid fa-satellite-dish"></i> Ping</button>
+          <button class="btn btn-sm" onclick="document.getElementById('addHostRow').style.display='none'" style="padding:4px 8px; font-size:0.62rem;"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <p id="pingResult" style="font-size:0.6rem; color:var(--text-muted); margin-top:4px;"></p>
+      </div>
+      <p style="font-size:0.58rem; color:var(--text-muted); margin-top:6px; line-height:1.4;">
+        Run Ollama on any machine in your network. SEO Intel auto-detects localhost and falls back through configured hosts.
+      </p>
+    </div>
+
     <div class="model-columns">
       <div class="model-section" id="extractionSection">
         <h3><i class="fa-solid fa-robot"></i> Extraction Tier</h3>
@@ -1393,25 +1419,18 @@ input::placeholder {
           <button class="btn btn-sm" id="analysisPullBtn" onclick="pullAnalysisModel()"><i class="fa-solid fa-download"></i> Pull Model</button>
           <span id="analysisPullStatus" style="font-size:0.7rem; color:var(--text-muted);"></span>
         </div>
-        <div id="analysisPullLog" class="log-output"></div>
-        <!-- OpenClaw cloud upgrade banner -->
-        <div style="margin-top:12px; padding:12px 14px; background:rgba(124,109,235,0.06); border:1px solid rgba(124,109,235,0.15); border-radius:var(--radius);">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-            <svg width="16" height="16" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
-              <circle cx="14" cy="14" r="13" stroke="var(--accent-purple)" stroke-width="1.5" opacity="0.6"/>
-              <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="var(--accent-purple)" opacity="0.8"/>
-            </svg>
-            <span style="font-size:0.75rem; font-weight:500; color:var(--text-primary);">Want cloud-quality analysis?</span>
+        <!-- Cloud model key hint (shown instead of pull for cloud models) -->
+        <div id="analysisCloudHint" style="display:none; margin-top:8px; padding:10px 12px; background:rgba(232,213,163,0.04); border:1px solid rgba(232,213,163,0.12); border-radius:var(--radius);">
+          <p style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;"><i class="fa-solid fa-key" style="color:var(--accent-gold); margin-right:6px;"></i><span id="cloudHintProvider"></span></p>
+          <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.5; margin-bottom:6px;">Add the API key to your <code style="background:rgba(232,213,163,0.08); padding:1px 4px; border-radius:3px;">.env</code> file:</p>
+          <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.65rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px;">
+            <span id="cloudHintEnvLine"></span>
+            <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText(document.getElementById('cloudHintEnvLine').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
           </div>
-          <p style="font-size:0.68rem; color:var(--text-muted); line-height:1.5; margin-bottom:8px;">
-            Route analysis through Claude, GPT-4o, or DeepSeek for deeper strategic insights on large datasets.
-          </p>
-          <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-            <span style="color:var(--text-muted);">$</span>
-            <span>clawhub install seo-intel</span>
-            <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.6rem;" onclick="navigator.clipboard.writeText('clawhub install seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-          </div>
+          <p style="font-size:0.6rem; color:var(--text-muted); margin-top:6px;">Or use <strong style="color:var(--accent-purple);">OpenClaw</strong> to manage API keys automatically.</p>
         </div>
+        <div id="analysisPullLog" class="log-output"></div>
+        <!-- OpenClaw hint moved to standalone sidebar card -->
         <!-- Upgrade overlay (shown on free tier) -->
         <div class="upgrade-overlay">
           <div class="upgrade-overlay-bg"></div>
@@ -1455,12 +1474,69 @@ input::placeholder {
       </button>
     </div>
   </div>
+
+  <!-- OpenClaw sidebar card -->
+  <div class="card" style="margin-bottom:0; position:sticky; top:20px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <svg width="22" height="22" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="14" cy="14" r="13" stroke="var(--accent-purple)" stroke-width="1.5" opacity="0.6"/>
+        <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="var(--accent-purple)" opacity="0.8"/>
+      </svg>
+      <h3 style="font-size:0.85rem; font-weight:600; color:var(--text-primary); margin:0;">OpenClaw</h3>
+    </div>
+
+    <p style="font-size:0.72rem; color:var(--text-muted); line-height:1.6; margin-bottom:12px;">
+      Route analysis through frontier models. OpenClaw manages API keys, OAuth, and model routing automatically.
+    </p>
+
+    <div style="font-size:0.68rem; color:var(--text-secondary); margin-bottom:12px;">
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
+        Claude Opus 4.6
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
+        Gemini 3.1 Pro
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
+        GPT-5.4
+      </div>
+    </div>
+
+    <p style="font-size:0.62rem; color:var(--text-muted); line-height:1.5; margin-bottom:8px;">
+      No .env keys needed. OAuth-based model access means the pipeline test may show "no API key" — this is normal when using OpenClaw.
+    </p>
+
+    <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.65rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+      <span style="color:var(--text-muted);">$</span>
+      <span>clawhub install ukkometa/seo-intel</span>
+      <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
+    </div>
+
+    <p style="font-size:0.6rem; color:var(--text-muted); margin-bottom:6px;">Or paste into OpenClaw chat:</p>
+    <div style="padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.6; position:relative;">
+      <div style="white-space:pre;">Set up SEO Intel cloud analysis.
+Use Gemini for extraction, Claude for analysis.
+Configure API keys and run a test crawl.</div>
+      <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText('Set up SEO Intel cloud analysis.\nUse Gemini for extraction, Claude for analysis.\nConfigure API keys and run a test crawl.');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
+    </div>
+  </div>
+
+  </div><!-- close grid -->
 </div>
 
 <!-- ─── Step 3: Project Configuration ─────────────────────────────────── -->
 <div class="step-panel" id="step3">
   <div class="card">
     <h2><i class="fa-solid fa-folder-open"></i> Project Configuration</h2>
+
+    <div id="existingProjectBar" style="display:none;margin-bottom:1.25rem;padding:10px 14px;background:rgba(232,213,163,0.06);border:1px solid rgba(232,213,163,0.15);border-radius:8px;">
+      <label style="font-size:0.72rem;font-weight:600;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;display:block;">Edit existing project</label>
+      <select id="existingProjectSelect" onchange="loadExistingProject(this.value)" style="width:100%;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:6px;color:var(--text-primary);font-size:0.82rem;font-family:var(--font-body);">
+        <option value="">New project</option>
+      </select>
+    </div>
 
     <div class="form-row">
       <div class="form-group">
@@ -1517,7 +1593,7 @@ input::placeholder {
             <input type="radio" name="crawlMode" value="standard" checked> Standard
           </label>
           <label class="pill-option" onclick="selectCrawlMode('stealth')">
-            <input type="radio" name="crawlMode" value="stealth"> Stealth
+            <input type="radio" name="crawlMode" value="stealth"> Advanced
           </label>
         </div>
         <div id="crawlModeDesc" style="margin-top:8px; padding:8px 10px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); font-size:0.68rem; color:var(--text-muted); line-height:1.5;">
@@ -1543,11 +1619,7 @@ input::placeholder {
           <p style="font-size:0.6rem; color:var(--text-muted); margin-top:4px; font-style:italic;" id="crawlEstimateNote"></p>
         </div>
       </div>
-      <div class="form-group">
-        <label>Pages per Domain</label>
-        <input type="number" id="cfgPagesPerDomain" value="50" min="1" max="500">
-        <div class="hint">Max pages to crawl from each domain.</div>
-      </div>
+      <input type="hidden" id="cfgPagesPerDomain" value="9999">
     </div>
 
     <!-- Time Estimate -->
@@ -1859,7 +1931,7 @@ input::placeholder {
     });
 
     // Step-specific initialization
-    if (n === 2 && !state.modelData) loadModels();
+    if (n === 2) { renderOllamaHosts(); if (!state.modelData) loadModels(); }
     if (n === 3) updateCrawlEstimate();
     if (n === 4) checkGscStatus();
   };
@@ -1892,7 +1964,14 @@ input::placeholder {
         if (status.playwright.installed) return { cls: 'warn', icon: 'fa-exclamation', detail: 'Installed, Chromium needs setup', action: 'playwright' };
         return { cls: 'fail', icon: 'fa-xmark', detail: 'Not installed', action: 'playwright' };
       case 'ollama':
-        if (status.ollama.available) return { cls: 'ok', icon: 'fa-check', detail: `${status.ollama.models.length} model(s) at ${status.ollama.host}` };
+        if (status.ollama.available) {
+          const hosts = status.ollama.allHosts || [];
+          const reachable = hosts.filter(h => h.reachable);
+          const hostInfo = reachable.length > 1
+            ? `${status.ollama.models.length} model(s) across ${reachable.length} hosts (${reachable.map(h => h.mode === 'local' ? 'local' : new URL(h.host).hostname).join(', ')})`
+            : `${status.ollama.models.length} model(s) at ${status.ollama.host}`;
+          return { cls: 'ok', icon: 'fa-check', detail: hostInfo };
+        }
         if (status.ollama.installed) return { cls: 'warn', icon: 'fa-exclamation', detail: 'Installed but not running or no models' };
         return { cls: 'warn', icon: 'fa-exclamation', detail: 'Not installed (optional for extraction)' };
       case 'vram':
@@ -1992,6 +2071,90 @@ input::placeholder {
   }
 
   // ── Step 2: Model Selection ───────────────────────────────────────────
+  // ── Ollama Host Management ────────────────────────────────────────────
+  function renderOllamaHosts() {
+    const list = document.getElementById('ollamaHostList');
+    if (!list || !state.systemStatus?.ollama) return;
+
+    const allHosts = state.systemStatus.ollama.allHosts || [];
+    // Always show localhost
+    const hasLocalhost = allHosts.some(h => h.host === 'http://localhost:11434');
+    if (!hasLocalhost) {
+      allHosts.unshift({ host: 'http://localhost:11434', mode: 'local', models: state.systemStatus.ollama.models || [], reachable: state.systemStatus.ollama.available && state.systemStatus.ollama.mode === 'local' });
+    }
+
+    list.innerHTML = allHosts.map(h => {
+      const hostname = h.mode === 'local' ? 'localhost' : new URL(h.host).hostname;
+      const port = new URL(h.host).port || '11434';
+      const dot = h.reachable ? 'color:var(--color-success)' : 'color:var(--color-danger); opacity:0.5';
+      const status = h.reachable ? `${h.models.length} model(s)` : 'unreachable';
+      const active = h.host === state.systemStatus.ollama.host;
+      return `
+        <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:${active ? 'rgba(142,203,168,0.06)' : 'transparent'}; border:1px solid ${active ? 'rgba(142,203,168,0.15)' : 'var(--border-subtle)'}; border-radius:6px;">
+          <i class="fa-solid fa-circle" style="font-size:0.45rem; ${dot}"></i>
+          <span style="font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary);">${hostname}:${port}</span>
+          <span style="font-size:0.6rem; color:var(--text-muted); margin-left:auto;">${status}</span>
+          ${active ? '<span style="font-size:0.55rem; padding:1px 6px; border-radius:3px; background:rgba(142,203,168,0.12); color:#8ecba8;">active</span>' : ''}
+          ${!h.reachable && h.mode !== 'local' ? `<button class="btn btn-sm" style="padding:1px 5px; font-size:0.5rem;" onclick="removeOllamaHost('${h.host}')"><i class="fa-solid fa-xmark"></i></button>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  window.addOllamaHost = function() {
+    document.getElementById('addHostRow').style.display = 'block';
+    document.getElementById('newHostInput').focus();
+    document.getElementById('pingResult').textContent = '';
+  };
+
+  window.pingAndAddHost = async function() {
+    const input = document.getElementById('newHostInput');
+    const result = document.getElementById('pingResult');
+    const btn = document.getElementById('pingHostBtn');
+    let host = input.value.trim();
+    if (!host) return;
+
+    // Auto-add protocol and port
+    if (!host.startsWith('http')) host = 'http://' + host;
+    if (!host.includes(':', host.indexOf('//') + 2)) host += ':11434';
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Pinging...';
+    result.textContent = '';
+
+    try {
+      const res = await API.get(`/api/setup/ping-ollama?host=${encodeURIComponent(host)}`);
+      if (res.reachable) {
+        result.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Connected — ${res.models.length} model(s) found</span>`;
+        // Add to .env via server
+        await API.post('/api/setup/save-env', { key: 'OLLAMA_FALLBACK_URL', value: host });
+        // Refresh status
+        const status = await API.get('/api/setup/status');
+        state.systemStatus = status;
+        renderOllamaHosts();
+        document.getElementById('addHostRow').style.display = 'none';
+        // Reload models with new host
+        loadModels();
+      } else {
+        result.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-xmark"></i> Unreachable — check IP, port, and that Ollama is running on that machine</span>`;
+      }
+    } catch (err) {
+      result.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-xmark"></i> ${err.message}</span>`;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-satellite-dish"></i> Ping';
+  };
+
+  window.removeOllamaHost = async function(host) {
+    // Clear from .env
+    await API.post('/api/setup/save-env', { key: 'OLLAMA_FALLBACK_URL', value: '' });
+    const status = await API.get('/api/setup/status');
+    state.systemStatus = status;
+    renderOllamaHosts();
+  };
+
+  // Render hosts when step 2 loads
+  if (state.systemStatus) renderOllamaHosts();
+
   async function loadModels() {
     const extDiv = document.getElementById('extractionModels');
     const anaDiv = document.getElementById('analysisModels');
@@ -2155,14 +2318,10 @@ input::placeholder {
       div.appendChild(card);
     }
 
-    // Show pull row if selected model is not installed
+    // Show pull row or cloud hint if selected model is not installed
     const selected = models.find(m => m.id === state.selectedAnalysis);
     if (selected && !selected.installed) {
-      const pullRow = document.getElementById('analysisPullRow');
-      if (pullRow) {
-        pullRow.style.display = 'flex';
-        document.getElementById('analysisPullStatus').textContent = `${selected.name} not installed`;
-      }
+      selectAnalysisModel(selected.id);
     }
   }
 
@@ -2171,16 +2330,29 @@ input::placeholder {
     document.querySelectorAll('#analysisModels .model-radio-card').forEach(c => {
       c.classList.toggle('selected', c.dataset.modelId === id);
     });
-    // Update pull row
+    // Update pull row or cloud hint
     const models = state.modelData?.allAnalysis || [];
     const selected = models.find(m => m.id === id);
     const pullRow = document.getElementById('analysisPullRow');
-    if (pullRow) {
-      if (selected && !selected.installed) {
-        pullRow.style.display = 'flex';
-        document.getElementById('analysisPullStatus').textContent = `${selected.name} not installed`;
+    const cloudHint = document.getElementById('analysisCloudHint');
+    if (pullRow) pullRow.style.display = 'none';
+    if (cloudHint) cloudHint.style.display = 'none';
+
+    if (selected && !selected.installed) {
+      if (selected.type === 'cloud') {
+        // Cloud model — show API key hint
+        if (cloudHint) {
+          const providerNames = { gemini: 'Google AI Studio', anthropic: 'Anthropic', openai: 'OpenAI', deepseek: 'DeepSeek' };
+          document.getElementById('cloudHintProvider').textContent = `Requires ${providerNames[selected.provider] || selected.provider} API key`;
+          document.getElementById('cloudHintEnvLine').textContent = `${selected.envKey}=your-key-here`;
+          cloudHint.style.display = 'block';
+        }
       } else {
-        pullRow.style.display = 'none';
+        // Local model — show pull button
+        if (pullRow) {
+          pullRow.style.display = 'flex';
+          document.getElementById('analysisPullStatus').textContent = `${selected.name} not installed`;
+        }
       }
     }
   }
@@ -2257,7 +2429,7 @@ input::placeholder {
     if (descEl) {
       const descs = {
         standard: '<strong style="color:var(--text-secondary);">Standard</strong> — Headless Chromium via Playwright. Fast (~1.5s/page). Respects robots.txt. Works on most sites. Use this unless you get blocked.',
-        stealth: '<strong style="color:var(--text-secondary);">Stealth</strong> — Headless Chromium with evasion patches. Realistic fingerprint, cookie persistence, user agent rotation. Slower (~3-4s/page). Ignores robots.txt. Use for Cloudflare-protected or bot-blocked sites.',
+        stealth: '<strong style="color:var(--text-secondary);">Advanced</strong> — Full browser rendering with enhanced compatibility. Persistent sessions, realistic browsing patterns. Slower (~3-4s/page). Use for JavaScript-heavy or dynamically-loaded sites.',
       };
       descEl.innerHTML = descs[mode] || descs.standard;
     }
@@ -2283,7 +2455,7 @@ input::placeholder {
 
     const modes = {
       standard: { label: 'Standard', secPerPage: 2 + extractionSpeed },
-      stealth: { label: 'Stealth', secPerPage: 4 + extractionSpeed },
+      stealth: { label: 'Advanced', secPerPage: 4 + extractionSpeed },
       hybrid: { label: 'Hybrid', secPerPage: 3 + extractionSpeed },
       manual: { label: 'Manual (curl)', secPerPage: 1 + extractionSpeed },
     };
@@ -2340,11 +2512,23 @@ input::placeholder {
 
     const totalPages = totalDomains * pagesPerDomain;
     const mode = state.crawlMode || 'standard';
-    const crawlSec = mode === 'stealth' ? 3.5 : 1.5;
-    const extractSec = 3; // ~3s/page with qwen3.5:9b
+    const crawlSec = mode === 'stealth' ? 4 : 2.5;
+
+    // Extraction speed depends on model size
+    const extractModel = state.selectedExtraction || '';
+    let extractSec = 4; // default
+    if (extractModel.includes('4b')) extractSec = 2;
+    else if (extractModel.includes('9b')) extractSec = 4;
+    else if (extractModel.includes('14b')) extractSec = 6;
+    else if (extractModel.includes('27b') || extractModel.includes('35b')) extractSec = 8;
+
+    // Analysis time depends on cloud vs local
+    const analysisModel = state.selectedAnalysis || '';
+    const isCloudAnalysis = ['gemini', 'claude', 'gpt', 'deepseek'].some(p => analysisModel.includes(p));
+    const analyzeMin = isCloudAnalysis ? (totalPages > 500 ? 2 : 1) : (totalPages > 200 ? 5 : 2);
+
     const crawlMin = Math.ceil((totalPages * crawlSec) / 60);
     const extractMin = Math.ceil((totalPages * extractSec) / 60);
-    const analyzeMin = totalPages > 200 ? 3 : 1; // analysis is one call
 
     el.style.display = 'block';
     body.innerHTML = `
@@ -2365,9 +2549,9 @@ input::placeholder {
       <div style="font-size:0.62rem; color:var(--text-muted);">
         <i class="fa-solid fa-spider" style="color:var(--color-success); width:14px;"></i> Crawl: ~${crawlMin} min (${crawlSec}s/page, ${mode})
         &nbsp;&nbsp;
-        <i class="fa-solid fa-brain" style="color:var(--accent-gold); width:14px;"></i> Extract: ~${extractMin} min (Solo)
+        <i class="fa-solid fa-brain" style="color:var(--accent-gold); width:14px;"></i> Extract: ~${extractMin} min (~${extractSec}s/page${extractModel ? ', ' + extractModel.split(':')[0] : ''})
         &nbsp;&nbsp;
-        <i class="fa-solid fa-chart-column" style="color:var(--accent-gold); width:14px;"></i> Analyze: ~${analyzeMin} min (Solo)
+        <i class="fa-solid fa-chart-column" style="color:var(--accent-gold); width:14px;"></i> Analyze: ~${analyzeMin} min (${isCloudAnalysis ? 'cloud' : 'local'})
       </div>
       ${totalPages > 500 ? '<div style="font-size:0.6rem; color:var(--color-warning); margin-top:4px;"><i class="fa-solid fa-triangle-exclamation"></i> Large crawl — consider lowering pages per domain or running overnight.</div>' : ''}
     `;
@@ -2440,7 +2624,61 @@ input::placeholder {
   // Init competitor rows
   function initStep3() {
     for (let i = 0; i < 3; i++) addCompetitorRow();
+    loadExistingProjects();
   }
+
+  async function loadExistingProjects() {
+    try {
+      const raw = await API.get('/api/projects');
+      // Handle both {projects: [...]} and [...] formats
+      const projects = Array.isArray(raw) ? raw : (raw.projects || []);
+      if (!projects.length) return;
+      const bar = document.getElementById('existingProjectBar');
+      const sel = document.getElementById('existingProjectSelect');
+      bar.style.display = 'block';
+      projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.project;
+        opt.textContent = p.project + ' (' + (p.target || p.domain || '?') + ')';
+        sel.appendChild(opt);
+      });
+    } catch { /* not served, skip */ }
+  }
+
+  window.loadExistingProject = async function(projectName) {
+    if (!projectName) return;
+    try {
+      const full = await API.get('/api/setup/config/' + encodeURIComponent(projectName));
+      if (!full) return;
+
+      // Populate form fields
+      document.getElementById('cfgProjectName').value = full.project || '';
+      updateSlug();
+      document.getElementById('cfgTargetUrl').value = full.target?.url || ('https://' + (full.target?.domain || ''));
+      document.getElementById('cfgSiteName').value = full.context?.siteName || '';
+      document.getElementById('cfgIndustry').value = full.context?.industry || '';
+      document.getElementById('cfgAudience').value = full.context?.audience || '';
+      document.getElementById('cfgGoal').value = full.context?.goal || '';
+
+      // Clear and populate competitors
+      const compList = document.getElementById('competitorList');
+      compList.innerHTML = '';
+      const comps = full.competitors || [];
+      if (comps.length === 0) { addCompetitorRow(); addCompetitorRow(); addCompetitorRow(); }
+      else {
+        comps.forEach(c => {
+          addCompetitorRow();
+          const rows = compList.querySelectorAll('.dyn-list-item');
+          const last = rows[rows.length - 1];
+          if (last) last.querySelector('input').value = c.url || ('https://' + c.domain);
+        });
+      }
+
+      updateTimeEstimate();
+    } catch (err) {
+      console.warn('Failed to load project config:', err);
+    }
+  };
 
   // ── Step 4: Pipeline Test ─────────────────────────────────────────────
   const TEST_MAP = {
@@ -2500,9 +2738,14 @@ input::placeholder {
       const m = state.modelData.allAnalysis.find(x => x.id === state.selectedAnalysis);
       if (m && m.configured) {
         apiProvider = m.provider;
-        // The server will use the .env key
         apiKey = '__from_env__';
       }
+    }
+
+    // Final fallback: tell server to check .env directly
+    if (!apiKey) {
+      apiProvider = '__check_env__';
+      apiKey = '__from_env__';
     }
 
     const body = { ollamaHost, ollamaModel, apiProvider, apiKey, targetUrl };

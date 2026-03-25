@@ -10,6 +10,7 @@
 
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { isGatewayReady } from './openclaw-bridge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -28,7 +29,7 @@ export async function testOllamaConnectivity(host, model) {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 90000); // 90s — model loading can be slow on first run
 
     const res = await fetch(`${host}/api/generate`, {
       method: 'POST',
@@ -211,7 +212,7 @@ export async function testCrawl(url) {
     return {
       success: false,
       latencyMs: Date.now() - start,
-      error: err.message.slice(0, 300),
+      error: (err?.message || String(err) || 'Unknown error').slice(0, 300),
     };
   }
 }
@@ -239,7 +240,7 @@ export async function testExtraction(host, model, samplePage) {
 
     process.env.OLLAMA_URL = host;
     process.env.OLLAMA_MODEL = model;
-    process.env.OLLAMA_TIMEOUT_MS = '30000'; // generous timeout for test
+    process.env.OLLAMA_TIMEOUT_MS = '120000'; // 2 min — first model load can be slow
 
     try {
       const result = await extractPage({
@@ -254,10 +255,12 @@ export async function testExtraction(host, model, samplePage) {
       });
 
       const keywordsFound = (result.keywords || []).length;
+      const isDegraded = result.extraction_source === 'degraded';
       return {
-        success: result.extraction_source !== 'degraded',
+        success: !isDegraded,
         keywordsFound,
         latencyMs: Date.now() - start,
+        error: isDegraded ? 'Extraction returned degraded results — model may need more VRAM or a longer timeout' : undefined,
         preview: {
           title: result.title?.slice(0, 60),
           intent: result.search_intent,
@@ -278,7 +281,7 @@ export async function testExtraction(host, model, samplePage) {
     return {
       success: false,
       latencyMs: Date.now() - start,
-      error: err.message.slice(0, 300),
+      error: (err?.message || String(err) || 'Unknown error').slice(0, 300),
     };
   }
 }
@@ -300,15 +303,15 @@ export async function testExtraction(host, model, samplePage) {
 export async function* runFullValidation(config) {
   const steps = [];
 
-  // Step 1: Ollama
+  // Step 1: Ollama — warm up model with connectivity test
   if (config.ollamaHost && config.ollamaModel) {
-    yield { step: 'ollama', status: 'running', detail: `Testing ${config.ollamaModel} at ${config.ollamaHost}...` };
+    yield { step: 'ollama', status: 'running', detail: `Loading ${config.ollamaModel}... (first run loads model into memory)` };
     const result = await testOllamaConnectivity(config.ollamaHost, config.ollamaModel);
     steps.push({ name: 'Ollama Connectivity', ...result, status: result.success ? 'pass' : 'fail' });
     yield {
       step: 'ollama',
       status: result.success ? 'pass' : 'fail',
-      detail: result.success ? `Connected (${result.latencyMs}ms)` : `Failed: ${result.error}`,
+      detail: result.success ? `Connected, model warm (${result.latencyMs}ms)` : `Failed: ${result.error}`,
       latencyMs: result.latencyMs,
     };
   } else {
@@ -316,20 +319,61 @@ export async function* runFullValidation(config) {
     yield { step: 'ollama', status: 'skip', detail: 'No Ollama configured — extraction will use degraded mode' };
   }
 
-  // Step 2: API Key
-  if (config.apiProvider && config.apiKey) {
-    yield { step: 'api-key', status: 'running', detail: `Validating ${config.apiProvider} API key...` };
-    const result = await testApiKey(config.apiProvider, config.apiKey);
+  // Step 2: API Key — resolve from .env if needed
+  let apiProvider = config.apiProvider || '';
+  let apiKey = config.apiKey || '';
+
+  if (apiProvider === '__check_env__' || apiKey === '__from_env__') {
+    // Auto-detect from .env
+    const envKeys = [
+      { provider: 'gemini', env: 'GEMINI_API_KEY' },
+      { provider: 'openai', env: 'OPENAI_API_KEY' },
+      { provider: 'anthropic', env: 'ANTHROPIC_API_KEY' },
+      { provider: 'deepseek', env: 'DEEPSEEK_API_KEY' },
+    ];
+    for (const { provider, env } of envKeys) {
+      if (process.env[env]) {
+        apiProvider = provider;
+        apiKey = process.env[env];
+        break;
+      }
+    }
+  }
+
+  if (apiProvider && apiKey && apiKey !== '__from_env__') {
+    yield { step: 'api-key', status: 'running', detail: `Validating ${apiProvider} API key...` };
+    const result = await testApiKey(apiProvider, apiKey);
     steps.push({ name: 'API Key', ...result, status: result.valid ? 'pass' : 'fail' });
     yield {
       step: 'api-key',
       status: result.valid ? 'pass' : 'fail',
-      detail: result.valid ? `${config.apiProvider} key valid (${result.latencyMs}ms)` : `Invalid: ${result.error}`,
+      detail: result.valid ? `${apiProvider} key valid (${result.latencyMs}ms)` : `Invalid: ${result.error}`,
       latencyMs: result.latencyMs,
     };
   } else {
-    steps.push({ name: 'API Key', status: 'skip' });
-    yield { step: 'api-key', status: 'skip', detail: 'No API key configured — analysis unavailable' };
+    // Check if OpenClaw gateway is available as alternative
+    yield { step: 'api-key', status: 'running', detail: 'Checking OpenClaw gateway...' };
+    const openclawReady = await isGatewayReady();
+    if (openclawReady) {
+      // Verify models are accessible
+      let modelInfo = '';
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 5000);
+        const mRes = await fetch('http://127.0.0.1:18789/v1/models', { signal: ctrl.signal });
+        clearTimeout(t);
+        if (mRes.ok) {
+          const mData = await mRes.json();
+          const count = mData?.data?.length || 0;
+          modelInfo = count > 0 ? ` — ${count} model(s) available` : '';
+        }
+      } catch {}
+      steps.push({ name: 'API Key', status: 'pass' });
+      yield { step: 'api-key', status: 'pass', detail: `OpenClaw gateway connected${modelInfo}. Use frontier models (Opus, Gemini Pro, GPT-5.4) for analysis.` };
+    } else {
+      steps.push({ name: 'API Key', status: 'skip' });
+      yield { step: 'api-key', status: 'skip', detail: 'No API key or OpenClaw gateway found. Add a key in .env or install OpenClaw.' };
+    }
   }
 
   // Step 3: Test Crawl
@@ -350,7 +394,7 @@ export async function* runFullValidation(config) {
 
     // Step 4: Test Extraction (only if crawl succeeded AND Ollama available)
     if (result.success && config.ollamaHost && config.ollamaModel && steps[0]?.status === 'pass') {
-      yield { step: 'extraction', status: 'running', detail: `Extracting with ${config.ollamaModel}...` };
+      yield { step: 'extraction', status: 'running', detail: `Extracting with ${config.ollamaModel}... (first run may take 1-2 min while model loads)` };
       const extractResult = await testExtraction(config.ollamaHost, config.ollamaModel, {
         url: config.targetUrl,
         title: result.title,

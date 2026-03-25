@@ -122,9 +122,34 @@ export function handleSetupRequest(req, res, url) {
     return true;
   }
 
+  // GET /api/setup/ping-ollama?host=... — ping a remote Ollama host
+  if (path === '/api/setup/ping-ollama' && method === 'GET') {
+    handlePingOllama(req, res);
+    return true;
+  }
+
+  // POST /api/setup/save-env — save a key to .env
+  if (path === '/api/setup/save-env' && method === 'POST') {
+    handleSaveEnv(req, res);
+    return true;
+  }
+
   // POST /api/setup/env — update .env keys
   if (path === '/api/setup/env' && method === 'POST') {
     handleEnv(req, res);
+    return true;
+  }
+
+  // GET /api/setup/config/:project — read existing project config
+  if (path.startsWith('/api/setup/config/') && method === 'GET') {
+    const projectName = decodeURIComponent(path.split('/').pop());
+    try {
+      const configPath = join(ROOT, 'config', `${projectName}.json`);
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      jsonResponse(res, config);
+    } catch (err) {
+      jsonResponse(res, { error: 'Config not found: ' + projectName }, 404);
+    }
     return true;
   }
 
@@ -227,9 +252,16 @@ function serveWizardHtml(res) {
   res.end(html);
 }
 
+function getOllamaHosts() {
+  const hosts = [];
+  if (process.env.OLLAMA_URL) hosts.push(process.env.OLLAMA_URL);
+  if (process.env.OLLAMA_FALLBACK_URL) hosts.push(process.env.OLLAMA_FALLBACK_URL);
+  return hosts;
+}
+
 async function handleStatus(req, res) {
   try {
-    const status = await fullSystemCheck();
+    const status = await fullSystemCheck({ customOllamaHosts: getOllamaHosts() });
     jsonResponse(res, status);
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);
@@ -238,7 +270,7 @@ async function handleStatus(req, res) {
 
 async function handleModels(req, res) {
   try {
-    const status = await fullSystemCheck();
+    const status = await fullSystemCheck({ customOllamaHosts: getOllamaHosts() });
     const models = getModelRecommendations(
       status.ollama.models,
       status.env.keys,
@@ -249,6 +281,50 @@ async function handleModels(req, res) {
       gpu: status.vram,
       ollama: status.ollama,
     });
+  } catch (err) {
+    jsonResponse(res, { error: err.message }, 500);
+  }
+}
+
+async function handlePingOllama(req, res) {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    const host = url.searchParams.get('host');
+    if (!host) { jsonResponse(res, { error: 'Missing host param' }, 400); return; }
+
+    const { checkOllamaRemote } = await import('./checks.js');
+    const result = await checkOllamaRemote(host);
+    jsonResponse(res, result);
+  } catch (err) {
+    jsonResponse(res, { error: err.message }, 500);
+  }
+}
+
+async function handleSaveEnv(req, res) {
+  try {
+    const body = await readBody(req);
+    const { key, value } = body;
+    if (!key || !key.match(/^[A-Z_]+$/)) { jsonResponse(res, { error: 'Invalid key' }, 400); return; }
+
+    const { join } = await import('path');
+    const { readFileSync, writeFileSync, existsSync } = await import('fs');
+    const envPath = join(process.cwd(), '.env');
+    let envContent = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
+
+    const regex = new RegExp(`^${key}=.*$`, 'm');
+    if (value) {
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${key}=${value}`);
+      } else {
+        envContent = envContent.trimEnd() + `\n${key}=${value}\n`;
+      }
+      process.env[key] = value;
+    } else {
+      envContent = envContent.replace(regex, '').replace(/\n{3,}/g, '\n\n');
+      delete process.env[key];
+    }
+    writeFileSync(envPath, envContent);
+    jsonResponse(res, { saved: true, key });
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);
   }

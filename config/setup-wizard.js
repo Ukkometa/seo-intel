@@ -342,7 +342,7 @@ async function run() {
 
   let projectName = projectArg;
   if (!projectName) {
-    const input = await ask('  Project name (e.g. "myclient" or "carbium"): ');
+    const input = await ask('  Project name (e.g. "myclient" or "mysite"): ');
     projectName = slugify(input.trim()) || 'myproject';
   }
 
@@ -358,7 +358,7 @@ async function run() {
     }
   }
 
-  const siteUrl = await ask('  Your site URL (e.g. https://carbium.io): ');
+  const siteUrl = await ask('  Your site URL (e.g. https://mysite.io): ');
   const siteName = await ask('  Site name (e.g. Carbium): ');
   const industry = await ask('  Industry / niche: ');
   const audience = await ask('  Target audience: ');

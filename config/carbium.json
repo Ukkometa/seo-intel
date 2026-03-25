@@ -1,108 +1,25 @@
 {
   "project": "carbium",
+  "crawl": {
+    "mode": "standard",
+    "pagesPerDomain": 9999,
+    "depth": 3,
+    "ollamaHost": "http://localhost:11434",
+    "extractionModel": "qwen3.5:9b"
+  },
   "context": {
     "siteName": "Carbium",
     "url": "https://carbium.io",
     "industry": "Solana blockchain infrastructure — RPC, DEX, data streams, execution layer",
     "audience": "Solana developers, bot builders, trading teams, DeFi protocols, researchers",
     "goal": "Position as the execution-layer standard for Solana. Win developers from Helius/QuickNode.",
-    "maturity": "early stage, strong infra, limited SEO presence",
-    "site_architecture": {
-      "note": "Subdomains are treated as separate sites by Google and do NOT pass domain authority back to carbium.io. Prefer carbium.io paths when possible.",
-      "properties": [
-        {
-          "id": "main",
-          "url": "carbium.io",
-          "platform": "main website",
-          "best_for": "Landing pages, product pages, comparison pages, high-authority content. Best SEO impact — directly on root domain.",
-          "difficulty": "high — requires dev work to ship new pages"
-        },
-        {
-          "id": "blog",
-          "url": "blog.carbium.io",
-          "platform": "Ghost",
-          "best_for": "Long-form articles, tutorials, comparisons, thought leadership, developer guides. Fast to publish.",
-          "difficulty": "low — publish directly in Ghost CMS",
-          "seo_note": "Subdomain — builds its own domain authority, does not strengthen carbium.io directly"
-        },
-        {
-          "id": "docs",
-          "url": "docs.carbium.io",
-          "platform": "ReadMe",
-          "best_for": "Technical documentation, API references, how-to guides, integration guides, FAQs.",
-          "difficulty": "low — edit in ReadMe",
-          "seo_note": "Subdomain — same subdomain authority caveat as blog"
-        }
-      ]
-    }
+    "maturity": "early stage"
   },
   "target": {
     "url": "https://carbium.io",
     "domain": "carbium.io",
     "role": "target"
   },
-  "owned": [
-    {
-      "url": "https://docs.carbium.io",
-      "domain": "docs.carbium.io",
-      "role": "owned"
-    },
-    {
-      "url": "https://blog.carbium.io",
-      "domain": "blog.carbium.io",
-      "role": "owned"
-    },
-    {
-      "domain": "api.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "app.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "dev-api.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "dev-grafana.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "dl.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "rpc.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "spdr.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "status.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "weavers.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    },
-    {
-      "domain": "www.carbium.io",
-      "maxPages": 100,
-      "crawlMode": "standard"
-    }
-  ],
   "competitors": [
     {
       "url": "https://helius.dev",
@@ -153,6 +70,58 @@
       "url": "https://titan.exchange",
       "domain": "titan.exchange",
       "role": "competitor"
+    }
+  ],
+  "owned": [
+    {
+      "domain": "api.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "app.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "dev-api.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "dev-grafana.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "dl.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "docs.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "rpc.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "status.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "weavers.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
+    },
+    {
+      "domain": "www.carbium.io",
+      "maxPages": 100,
+      "crawlMode": "standard"
     }
   ]
 }

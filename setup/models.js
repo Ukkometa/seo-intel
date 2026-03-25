@@ -114,7 +114,7 @@ export const EXTRACTION_MODELS = [
 //   Output: structured JSON with strategic recommendations, positioning, gap analysis
 //   Complexity: high — comparative reasoning across multiple domains
 //   Minimum viable: 14B+ parameters for reliable strategic output
-//   Cloud models (Claude, GPT-4o, DeepSeek) available via OpenClaw agent setup
+//   Cloud models (Claude, GPT-5.4, Gemini) available via OpenClaw agent setup
 
 export const ANALYSIS_MODELS = [
   {
@@ -168,6 +168,60 @@ export const ANALYSIS_MODELS = [
     quality: 'excellent',
     recommended: false,
     description: 'MoE — 120B total but only 12B active params. Excellent reasoning at efficient compute. Needs 64GB+ unified memory or multi-GPU.',
+  },
+  // ── Cloud frontier models (require API key in .env) ──
+  // ── Cloud frontier models (require API key in .env or via OpenClaw) ──
+  {
+    id: 'gemini-3.1-pro',
+    name: 'Gemini 3.1 Pro',
+    family: 'gemini',
+    type: 'cloud',
+    provider: 'gemini',
+    envKey: 'GEMINI_API_KEY',
+    context: '2M tokens',
+    costNote: '~$0.01–0.05/analysis',
+    quality: 'frontier',
+    recommended: false,
+    description: 'Google\'s latest frontier model. Massive 2M context handles the largest competitive datasets. Best value for cloud analysis.',
+  },
+  {
+    id: 'claude-opus-4.6',
+    name: 'Claude Opus 4.6',
+    family: 'claude',
+    type: 'cloud',
+    provider: 'anthropic',
+    envKey: 'ANTHROPIC_API_KEY',
+    context: '1M tokens',
+    costNote: '~$0.10–0.30/analysis',
+    quality: 'frontier',
+    recommended: false,
+    description: 'Anthropic\'s most capable model. Deepest reasoning for competitive gap analysis, strategic positioning, and implementation briefs.',
+  },
+  {
+    id: 'gpt-5.4',
+    name: 'GPT-5.4',
+    family: 'gpt',
+    type: 'cloud',
+    provider: 'openai',
+    envKey: 'OPENAI_API_KEY',
+    context: '256K tokens',
+    costNote: '~$0.05–0.15/analysis',
+    quality: 'frontier',
+    recommended: false,
+    description: 'OpenAI\'s flagship frontier model. Strong analytical reasoning for competitive intelligence and strategic recommendations.',
+  },
+  {
+    id: 'deepseek-r1',
+    name: 'DeepSeek R1',
+    family: 'deepseek',
+    type: 'cloud',
+    provider: 'deepseek',
+    envKey: 'DEEPSEEK_API_KEY',
+    context: '128K tokens',
+    costNote: '~$0.005–0.02/analysis',
+    quality: 'great',
+    recommended: false,
+    description: 'Reasoning-optimized model at a fraction of the cost. Excellent quality-to-price ratio for budget-conscious analysis.',
   },
 ];
 
@@ -318,10 +372,13 @@ export function getModelRecommendations(availableModels = [], envKeys = {}, vram
     })),
     allAnalysis: ANALYSIS_MODELS.map(m => ({
       ...m,
-      installed: availableModels.some(am =>
-        am.startsWith(m.family) && am.includes(m.id.split(':')[1])
-      ),
-      fitsVram: !vramMB || vramMB >= m.minVramMB,
+      installed: m.type === 'cloud'
+        ? !!(m.envKey && envKeys[m.envKey])
+        : availableModels.some(am =>
+            am.startsWith(m.family) && am.includes(m.id.split(':')[1])
+          ),
+      configured: m.type === 'cloud' ? !!(m.envKey && envKeys[m.envKey]) : undefined,
+      fitsVram: m.type === 'cloud' ? true : (!vramMB || vramMB >= m.minVramMB),
     })),
     vramMB,
   };

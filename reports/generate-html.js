@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
  * Generate HTML dashboard from database
  * @param {import('node:sqlite').DatabaseSync} db - SQLite database
- * @param {string} project - Project name (e.g., 'carbium')
+ * @param {string} project - Project name (e.g., 'mysite')
  * @param {object} config - Project config
  * @returns {string} Path to generated HTML file
  */
@@ -42,7 +42,12 @@ function gatherProjectData(db, project, config) {
   // Merge owned subdomains (blog.x, docs.x) into target at the SQL level.
   // Uses a savepoint so changes are rolled back after report generation —
   // the actual DB stays intact, but ALL downstream queries see unified data.
-  const ownedDomains = (config.owned || []).map(o => o.domain);
+  // Include BOTH config-owned domains AND DB role='owned' domains.
+  const configOwned = (config.owned || []).map(o => o.domain);
+  const dbOwned = db.prepare(
+    `SELECT domain FROM domains WHERE project = ? AND role = 'owned'`
+  ).all(project).map(r => r.domain);
+  const ownedDomains = [...new Set([...configOwned, ...dbOwned])];
   const hasOwned = ownedDomains.length > 0;
   if (hasOwned) {
     db.prepare('SAVEPOINT owned_merge').run();
@@ -52,7 +57,7 @@ function gatherProjectData(db, project, config) {
     if (targetDomainId) {
       for (const ownedDomain of ownedDomains) {
         const ownedRow = db.prepare(`SELECT id FROM domains WHERE project = ? AND domain = ?`).get(project, ownedDomain);
-        if (ownedRow) {
+        if (ownedRow && ownedRow.id !== targetDomainId) {
           db.prepare(`UPDATE pages SET domain_id = ? WHERE domain_id = ?`).run(targetDomainId, ownedRow.id);
           db.prepare(`DELETE FROM domains WHERE id = ?`).run(ownedRow.id);
         }
@@ -84,7 +89,7 @@ function gatherProjectData(db, project, config) {
   const schemaBreakdown = getSchemaBreakdown(db, project);
 
   // Advanced visualization data
-  const gravityMap = getGravityMapData(db, project);
+  const gravityMap = getGravityMapData(db, project, config);
   const contentTerrain = getContentTerrainData(db, project);
   const keywordVenn = getKeywordVennData(db, project);
   const performanceBubbles = getPerformanceBubbleData(db, project);
@@ -197,6 +202,7 @@ function buildHtmlTemplate(data, opts = {}) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SEO Intel ${pro ? 'Dashboard' : 'Preview'} — ${project.toUpperCase()}</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
@@ -207,7 +213,7 @@ function buildHtmlTemplate(data, opts = {}) {
        DESIGN SYSTEM - Edit these values to customize the dashboard
        ═══════════════════════════════════════════════════════════════════════ */
     :root {
-      /* Grey scale — ukkometa aesthetic */
+      /* Grey scale */
       --bg-primary: #0a0a0a;
       --bg-card: #111111;
       --bg-elevated: #161616;
@@ -255,6 +261,44 @@ function buildHtmlTemplate(data, opts = {}) {
     }
 
     /* ─── Header Bar ─────────────────────────────────────────────────────── */
+    .update-banner {
+      padding: 10px 20px;
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.78rem;
+      margin-bottom: 12px;
+    }
+    .update-banner.update-normal {
+      background: rgba(232,213,163,0.06);
+      border: 1px solid rgba(232,213,163,0.2);
+      color: var(--accent-gold);
+    }
+    .update-banner.update-security {
+      background: rgba(220,80,80,0.08);
+      border: 1px solid rgba(220,80,80,0.25);
+      color: #ff6b6b;
+    }
+    .update-banner .update-version { font-family: var(--font-mono); font-weight: 600; }
+    .update-banner .update-changelog { font-size: 0.68rem; color: var(--text-muted); flex:1; }
+    .update-banner .update-btn {
+      padding: 5px 14px;
+      border-radius: 6px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      border: 1px solid currentColor;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .update-banner .update-btn:hover { background: rgba(255,255,255,0.06); }
+    .update-banner .update-dismiss {
+      cursor: pointer; opacity: 0.5; font-size: 0.7rem;
+    }
+    .update-banner .update-dismiss:hover { opacity: 1; }
+
     .header-bar {
       background: var(--bg-card);
       border: 1px solid var(--border-card);
@@ -467,6 +511,8 @@ function buildHtmlTemplate(data, opts = {}) {
       white-space: nowrap;
     }
     .es-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+    .es-btn-stop { border-color: rgba(220,80,80,0.3); color: #dc5050; }
+    .es-btn-stop:hover { border-color: #dc5050; color: #ff6b6b; background: rgba(220,80,80,0.08); }
     .es-btn:disabled {
       opacity: 0.4; cursor: not-allowed;
       border-color: var(--border-card);
@@ -1072,6 +1118,20 @@ function buildHtmlTemplate(data, opts = {}) {
       background: var(--bg-elevated); padding: 1px 5px; border-radius: 3px;
       font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.68rem;
     }
+    .gsc-update-tooltip {
+      display: none; position: absolute; right: 0; top: 130%;
+      width: 320px; padding: 14px 16px;
+      background: var(--bg-card); border: 1px solid var(--border-card);
+      border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      font-size: 0.72rem; color: var(--text-secondary); line-height: 1.7;
+      z-index: 100; text-align: left;
+    }
+    .gsc-update-tooltip::after {
+      content: ''; position: absolute; right: 20px; bottom: 100%;
+      border: 6px solid transparent;
+      border-bottom-color: var(--border-card);
+    }
+    .gsc-update-wrap.open .gsc-update-tooltip { display: block; }
 
     /* ═══ DOMAIN ARCHITECTURE ═══ */
     .da-domains-row {
@@ -1319,58 +1379,100 @@ function buildHtmlTemplate(data, opts = {}) {
     .ki-priority-low    { color: var(--text-muted); }
 
 
-    .actions-panel {
-      max-width: var(--max-width);
-      margin: 0 auto 16px;
-      background: var(--bg-card);
-      border: 1px solid var(--border-card);
-      border-radius: var(--radius);
-      padding: 20px;
+    /* ─── Integrated terminal ────────────────────────────────────────── */
+    .term-btn {
+      font-size: 0.6rem; font-family: var(--font-body);
+      background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle);
+      color: var(--text-muted); padding: 3px 10px; border-radius: 4px;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
     }
-    .actions-grid {
+    .term-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+    .term-btn:active { background: rgba(232,213,163,0.1); }
+    .term-btn i { margin-right: 3px; font-size: 0.55rem; }
+
+    /* ─── Terminal + Export split layout ───────────────────────────────── */
+    .term-split {
       display: grid;
-      grid-template-columns: 240px 1fr;
-      gap: 16px;
-      align-items: start;
+      grid-template-columns: 2fr 1fr;
+      gap: 0;
+      max-width: var(--max-width);
+      margin: 12px auto;
     }
-    .actions-sidebar, .actions-viewer {
-      background: var(--bg-elevated);
+    .term-split .terminal-main {
+      min-width: 0;
+    }
+    .term-split .export-sidebar {
+      background: #0e0e0e;
+      border: 1px solid var(--border-card);
+      border-left: none;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .term-split .terminal-main > div {
+      border-radius: var(--radius) 0 0 var(--radius);
+    }
+    .export-sidebar-header {
+      padding: 6px 12px;
+      background: #161616;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .export-sidebar-btns {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .export-btn {
+      background: #1a1a1a;
+      color: var(--text-secondary);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius);
-      padding: 14px;
+      padding: 8px 10px;
+      font-size: 0.68rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: left;
+      font-family: var(--font-body);
     }
-    .actions-buttons { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 12px; }
-    .actions-btn {
-      background: #1a1a1a; color: var(--text-primary); border:1px solid var(--border-subtle); border-radius: var(--radius);
-      padding: 9px 12px; font-size: 0.74rem; cursor:pointer; transition: all 0.2s ease;
+    .export-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+    .export-btn i { margin-right: 5px; font-size: 0.6rem; }
+    .export-btn.active { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(232,213,163,0.06); }
+    .export-viewer {
+      flex: 1;
+      padding: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.66rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+      overflow-y: auto;
+      max-height: 400px;
     }
-    .actions-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
-    .actions-btn.primary { background: rgba(232,213,163,0.08); border-color: rgba(232,213,163,0.28); }
-    .actions-btn:disabled { opacity: 0.65; cursor: wait; }
-    .actions-history-list { display:flex; flex-direction:column; gap:8px; margin-top:10px; max-height:420px; overflow:auto; }
-    .actions-history-item {
-      display:block; width:100%; text-align:left; background:#141414; color:var(--text-secondary); border:1px solid var(--border-subtle);
-      border-radius: var(--radius); padding:10px; cursor:pointer; font-size:0.68rem;
+    .export-viewer h1, .export-viewer h2, .export-viewer h3 { color: var(--text-primary); margin: 12px 0 6px; font-family: var(--font-display); font-size: 0.8rem; }
+    .export-viewer h2 { font-size: 0.75rem; }
+    .export-viewer h3 { font-size: 0.7rem; }
+    .export-viewer ul { margin: 0 0 8px 14px; }
+    .export-viewer li { margin-bottom: 4px; color: var(--text-secondary); }
+    .export-viewer pre { background: #0c0c0c; border: 1px solid var(--border-subtle); padding: 8px; border-radius: 4px; overflow: auto; font-size: 0.62rem; }
+    .export-viewer code { color: var(--accent-gold); }
+    .export-viewer p { margin-bottom: 8px; color: var(--text-secondary); }
+    @media (max-width: 960px) {
+      .term-split { grid-template-columns: 1fr; }
+      .term-split .terminal-main > div { border-radius: var(--radius) var(--radius) 0 0; }
+      .export-sidebar { border-left: 1px solid var(--border-card); border-top: none; border-radius: 0 0 var(--radius) var(--radius); }
     }
-    .actions-history-item:hover { border-color: var(--accent-purple); color: var(--text-primary); }
-    .actions-viewer {
-      min-height: 420px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.72rem; line-height: 1.7; color: var(--text-secondary);
-      overflow: auto;
-    }
-    .actions-viewer h1, .actions-viewer h2, .actions-viewer h3 { color: var(--text-primary); margin: 16px 0 8px; font-family: var(--font-display); }
-    .actions-viewer ul { margin: 0 0 12px 18px; }
-    .actions-viewer li { margin-bottom: 6px; }
-    .actions-viewer pre { background:#0c0c0c; border:1px solid var(--border-subtle); padding:12px; border-radius: var(--radius); overflow:auto; }
-    .actions-viewer code { color: var(--accent-gold); }
-    .actions-meta { font-size:0.68rem; color:var(--text-muted); display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
-    .actions-empty { color: var(--text-muted); }
-    .actions-locked {
-      max-width: var(--max-width); margin: 0 auto 16px; background: linear-gradient(180deg, rgba(232,213,163,0.05), rgba(124,109,235,0.05));
-      border: 1px solid rgba(232,213,163,0.18); border-radius: var(--radius); padding: 22px;
-    }
-    @media (max-width: 860px) {
-      .actions-grid { grid-template-columns: 1fr; }
-    }
+
+    /* Action exports integrated into terminal panel — CSS cleaned up */
 
   </style>
 </head>`;
@@ -1683,24 +1785,15 @@ function buildHtmlTemplate(data, opts = {}) {
                    bar('Open Graph Tags', techCoverage.og) +
                    bar('Schema Markup', techCoverage.schema) +
                    bar('Robots Meta', techCoverage.robots) +
-                   `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:8px;">
+                   (avgLoad > 0 ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:8px;">
                      Avg load: <span style="color:${avgLoad > 3000 ? 'var(--color-danger)' : avgLoad > 1500 ? 'var(--color-warning)' : 'var(--color-success)'};">${avgLoad > 1000 ? (avgLoad/1000).toFixed(1) + 's' : avgLoad + 'ms'}</span>
-                   </div>`;
+                   </div>` : '');
           })() : '<div style="font-size:0.72rem;color:var(--text-muted);">No technical data yet. Run a crawl first.</div>'}
         </div>
       </div>
 
 
-      <div class="actions-locked">
-        <h2><span class="icon"><i class="fa-solid fa-lock"></i></span> Action Exports</h2>
-        <p style="font-size:0.74rem;color:var(--text-secondary);margin-bottom:10px;max-width:680px;">Technical Audit, Competitive Gaps, and Suggest What to Build live here on Solo. Generate implementation-ready exports, browse history, and read them directly in the dashboard.</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-          <span class="actions-btn" style="cursor:default;">Technical Audit</span>
-          <span class="actions-btn" style="cursor:default;">Competitive Gaps</span>
-          <span class="actions-btn" style="cursor:default;">Suggest What to Build</span>
-        </div>
-        <a href="https://froggo.pro/seo-intel" target="_blank" style="display:inline-block;padding:10px 18px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.78rem;font-weight:600;text-decoration:none;">Upgrade to Solo</a>
-      </div>
+      <!-- Action exports available via CLI terminal panel -->
 
       <!-- UPGRADE CTA -->
       <div style="text-align:center;padding:36px 24px;margin-bottom:16px;background:var(--bg-card);border:1px solid rgba(232,213,163,0.12);border-radius:var(--radius);">
@@ -1710,12 +1803,12 @@ function buildHtmlTemplate(data, opts = {}) {
           This is your site's structure. To see how you compare to competitors —
           keyword gaps, content opportunities, pages you can outrank — upgrade to SEO Intel Solo.
         </p>
-        <a href="https://froggo.pro/seo-intel" target="_blank"
+        <a href="https://ukkometa.fi/en/seo-intel/" target="_blank"
            style="display:inline-block;padding:10px 24px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.8rem;font-weight:500;text-decoration:none;">
           Upgrade to Solo — €19.99/mo →
         </a>
         <div style="font-size:0.62rem;color:var(--text-muted);margin-top:8px;">
-          €199/yr · also on <a href="https://froggo.pro/seo-intel" target="_blank" style="color:var(--accent-purple);">Froggo</a> at $9.99/mo
+          €199/yr saves ~17%
         </div>
         <div style="font-size:0.62rem;color:var(--text-muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle);">
           Data crawled: ${lastCrawl} · Export raw CSV: <code style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;">seo-intel export ${project}</code>
@@ -1740,6 +1833,8 @@ function buildHtmlTemplate(data, opts = {}) {
   // ── Panel HTML (project-specific body content) ──
   const panelHtml = `
   <div class="project-panel" data-project="${project}">
+  <!-- UPDATE BANNER (populated by JS if update available) -->
+  <div id="updateBanner${suffix}" style="display:none;"></div>
   <!-- HEADER BAR -->
   <div class="header-bar" id="header">
     <div class="header-left">
@@ -1826,6 +1921,9 @@ function buildHtmlTemplate(data, opts = {}) {
       <button class="es-btn" id="btnExtract${suffix}" onclick="startJob('extract','${project}')">
         <i class="fa-solid fa-brain"></i> Extract
       </button>
+      <button class="es-btn es-btn-stop" id="btnStop${suffix}" onclick="stopJob()" style="display:none;">
+        <i class="fa-solid fa-stop"></i> Stop
+      </button>
       <label class="es-stealth-toggle">
         <input type="checkbox" id="stealthToggle${suffix}">
         <i class="fa-solid fa-user-ninja"></i> Stealth
@@ -1833,250 +1931,311 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
   </div>
 
-  <!-- ═══ CLI QUICK REFERENCE ═══ -->
-  <details class="cli-reference" style="margin:12px auto;max-width:var(--max-width);">
-    <summary style="cursor:pointer;font-size:0.78rem;font-weight:500;color:var(--text-secondary);padding:10px 16px;background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);list-style:none;display:flex;align-items:center;gap:8px;">
-      <i class="fa-solid fa-terminal" style="color:var(--accent-gold);"></i> CLI Commands
-      <i class="fa-solid fa-chevron-down" style="font-size:0.6rem;color:var(--text-muted);margin-left:auto;"></i>
-    </summary>
-    <div style="background:#0c0c0c;border:1px solid var(--border-card);border-top:none;border-radius:0 0 var(--radius) var(--radius);overflow:hidden;">
-      <!-- Terminal title bar -->
-      <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:#161616;border-bottom:1px solid var(--border-subtle);">
-        <span style="width:10px;height:10px;border-radius:50%;background:#ff5f57;"></span>
-        <span style="width:10px;height:10px;border-radius:50%;background:#febc2e;"></span>
-        <span style="width:10px;height:10px;border-radius:50%;background:#28c840;"></span>
-        <span style="flex:1;text-align:center;font-size:0.6rem;color:var(--text-muted);font-family:var(--font-body);">seo-intel — ${project}</span>
-      </div>
-      <!-- Terminal body -->
-      <div style="padding:14px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;line-height:1.8;color:var(--text-muted);">
-        <div style="color:var(--color-success);margin-bottom:2px;"><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel crawl ${project}</span> <span style="color:#444;"># crawl all domains</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel status</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel export ${project}</span> <span style="color:#444;"># JSON/CSV for any AI</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel guide ${project}</span></div>
-        ${pro ? `
-        <div style="border-top:1px solid var(--border-subtle);margin:8px 0;"></div>
-        <div style="color:var(--accent-gold);margin-bottom:2px;"><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel extract ${project}</span> <span style="color:#444;"># Ollama per-page</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel analyze ${project}</span> <span style="color:#444;"># competitive gaps</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel keywords ${project}</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel html ${project}</span> <span style="color:#444;"># regenerate dashboard</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel brief ${project}</span></div>
-        <div style="border-top:1px solid var(--border-subtle);margin:8px 0;"></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel headings-audit ${project}</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel orphans ${project}</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel schemas ${project}</span></div>
-        <div><span style="color:#666;">$</span> <span style="color:var(--text-secondary);">seo-intel entities ${project}</span></div>
-        ` : `
-        <div style="border-top:1px solid var(--border-subtle);margin:8px 0;"></div>
-        <div style="color:var(--text-muted);font-style:italic;font-family:var(--font-body);font-size:0.65rem;">
-          <i class="fa-solid fa-lock" style="color:var(--accent-gold);margin-right:4px;"></i> extract, analyze, keywords, html, brief, audits... <a href="https://froggo.pro/seo-intel" target="_blank" style="color:var(--accent-gold);">Upgrade to Solo</a>
-        </div>`}
-        <div style="margin-top:4px;"><span style="color:var(--color-success);">$</span> <span style="animation:blink 1s step-end infinite;color:var(--text-secondary);">_</span></div>
+  <!-- ═══ INTEGRATED TERMINAL + EXPORT SIDEBAR ═══ -->
+  <div class="term-split">
+    <!-- LEFT: Terminal -->
+    <div class="terminal-main">
+      <div class="terminal-panel" style="background:#0c0c0c;border:1px solid var(--border-card);border-radius:var(--radius) 0 0 var(--radius);overflow:hidden;">
+        <!-- Terminal title bar -->
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:#161616;border-bottom:1px solid var(--border-subtle);">
+          <span style="width:10px;height:10px;border-radius:50%;background:#ff5f57;"></span>
+          <span style="width:10px;height:10px;border-radius:50%;background:#febc2e;"></span>
+          <span style="width:10px;height:10px;border-radius:50%;background:#28c840;"></span>
+          <span style="flex:1;text-align:center;font-size:0.6rem;color:var(--text-muted);font-family:var(--font-body);">seo-intel — ${project}</span>
+          <span id="termStatus${suffix}" style="font-size:0.55rem;color:var(--text-muted);font-family:var(--font-body);"></span>
+        </div>
+        <!-- Command buttons -->
+        <div style="padding:8px 12px;background:#111;border-bottom:1px solid var(--border-subtle);display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+          <span style="font-size:0.6rem;color:var(--text-muted);margin-right:4px;"><i class="fa-solid fa-play" style="margin-right:3px;"></i>Run:</span>
+          <button class="term-btn" data-cmd="crawl" data-project="${project}"><i class="fa-solid fa-spider"></i> Crawl</button>
+          ${pro ? `<button class="term-btn" data-cmd="extract" data-project="${project}"><i class="fa-solid fa-brain"></i> Extract</button>
+          <button class="term-btn" data-cmd="analyze" data-project="${project}"><i class="fa-solid fa-chart-column"></i> Analyze</button>
+          <button class="term-btn" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>
+          <button class="term-btn" data-cmd="keywords" data-project="${project}"><i class="fa-solid fa-key"></i> Keywords</button>` : ''}
+          <button class="term-btn" data-cmd="status" data-project=""><i class="fa-solid fa-circle-info"></i> Status</button>
+          <button class="term-btn" data-cmd="guide" data-project="${project}"><i class="fa-solid fa-map"></i> Guide</button>
+          <button class="term-btn" data-cmd="setup" data-project="" style="margin-left:auto;border-color:rgba(232,213,163,0.25);"><i class="fa-solid fa-gear"></i> Setup</button>
+          ${!pro ? `<span style="font-size:0.55rem;color:var(--text-muted);margin-left:auto;"><i class="fa-solid fa-lock" style="color:var(--accent-gold);margin-right:3px;"></i><a href="https://ukkometa.fi/en/seo-intel/" target="_blank" style="color:var(--accent-gold);text-decoration:none;">Solo</a> for extract, analyze, exports</span>` : ''}
+        </div>
+        <!-- Terminal output -->
+        <div id="termOutput${suffix}" style="padding:12px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;line-height:1.7;color:var(--text-muted);max-height:400px;overflow-y:auto;min-height:60px;">
+          <div style="color:#555;">Ready. Click a command above or type below.</div>
+          <div style="color:#555;">Requires <span style="color:var(--text-secondary);">seo-intel serve</span> for live execution.</div>
+        </div>
+        <!-- Input line -->
+        <div style="display:flex;align-items:center;padding:4px 12px 8px;background:#0c0c0c;border-top:1px solid var(--border-subtle);gap:6px;">
+          <span style="color:var(--color-success);font-family:'SF Mono',monospace;font-size:0.72rem;">$</span>
+          <input id="termInput${suffix}" type="text" placeholder="seo-intel crawl ${project}" style="flex:1;background:none;border:none;color:var(--text-secondary);font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;outline:none;" />
+        </div>
       </div>
     </div>
-  </details>
-
-  <div class="actions-panel">
-    <h2><span class="icon"><i class="fa-solid fa-list-check"></i></span> Action Exports</h2>
-    <div class="actions-grid">
-      <div class="actions-sidebar">
-        <div style="font-size:0.72rem;color:var(--text-muted);">Generate implementation-ready action exports from the live project data. Requires <code>seo-intel serve</code>.</div>
-        <div class="actions-buttons">
-          <button class="actions-btn primary" id="actionsBtnTechnical${suffix}">Technical Audit</button>
-          <button class="actions-btn" id="actionsBtnCompetitive${suffix}">Competitive Gaps</button>
-          <button class="actions-btn" id="actionsBtnSuggestive${suffix}">Suggest What to Build</button>
-          <button class="actions-btn" id="actionsBtnAll${suffix}">Generate Action Export</button>
-        </div>
-        <div id="actionsStatus${suffix}" style="font-size:0.68rem;color:var(--text-muted);"></div>
-        <div style="margin-top:14px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;">Export History</div>
-        <div class="actions-history-list" id="actionsHistory${suffix}">
-          <div class="actions-empty">Loading saved exports…</div>
+    <!-- RIGHT: Export Sidebar -->
+    <div class="export-sidebar">
+      <div class="export-sidebar-header">
+        <i class="fa-solid fa-file-export"></i> Exports
+      </div>
+      ${pro ? `
+      <div class="export-sidebar-btns">
+        <button class="export-btn" data-export-cmd="export-actions" data-export-project="${project}" data-export-scope="technical"><i class="fa-solid fa-wrench"></i> Technical Audit</button>
+        <button class="export-btn" data-export-cmd="export-actions" data-export-project="${project}" data-export-scope="competitive"><i class="fa-solid fa-users"></i> Competitive Gaps</button>
+        <button class="export-btn" data-export-cmd="suggest-usecases" data-export-project="${project}"><i class="fa-solid fa-lightbulb"></i> Suggest What to Build</button>
+      </div>
+      <div id="exportViewer${suffix}" class="export-viewer">
+        <div style="color:#444;padding:20px 0;text-align:center;">
+          <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
+          Click an export to generate an<br/>implementation-ready action brief.
         </div>
       </div>
-      <div class="actions-viewer" id="actionsViewer${suffix}">
-        <div class="actions-empty">Pick a scope to generate an export, or open a previous export from history.</div>
+      ` : `
+      <div style="padding:20px 14px;text-align:center;">
+        <i class="fa-solid fa-lock" style="font-size:1rem;color:var(--accent-gold);margin-bottom:8px;display:block;"></i>
+        <p style="font-size:0.68rem;color:var(--text-muted);line-height:1.5;margin-bottom:12px;">Agentic exports turn your crawl data into implementation briefs.</p>
+        <a href="https://ukkometa.fi/en/seo-intel/" target="_blank" style="display:inline-block;padding:6px 14px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.68rem;font-weight:500;text-decoration:none;">Unlock with Solo</a>
       </div>
+      `}
     </div>
   </div>
 
   <script>
-    (function() {
-      const suffix = ${JSON.stringify(suffix)};
-      const project = ${JSON.stringify(project)};
-      const viewer = document.getElementById('actionsViewer' + suffix);
-      const historyEl = document.getElementById('actionsHistory' + suffix);
-      const statusEl = document.getElementById('actionsStatus' + suffix);
-      const buttonMap = {
-        technical: document.getElementById('actionsBtnTechnical' + suffix),
-        competitive: document.getElementById('actionsBtnCompetitive' + suffix),
-        suggestive: document.getElementById('actionsBtnSuggestive' + suffix),
-        all: document.getElementById('actionsBtnAll' + suffix),
-      };
-      const labels = {
-        technical: 'Technical Audit',
-        competitive: 'Competitive Gaps',
-        suggestive: 'Suggest What to Build',
-        all: 'Generate Action Export',
-      };
-      const isServed = window.location.protocol.startsWith('http');
+  (function() {
+    const suffix = ${JSON.stringify(suffix)};
+    const project = ${JSON.stringify(project)};
+    const output = document.getElementById('termOutput' + suffix);
+    const input = document.getElementById('termInput' + suffix);
+    const status = document.getElementById('termStatus' + suffix);
+    const isServed = window.location.protocol.startsWith('http');
+    let running = false;
+    let eventSource = null;
 
-      function escapeHtml(value) {
-        return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      }
+    function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-      function renderMarkdown(md) {
-        let html = escapeHtml(md || '');
-        html = html.replace(/\`\`\`([\s\S]*?)\`\`\`/g, function(_, code) { return '<pre><code>' + code.trim() + '</code></pre>'; });
-        html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');
-        html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
-        html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        html = html.replace(/^- (.*)$/gm, '<li>$1</li>');
-        html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) { return '<ul>' + match + '</ul>'; });
-        html = html.replace(/\n\n/g, '</p><p>');
-        html = '<p>' + html + '</p>';
-        html = html.replace(/<p>(\s*)<(h1|h2|h3|ul|pre)>/g, '<$2>').replace(/<\/(h1|h2|h3|ul|pre)>(\s*)<\/p>/g, '</$1>');
-        return html;
-      }
+    function appendLine(text, type) {
+      const line = document.createElement('div');
+      if (type === 'stderr') line.style.color = 'var(--color-warning)';
+      else if (type === 'cmd') { line.style.color = 'var(--color-success)'; line.style.marginTop = '8px'; }
+      else if (type === 'exit-ok') line.style.color = 'var(--color-success)';
+      else if (type === 'exit-err') line.style.color = 'var(--color-danger)';
+      else if (type === 'error') line.style.color = 'var(--color-danger)';
+      else line.style.color = 'var(--text-secondary)';
+      line.innerHTML = escHtml(text);
+      output.appendChild(line);
+      output.scrollTop = output.scrollHeight;
+    }
 
-      function payloadToMarkdown(payload) {
-        const actions = Array.isArray(payload?.actions) ? payload.actions : [];
-        const summary = payload?.summary || {};
-        const grouped = actions.reduce((acc, action) => {
-          const area = action.area || 'other';
-          (acc[area] ||= []).push(action);
-          return acc;
-        }, {});
-        const lines = [
-          '# SEO Intel Actions — ' + (payload?.project || project),
-          '',
-          '- Generated: ' + (payload?.generatedAt || new Date().toISOString()),
-          '- Scope: ' + (payload?.scope || 'all'),
-          '- Total actions: ' + actions.length,
-          '- Priority mix: critical ' + (summary.critical || 0) + ', high ' + (summary.high || 0) + ', medium ' + (summary.medium || 0) + ', low ' + (summary.low || 0),
-          '',
-          '## Summary',
-          '',
-          '- Critical: ' + (summary.critical || 0),
-          '- High: ' + (summary.high || 0),
-          '- Medium: ' + (summary.medium || 0),
-          '- Low: ' + (summary.low || 0),
-          ''
-        ];
-        ['technical', 'content', 'schema', 'structure', 'other'].forEach(function(area) {
-          const items = grouped[area] || [];
-          if (!items.length) return;
-          lines.push('## ' + area.charAt(0).toUpperCase() + area.slice(1));
-          lines.push('');
-          items.forEach(function(action) {
-            lines.push('### ' + (action.title || 'Untitled action'));
-            lines.push('- ID: ' + (action.id || 'n/a'));
-            lines.push('- Type: ' + (action.type || 'n/a'));
-            lines.push('- Priority: ' + (action.priority || 'n/a'));
-            lines.push('- Why: ' + (action.why || ''));
-            if (action.evidence?.length) {
-              lines.push('- Evidence:');
-              action.evidence.forEach(function(item) { lines.push('  - ' + item); });
-            }
-            if (action.implementationHints?.length) {
-              lines.push('- Implementation hints:');
-              action.implementationHints.forEach(function(item) { lines.push('  - ' + item); });
-            }
-            lines.push('');
-          });
-        });
-        if (!actions.length) {
-          lines.push('## No actions found', '', '- The current dataset did not surface any qualifying actions for this scope.', '');
+    function runCommand(command, proj, extra) {
+      // Setup always works — even during a running crawl
+      if (command === 'setup') {
+        if (isServed) {
+          window.open('/setup', '_blank');
+        } else {
+          window.open('http://localhost:3000/setup', '_blank');
+          appendLine('Opening setup wizard at localhost:3000/setup', 'stdout');
+          appendLine('If it does not open, run: seo-intel setup', 'cmd');
         }
-        return lines.join('
-');
+        return;
       }
-
-      function showMarkdown(markdown, sourceLabel, scope) {
-        const meta = '<div class="actions-meta"><span>Project: ' + escapeHtml(project) + '</span>' +
-          (scope ? '<span>Scope: ' + escapeHtml(scope) + '</span>' : '') +
-          '<span>Source: ' + escapeHtml(sourceLabel || 'history') + '</span></div>';
-        viewer.innerHTML = meta + renderMarkdown(markdown);
-      }
-
-      function showPayload(payload, sourceLabel) {
-        showMarkdown(payloadToMarkdown(payload), sourceLabel || 'live export', payload?.scope || 'all');
-      }
-
-      function setBusy(scope, busy) {
-        Object.entries(buttonMap).forEach(function(entry) {
-          const key = entry[0];
-          const btn = entry[1];
-          if (!btn) return;
-          btn.disabled = busy;
-          btn.innerHTML = busy && key === scope
-            ? '<i class="fa-solid fa-spinner fa-spin"></i> ' + labels[key]
-            : labels[key];
-        });
-      }
-
-      function loadHistory() {
-        fetch('/api/export-history').then(function(r) { return r.json(); }).then(function(data) {
-          const items = (data.items || []).filter(function(item) { return item.project === project; });
-          if (!items.length) {
-            historyEl.innerHTML = '<div class="actions-empty">No exports saved yet.</div>';
-            return;
-          }
-          historyEl.innerHTML = items.map(function(item) {
-            return '<button class="actions-history-item" data-url="' + item.url + '" data-format="' + item.format + '" data-name="' + escapeHtml(item.name) + '"><strong style="display:block;color:var(--text-primary);">' + escapeHtml(item.format.toUpperCase()) + '</strong><span>' + escapeHtml(item.name) + '</span></button>';
-          }).join('');
-          historyEl.querySelectorAll('.actions-history-item').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-              const url = btn.getAttribute('data-url');
-              const format = btn.getAttribute('data-format');
-              const name = btn.getAttribute('data-name');
-              fetch(url).then(function(r) { return format === 'json' ? r.json() : r.text(); }).then(function(content) {
-                if (format === 'json') showPayload(content, name);
-                else showMarkdown(content, name);
-              }).catch(function(err) {
-                viewer.innerHTML = '<div class="actions-empty">Failed to load export: ' + escapeHtml(err.message) + '</div>';
-              });
-            });
-          });
-        }).catch(function(err) {
-          historyEl.innerHTML = '<div class="actions-empty">History unavailable: ' + escapeHtml(err.message) + '</div>';
-        });
-      }
-
-      function runExport(scope) {
-        if (!isServed) {
-          alert('Run seo-intel serve to use action exports from the dashboard.');
-          return;
-        }
-        statusEl.textContent = 'Generating ' + labels[scope] + '…';
-        setBusy(scope, true);
-        fetch('/api/export-actions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: project, scope: scope, format: 'json' }),
-        }).then(function(r) {
-          return r.json().then(function(data) { return { ok: r.ok, data: data }; });
-        }).then(function(result) {
-          if (!result.ok || result.data.error) throw new Error(result.data.error || 'Export failed');
-          statusEl.textContent = labels[scope] + ' ready.';
-          showPayload(result.data.data, 'live export');
-          loadHistory();
-        }).catch(function(err) {
-          statusEl.textContent = 'Export failed.';
-          viewer.innerHTML = '<div class="actions-empty">' + escapeHtml(err.message) + '</div>';
-        }).finally(function() {
-          setBusy(scope, false);
-        });
-      }
-
-      Object.keys(buttonMap).forEach(function(scope) {
-        if (buttonMap[scope]) buttonMap[scope].addEventListener('click', function() { runExport(scope); });
-      });
 
       if (!isServed) {
-        statusEl.innerHTML = '<i class="fa-solid fa-plug"></i> Run <code>seo-intel serve</code> to generate exports here.';
+        appendLine('', 'cmd');
+        appendLine('Not connected to server. Run in your terminal:', 'error');
+        appendLine('  seo-intel ' + command + (proj ? ' ' + proj : '') + (extra?.scope ? ' --scope ' + extra.scope : ''), 'cmd');
+        appendLine('', 'cmd');
+        appendLine('Or start the server: seo-intel serve', 'error');
+        return;
       }
-      loadHistory();
+
+      running = true;
+      status.textContent = 'running...';
+      status.style.color = 'var(--color-warning)';
+
+      const params = new URLSearchParams({ command });
+      if (proj) params.set('project', proj);
+      if (extra?.scope) params.set('scope', extra.scope);
+      if (extra?.stealth) params.set('stealth', 'true');
+      if (extra?.format) params.set('format', extra.format);
+
+      appendLine('$ seo-intel ' + command + (proj ? ' ' + proj : '') + (extra?.scope ? ' --scope ' + extra.scope : ''), 'cmd');
+
+      eventSource = new EventSource('/api/terminal?' + params.toString());
+      eventSource.onmessage = function(e) {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'stdout') appendLine(msg.data, 'stdout');
+          else if (msg.type === 'stderr') appendLine(msg.data, 'stderr');
+          else if (msg.type === 'error') { appendLine('Error: ' + msg.data, 'error'); }
+          else if (msg.type === 'exit') {
+            const code = msg.data?.code ?? msg.data;
+            appendLine(code === 0 ? 'Done.' : 'Exited with code ' + code, code === 0 ? 'exit-ok' : 'exit-err');
+            running = false;
+            status.textContent = code === 0 ? 'done' : 'failed';
+            status.style.color = code === 0 ? 'var(--color-success)' : 'var(--color-danger)';
+            eventSource.close();
+            eventSource = null;
+          }
+        } catch (_) {}
+      };
+      eventSource.onerror = function() {
+        if (running) {
+          appendLine('Connection lost.', 'error');
+          running = false;
+          status.textContent = 'disconnected';
+          status.style.color = 'var(--color-danger)';
+        }
+        eventSource?.close();
+        eventSource = null;
+      };
+    }
+
+    // Button clicks
+    document.querySelectorAll('.terminal-panel .term-btn').forEach(function(btn) {
+      if (btn.closest('.terminal-panel') !== output.closest('.terminal-panel')) return;
+      btn.addEventListener('click', function() {
+        const cmd = btn.getAttribute('data-cmd');
+        const proj = btn.getAttribute('data-project');
+        const scope = btn.getAttribute('data-scope');
+        runCommand(cmd, proj, scope ? { scope } : undefined);
+      });
+    });
+
+    // Export sidebar buttons
+    const exportViewer = document.getElementById('exportViewer' + suffix);
+    document.querySelectorAll('.export-btn').forEach(function(btn) {
+      const sidebar = btn.closest('.export-sidebar');
+      if (!sidebar || !sidebar.closest('.term-split')?.querySelector('#termOutput' + suffix)) return;
+      btn.addEventListener('click', function() {
+        if (running) return;
+        const cmd = btn.getAttribute('data-export-cmd');
+        const proj = btn.getAttribute('data-export-project');
+        const scope = btn.getAttribute('data-export-scope');
+
+        // Highlight active
+        sidebar.querySelectorAll('.export-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        if (!isServed) {
+          if (exportViewer) {
+            exportViewer.innerHTML = '<div style="color:var(--color-danger);padding:12px;">Not connected. Run in terminal:<br/><code style="color:var(--accent-gold);">seo-intel ' + cmd + ' ' + proj + (scope ? ' --scope ' + scope : '') + '</code></div>';
+          }
+          return;
+        }
+
+        // Show loading
+        if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;"><i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i>Generating...</div>';
+
+        const params = new URLSearchParams({ command: cmd });
+        if (proj) params.set('project', proj);
+        if (scope) params.set('scope', scope);
+        params.set('format', 'markdown');
+
+        let mdContent = '';
+        const es = new EventSource('/api/terminal?' + params.toString());
+        running = true;
+        status.textContent = 'exporting...';
+        status.style.color = 'var(--color-warning)';
+
+        es.onmessage = function(e) {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'stdout') mdContent += msg.data + '\\n';
+            else if (msg.type === 'exit') {
+              running = false;
+              status.textContent = 'done';
+              status.style.color = 'var(--color-success)';
+              es.close();
+              if (exportViewer) {
+                // Simple markdown to HTML
+                var bt = String.fromCharCode(96);
+                var codeRe = new RegExp(bt + '([^' + bt + ']+)' + bt, 'g');
+                let html = mdContent
+                  .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                  .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                  .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                  .replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')
+                  .replace(/^- (.*$)/gm, '<li>$1</li>')
+                  .replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>')
+                  .replace(codeRe, '<code>$1</code>')
+                  .replace(/\\n/g, '<br/>');
+                exportViewer.innerHTML = html || '<div style="color:var(--text-muted);">No output.</div>';
+                exportViewer.scrollTop = 0;
+              }
+            }
+          } catch (_) {}
+        };
+        es.onerror = function() {
+          running = false;
+          status.textContent = 'error';
+          status.style.color = 'var(--color-danger)';
+          es.close();
+          if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--color-danger);">Connection failed.</div>';
+        };
+      });
+    });
+
+    // Input enter
+    input.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      const val = input.value.trim();
+      if (!val) return;
+      input.value = '';
+
+      // Parse: "seo-intel crawl mysite --stealth" or just "crawl mysite"
+      const parts = val.replace(/^seo-intel\\s+/i, '').split(/\\s+/);
+      const cmd = parts[0];
+      const proj = parts[1] && !parts[1].startsWith('-') ? parts[1] : project;
+      const extra = {};
+      if (parts.includes('--stealth')) extra.stealth = true;
+      const scopeIdx = parts.indexOf('--scope');
+      if (scopeIdx > -1 && parts[scopeIdx + 1]) extra.scope = parts[scopeIdx + 1];
+      runCommand(cmd, proj, extra);
+    });
+
+    // Autorun: if URL has ?autorun=setup-classic, fire seo-intel setup --classic via SSE
+    (function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('autorun') === 'setup-classic') {
+        // Remove the param so it doesn't re-trigger on refresh
+        window.history.replaceState({}, '', window.location.pathname);
+        // Wait a tick for the panel to be ready, then stream the command
+        setTimeout(function() {
+          if (!isServed) {
+            appendLine('Not connected to server. Cannot run setup --classic automatically.', 'error');
+            return;
+          }
+          running = true;
+          status.textContent = 'running...';
+          status.style.color = 'var(--color-warning)';
+          appendLine('$ seo-intel setup --classic', 'cmd');
+          const params = new URLSearchParams({ command: 'setup', classic: 'true' });
+          eventSource = new EventSource('/api/terminal?' + params.toString());
+          eventSource.onmessage = function(e) {
+            try {
+              const msg = JSON.parse(e.data);
+              if (msg.type === 'stdout') appendLine(msg.data, 'stdout');
+              else if (msg.type === 'stderr') appendLine(msg.data, 'stderr');
+              else if (msg.type === 'error') { appendLine('Error: ' + msg.data, 'error'); }
+              else if (msg.type === 'exit') {
+                const code = msg.data?.code ?? msg.data;
+                appendLine(code === 0 ? 'Done.' : 'Exited with code ' + code, code === 0 ? 'exit-ok' : 'exit-err');
+                running = false;
+                status.textContent = code === 0 ? 'done' : 'failed';
+                status.style.color = code === 0 ? 'var(--color-success)' : 'var(--color-danger)';
+                eventSource.close();
+                eventSource = null;
+              }
+            } catch (_) {}
+          };
+          eventSource.onerror = function() {
+            if (running) { appendLine('Connection lost.', 'error'); }
+            running = false;
+            status.textContent = 'disconnected';
+            status.style.color = 'var(--color-danger)';
+            eventSource?.close();
+            eventSource = null;
+          };
+        }, 300);
+      }
     })();
+  })();
   </script>
 
   <div class="dashboard">
@@ -2096,7 +2255,19 @@ function buildHtmlTemplate(data, opts = {}) {
       <div class="gsc-date-range" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <span><i class="fa-regular fa-calendar"></i> ${escapeHtml(s.dateRange)}</span>
         ${ageLabel ? `<span style="font-size:0.65rem;padding:2px 8px;border-radius:3px;background:rgba(0,0,0,0.3);color:${ageColor};">${ageLabel}</span>` : ''}
-        <a href="/setup#step4" style="font-size:0.62rem;color:var(--text-muted);margin-left:auto;text-decoration:none;border-bottom:1px solid var(--border-subtle);" title="Upload fresh GSC data"><i class="fa-solid fa-arrows-rotate" style="margin-right:3px;"></i>Update GSC data</a>
+        <span class="gsc-update-wrap" style="margin-left:auto;position:relative;">
+          <button onclick="this.parentElement.classList.toggle('open')" style="font-size:0.62rem;color:var(--text-muted);background:none;border:none;cursor:pointer;border-bottom:1px solid var(--border-subtle);padding:0;font-family:inherit;"><i class="fa-solid fa-arrows-rotate" style="margin-right:3px;"></i>Update GSC data</button>
+          <div class="gsc-update-tooltip">
+            <strong>How to update GSC data</strong><br><br>
+            1. Go to <a href="https://search.google.com/search-console/performance" target="_blank" style="color:var(--accent-gold);">Google Search Console &rarr; Performance</a><br>
+            2. Set date range to <strong>last 3&ndash;6 months</strong> for best results<br>
+            3. Click <strong>Export &rarr; Download CSV</strong><br>
+            4. Unzip and place the folder in:<br>
+            <code style="display:block;margin:6px 0;padding:4px 8px;background:rgba(0,0,0,0.3);border-radius:3px;font-size:0.7rem;">seo-intel/gsc/${project}-*/</code>
+            5. Run <code>seo-intel html</code> to regenerate<br><br>
+            <span style="color:var(--text-muted);font-size:0.6rem;"><i class="fa-solid fa-circle-info" style="margin-right:3px;"></i>Use daily (not hourly) export with 3&ndash;6 months for meaningful trend charts.</span>
+          </div>
+        </span>
       </div>
       <div class="gsc-stat-bar">
         <div class="gsc-stat"><span class="gsc-stat-number clicks">${s.totalClicks.toLocaleString()}</span><span class="gsc-stat-label">Clicks</span></div>
@@ -2896,7 +3067,7 @@ function buildHtmlTemplate(data, opts = {}) {
       <p style="font-size:0.75rem; color:var(--text-muted); max-width:400px; margin:0 auto 16px;">
         Upgrade to Solo for keyword battleground, competitive gaps, AI-powered quick wins, content audits, and 15+ advanced visualizations.
       </p>
-      <a href="https://froggo.pro/seo-intel" target="_blank"
+      <a href="https://ukkometa.fi/en/seo-intel/" target="_blank"
          style="display:inline-block; padding:8px 20px; background:var(--accent-gold); color:var(--text-dark); border-radius:var(--radius); font-size:0.78rem; font-weight:500; text-decoration:none;">
         Upgrade to Solo — €19.99/mo →
       </a>
@@ -3015,7 +3186,7 @@ function buildHtmlTemplate(data, opts = {}) {
     // CONFIG OBJECT - Edit this section to update all chart data
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Color palette — soft pastels matching ukkometa aesthetic
+    // Color palette — soft pastels
     const COLORS = {
       gold: '#e8d5a3',
       purple: '#7c6deb',
@@ -3321,6 +3492,27 @@ function buildHtmlTemplate(data, opts = {}) {
       bg: '#111111', grid: '#222222', text: '#b8b8b8', muted: '#555555'
     };
 
+    // ═══ UPDATE CHECK ═══
+    (function() {
+      if (!window.location.protocol.startsWith('http')) return;
+      fetch('/api/update-check').then(r => r.json()).then(function(info) {
+        if (!info.hasUpdate) return;
+        var banner = document.getElementById('updateBanner${suffix}');
+        if (!banner) return;
+        var cls = info.security ? 'update-security' : 'update-normal';
+        var icon = info.security ? 'fa-shield-halved' : 'fa-arrow-up';
+        var changelogHtml = info.changelog ? '<span class="update-changelog">' + info.changelog.split('\\n')[0] + '</span>' : '';
+        banner.style.display = 'block';
+        banner.innerHTML = '<div class="update-banner ' + cls + '">' +
+          '<i class="fa-solid ' + icon + '"></i>' +
+          '<span class="update-version">' + info.current + ' → ' + info.latest + '</span>' +
+          changelogHtml +
+          '<button class="update-btn" onclick="navigator.clipboard.writeText(\\'npm update -g seo-intel\\');this.textContent=\\'Copied!\\';setTimeout(()=>this.textContent=\\'Update\\',2000)">Update</button>' +
+          '<span class="update-dismiss" onclick="this.closest(\\'.update-banner\\').style.display=\\'none\\'"><i class="fa-solid fa-xmark"></i></span>' +
+          '</div>';
+      }).catch(function() {});
+    })();
+
     // ═══ LIVE DASHBOARD CONTROLS ═══
     (function() {
       const isServed = window.location.protocol.startsWith('http');
@@ -3353,9 +3545,21 @@ function buildHtmlTemplate(data, opts = {}) {
         .catch(function(err) { alert('Server error: ' + err.message); });
       };
 
+      window.stopJob = function() {
+        fetch('/api/stop', { method: 'POST' })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.stopped) {
+              setButtonsState(false, null);
+            }
+          })
+          .catch(function(err) { alert('Stop failed: ' + err.message); });
+      };
+
       function setButtonsState(disabled, activeCmd) {
         var btnC = document.getElementById('btnCrawl' + sfx);
         var btnE = document.getElementById('btnExtract' + sfx);
+        var btnS = document.getElementById('btnStop' + sfx);
         if (btnC) {
           btnC.disabled = disabled;
           if (disabled && activeCmd === 'crawl') {
@@ -3375,6 +3579,9 @@ function buildHtmlTemplate(data, opts = {}) {
             btnE.classList.remove('running');
             btnE.innerHTML = '<i class="fa-solid fa-brain"></i> Extract';
           }
+        }
+        if (btnS) {
+          btnS.style.display = disabled ? 'inline-flex' : 'none';
         }
       }
 
@@ -3421,6 +3628,11 @@ function buildHtmlTemplate(data, opts = {}) {
           dot.className = 'es-dot';
           label.style.color = 'var(--color-success)';
           label.textContent = 'Completed (' + (data.extracted || 0) + ' extracted' + (data.failed ? ', ' + data.failed + ' failed' : '') + ')';
+        } else if (data.status === 'stopped') {
+          panel.classList.remove('is-running', 'is-crashed');
+          dot.className = 'es-dot';
+          label.style.color = 'var(--accent-gold)';
+          label.textContent = 'Stopped' + (data.extracted ? ' (' + data.extracted + ' extracted)' : '');
         } else if (data.status === 'crashed') {
           panel.classList.remove('is-running');
           panel.classList.add('is-crashed');
@@ -4529,10 +4741,20 @@ function buildMultiHtmlTemplate(allProjectData) {
         .catch(function(err) { alert('Server error: ' + err.message); });
       };
 
+      window.stopJob = function() {
+        fetch('/api/stop', { method: 'POST' })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.stopped) setButtonsState(false, null);
+          })
+          .catch(function(err) { alert('Stop failed: ' + err.message); });
+      };
+
       function setButtonsState(disabled, activeCmd) {
         var sfx = '-' + currentProject;
         var btnC = document.getElementById('btnCrawl' + sfx);
         var btnE = document.getElementById('btnExtract' + sfx);
+        var btnS = document.getElementById('btnStop' + sfx);
         if (btnC) {
           btnC.disabled = disabled;
           btnC.classList.toggle('running', disabled && activeCmd === 'crawl');
@@ -4546,6 +4768,9 @@ function buildMultiHtmlTemplate(allProjectData) {
           btnE.innerHTML = disabled && activeCmd === 'extract'
             ? '<i class="fa-solid fa-spinner fa-spin"></i> Extracting\u2026'
             : '<i class="fa-solid fa-brain"></i> Extract';
+        }
+        if (btnS) {
+          btnS.style.display = disabled ? 'inline-flex' : 'none';
         }
       }
 
@@ -4575,6 +4800,10 @@ function buildMultiHtmlTemplate(allProjectData) {
           panel.classList.remove('is-running', 'is-crashed');
           dot.className = 'es-dot'; label.style.color = 'var(--color-success)';
           label.textContent = 'Completed (' + (data.extracted || 0) + ' extracted)';
+        } else if (data.status === 'stopped') {
+          panel.classList.remove('is-running', 'is-crashed');
+          dot.className = 'es-dot'; label.style.color = 'var(--accent-gold)';
+          label.textContent = 'Stopped' + (data.extracted ? ' (' + data.extracted + ' extracted)' : '');
         } else if (data.status === 'crashed') {
           panel.classList.remove('is-running'); panel.classList.add('is-crashed');
           dot.className = 'es-dot crashed'; label.style.color = 'var(--color-danger)';
@@ -4617,16 +4846,34 @@ function getLatestKeywordsReport(project) {
  * Works on any array of objects with { domain, role, ...numeric fields }.
  * Numeric fields are summed; role is set to 'target'.
  */
+
+/**
+ * Build a domain resolver closure. Returns a function that maps
+ * any (domain, role) pair to the resolved domain name.
+ * Owned domains (by config OR by DB role) resolve to the target domain.
+ */
+function buildDomainResolver(config) {
+  const targetDomain = config?.target?.domain;
+  const ownedSet = new Set((config?.owned || []).map(o => o.domain));
+  return function(domain, role) {
+    if (!targetDomain) return domain;
+    if (domain === targetDomain) return targetDomain;
+    if (ownedSet.has(domain) || role === 'owned') return targetDomain;
+    return domain;
+  };
+}
+
 function mergeOwnedDomains(rows, config) {
-  if (!config?.owned?.length || !config?.target?.domain) return rows;
+  if (!config?.target?.domain) return rows;
 
   const targetDomain = config.target.domain;
-  const ownedSet = new Set(config.owned.map(o => o.domain));
+  const ownedSet = new Set((config.owned || []).map(o => o.domain));
   const merged = [];
   let targetRow = null;
 
   for (const row of rows) {
-    const isOwned = ownedSet.has(row.domain);
+    // Merge if: in config owned list, OR has role 'owned' in DB, OR is the target itself
+    const isOwned = ownedSet.has(row.domain) || row.role === 'owned';
     const isTarget = row.domain === targetDomain;
 
     if (isOwned || isTarget) {
@@ -4877,7 +5124,7 @@ function getTechnicalScores(db, project, config) {
   let targetRow = null;
 
   for (const row of rawScores) {
-    const isOwned = ownedDomains.has(row.domain);
+    const isOwned = ownedDomains.has(row.domain) || row.role === 'owned';
     const isTarget = row.domain === targetDomain;
 
     if (isOwned || isTarget) {
@@ -5480,7 +5727,7 @@ function getSchemaBreakdown(db, project) {
 
 // ─── Advanced Visualization Data Functions ───────────────────────────────────
 
-function getGravityMapData(db, project) {
+function getGravityMapData(db, project, config) {
   // Get keyword sets per domain for overlap calculation
   const rows = db.prepare(`
     SELECT DISTINCT d.domain, d.role, k.keyword
@@ -5488,10 +5735,13 @@ function getGravityMapData(db, project) {
     WHERE d.project = ? AND k.keyword LIKE '% %'
   `).all(project);
 
+  const resolve = buildDomainResolver(config);
   const domainKws = {};
   for (const r of rows) {
-    if (!domainKws[r.domain]) domainKws[r.domain] = { role: r.role, keywords: new Set() };
-    domainKws[r.domain].keywords.add(r.keyword.toLowerCase());
+    const domain = resolve(r.domain, r.role);
+    const role = domain === config?.target?.domain ? 'target' : r.role;
+    if (!domainKws[domain]) domainKws[domain] = { role, keywords: new Set() };
+    domainKws[domain].keywords.add(r.keyword.toLowerCase());
   }
 
   // Build nodes
@@ -5598,11 +5848,11 @@ function getHeadingFlowData(db, project, config) {
   // Resolve owned → target
   const targetDomain = config?.target?.domain;
   const ownedDomains = new Set((config?.owned || []).map(o => o.domain));
-  const resolve = (d) => ownedDomains.has(d) ? targetDomain : d;
+  const resolve = (d, role) => (ownedDomains.has(d) || role === 'owned') ? targetDomain : d;
 
   const domains = {};
   for (const r of rows) {
-    const domain = resolve(r.domain);
+    const domain = resolve(r.domain, r.role);
     const role = domain === targetDomain ? 'target' : r.role;
     if (!domains[domain]) domains[domain] = { role, h1: 0, h2: 0, h3: 0 };
     domains[domain][`h${r.level}`] += r.cnt;
@@ -5723,11 +5973,11 @@ function getLinkRadarPulseData(db, project, config) {
   // Resolve owned domains → target
   const targetDomain = config?.target?.domain;
   const ownedDomains = new Set((config?.owned || []).map(o => o.domain));
-  const resolveDomain = (d) => ownedDomains.has(d) ? targetDomain : d;
+  const resolveDomain = (d, role) => (ownedDomains.has(d) || role === 'owned') ? targetDomain : d;
 
   const domains = {};
   for (const r of rows) {
-    const domain = resolveDomain(r.domain);
+    const domain = resolveDomain(r.domain, r.role);
     const role = domain === targetDomain ? 'target' : r.role;
     if (!domains[domain]) domains[domain] = { role, depths: [] };
 
@@ -5769,7 +6019,7 @@ function getExtractionStatus(db, project, config) {
   let targetRow = null;
 
   for (const row of rawCoverage) {
-    if (ownedDomains.has(row.domain) && targetDomain) {
+    if ((ownedDomains.has(row.domain) || row.role === 'owned') && targetDomain) {
       // Merge into target
       if (!targetRow) {
         targetRow = { ...row, domain: targetDomain, role: 'target' };

@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS domains (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   domain      TEXT UNIQUE NOT NULL,
-  project     TEXT NOT NULL,  -- 'carbium' | 'ukkometa'
+  project     TEXT NOT NULL,  -- e.g. 'mysite'
   role        TEXT NOT NULL,  -- 'target' | 'competitor'
   first_seen  INTEGER NOT NULL,
   last_crawled INTEGER

@@ -293,7 +293,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
   let blocked = false;
   const MAX_CONSECUTIVE_ERRORS = 5;
 
-  // ── Stealth mode: realistic browser fingerprint + evasion ──
+  // ── Advanced mode: full browser rendering with enhanced compatibility ──
   let browser, context;
   if (opts.stealth) {
     const { getStealthConfig, STEALTH_INIT_SCRIPT, applyStealthRoutes } = await import('./stealth.js');
@@ -306,7 +306,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
     context = await browser.newContext(contextOpts);
     await context.addInitScript(STEALTH_INIT_SCRIPT);
     await applyStealthRoutes(context);
-    console.log(`[stealth] 🥷 Stealth mode active — realistic fingerprint, evasion patches injected`);
+    console.log(`[stealth] 🥷 Advanced mode — full browser rendering, persistent sessions`);
   } else {
     browser = await chromium.launch({ headless: true });
     context = await browser.newContext({
@@ -495,6 +495,8 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
 
   const robotsMeta = await page.$eval('meta[name="robots"]', el => el.content).catch(() => '');
   const isIndexable = !robotsMeta.toLowerCase().includes('noindex');
+  const hasCanonical = await page.$('link[rel="canonical"]').then(el => !!el).catch(() => false);
+  const hasOgTags = await page.$('meta[property^="og:"]').then(el => !!el).catch(() => false);
 
   const publishedDate = await page.evaluate(() => {
     for (const sel of ['meta[property="article:published_time"]','meta[name="date"]','meta[itemprop="datePublished"]']) {
@@ -553,6 +555,9 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
     schemaTypes, parsedSchemas, vitals, publishedDate, modifiedDate,
     contentHash: hash,
     quality: quality.ok, qualityReason: quality.reason,
+    hasCanonical, hasOgTags,
+    hasRobots: !!robotsMeta,
+    hasSchema: schemaTypes.length > 0,
   };
 }
 

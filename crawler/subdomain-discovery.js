@@ -12,7 +12,7 @@
  *
  * Usage:
  *   import { discoverSubdomains } from './subdomain-discovery.js';
- *   const results = await discoverSubdomains('carbium.io', { db });
+ *   const results = await discoverSubdomains('example.com', { db });
  */
 
 import { resolve as dnsResolve } from 'dns';
@@ -225,7 +225,7 @@ async function checkHttp(hostname) {
 /**
  * Discover all subdomains for a root domain.
  *
- * @param {string} rootDomain - e.g. "carbium.io"
+ * @param {string} rootDomain - e.g. "example.com"
  * @param {object} opts
  * @param {object} [opts.db] - SQLite database (for crawl data mining)
  * @param {boolean} [opts.httpCheck=true] - also check HTTP liveness

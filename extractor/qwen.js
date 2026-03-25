@@ -178,9 +178,25 @@ JSON output:`;
       console.log(`[extractor] used fallback for ${url}`);
     } catch (fallbackErr) {
       console.warn(`[extractor] fallback failed for ${url}: ${fallbackErr.message}`);
-      // 3. Degraded mode — regex extraction only
-      source = 'degraded';
-      console.log(`[extractor] used degraded for ${url}`);
+
+      // 3. Try localhost as last resort (in case remote hosts are unreachable)
+      const localhostUrl = 'http://localhost:11434';
+      if (OLLAMA_URL !== localhostUrl && OLLAMA_FALLBACK_URL !== localhostUrl) {
+        try {
+          const result = await callOllama(localhostUrl, OLLAMA_MODEL, prompt, 'localhost');
+          parsed = result.parsed;
+          source = result.source;
+          console.log(`[extractor] used localhost for ${url}`);
+        } catch (localErr) {
+          console.warn(`[extractor] localhost failed for ${url}: ${localErr.message}`);
+          source = 'degraded';
+          console.log(`[extractor] used degraded for ${url}`);
+        }
+      } else {
+        // 4. Degraded mode — regex extraction only
+        source = 'degraded';
+        console.log(`[extractor] used degraded for ${url}`);
+      }
     }
   }
 

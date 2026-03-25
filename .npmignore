@@ -1,53 +1,29 @@
-# Database files
-db/
-*.sqlite
-*.sqlite-wal
-*.sqlite-shm
-
-# Generated reports & dashboards
-reports/
-*.html
-
-# GSC data (user-specific)
-gsc/
-
-# Environment & secrets
-.env
-.env.local
-
-# Development
-.claude/
-docs/
-froggo-package/
-scripts/
-skill/
-node_modules/
-
-# Internal dev docs
-CLAUDE_CODE_BRIEF_*.md
-SECURITY*.md
-SECURITY-*.md
-PRODUCT_STATUS.md
-agent-task*.md
-FROGGO_PACKAGE_SPEC.md
-COMMANDS.md
-
-# Personal configs
+# Personal project data
 config/carbium.json
-config/ukkometa.json
 config/risunouto.json
+config/ukkometa.json
+gsc/
+analysis/
+reports/*.html
+reports/*.csv
+reports/*.json
 
-# Misc dev files
-carbium
+# Internal notes
+setup/ROADMAP.md
+CLAUDE_CODE_BRIEF_AGENTIC_EXPORTS.md
+froggo-package/
+skill/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Database & runtime files
+seo-intel.db
+seo-intel.db-shm
+seo-intel.db-wal
+seo-intel.db.bak*
+*.tgz
+*.zip
+*.icns
 
-# Git
-.git/
-.gitignore
-
-# Logs
-*.log
-npm-debug.log*
+# Dev
+.env
+.tokens/
+node_modules/

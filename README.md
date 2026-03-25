@@ -240,4 +240,4 @@ The OpenClaw agent provides:
 
 ---
 
-Built by [froggo.pro](https://froggo.pro) — local-first SEO intelligence.
+Built by [ukkometa.fi](https://ukkometa.fi) — local-first SEO intelligence.

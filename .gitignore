@@ -10,6 +10,9 @@ config/risunouto.json
 analysis/
 extractor/
 
+# ─── IDE / tool configs ───
+.claude/
+
 # ─── Database & runtime files ───
 *.db
 *.sqlite

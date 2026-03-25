@@ -31,7 +31,7 @@ const FRESHNESS = {
 export function loadAllConfigs() {
   const configDir = join(__dirname, 'config');
   return readdirSync(configDir)
-    .filter(f => f.endsWith('.json') && !f.startsWith('_'))
+    .filter(f => f.endsWith('.json') && !f.startsWith('_') && f !== 'example.json')
     .map(f => {
       try { return JSON.parse(readFileSync(join(configDir, f), 'utf8')); }
       catch { return null; }

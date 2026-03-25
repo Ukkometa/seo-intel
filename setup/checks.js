@@ -79,28 +79,33 @@ export async function checkOllamaRemote(host) {
 export async function checkOllamaAuto(customHosts = []) {
   // 1. Try local
   const local = checkOllamaLocal();
+  const allHosts = []; // Track all reachable hosts for UI
+
   if (local.running && local.models.length > 0) {
-    return {
-      available: true,
-      mode: 'local',
-      host: local.host,
-      models: local.models,
-      installed: local.installed,
-    };
+    allHosts.push({ host: local.host, mode: 'local', models: local.models, reachable: true });
   }
 
-  // 2. Try custom/LAN hosts
+  // 2. Try custom/LAN hosts (check ALL, not just first)
   for (const host of customHosts) {
+    if (host === 'http://localhost:11434') continue; // already checked
     const remote = await checkOllamaRemote(host);
-    if (remote.reachable && remote.models.length > 0) {
-      return {
-        available: true,
-        mode: 'remote',
-        host: remote.host,
-        models: remote.models,
-        installed: local.installed,
-      };
-    }
+    allHosts.push({ host: remote.host, mode: 'remote', models: remote.models, reachable: remote.reachable });
+  }
+
+  // Pick best available host (first with models)
+  const best = allHosts.find(h => h.reachable && h.models.length > 0);
+
+  if (best) {
+    // Combine models from all reachable hosts
+    const allModels = [...new Set(allHosts.filter(h => h.reachable).flatMap(h => h.models))];
+    return {
+      available: true,
+      mode: best.mode,
+      host: best.host,
+      models: allModels,
+      installed: local.installed,
+      allHosts,
+    };
   }
 
   // 3. Local installed but not running or no models
@@ -111,6 +116,7 @@ export async function checkOllamaAuto(customHosts = []) {
       host: local.host,
       models: [],
       installed: true,
+      allHosts,
     };
   }
 
@@ -120,6 +126,7 @@ export async function checkOllamaAuto(customHosts = []) {
     host: null,
     models: [],
     installed: false,
+    allHosts,
   };
 }
 

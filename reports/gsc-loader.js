@@ -98,12 +98,31 @@ export function loadGscData(project) {
 
   // ── Chart (daily time series) ──
   const chartRaw = loadCSV('Chart.csv');
-  const chart = chartRaw.map(r => ({
-    date: r.Date,
-    clicks: parseNum(r.Clicks),
-    impressions: parseNum(r.Impressions),
-    ctr: parseNum(r.CTR),
-    position: parseNum(r.Position),
+  // GSC exports use 'Date' for daily exports and 'Time (UTC...)' for hourly exports
+  // Normalize: extract YYYY-MM-DD from whatever the date/time column is
+  const dateKey = Object.keys(chartRaw[0] || {}).find(k =>
+    k === 'Date' || k.startsWith('Time')
+  ) || 'Date';
+  // Aggregate hourly rows to daily
+  const dailyMap = new Map();
+  for (const r of chartRaw) {
+    const rawDate = r[dateKey] || '';
+    const date = rawDate.includes('T') ? rawDate.slice(0, 10) : rawDate; // trim to YYYY-MM-DD
+    if (!date) continue;
+    const existing = dailyMap.get(date) || { clicks: 0, impressions: 0, ctrSum: 0, posSum: 0, count: 0 };
+    existing.clicks += parseNum(r.Clicks);
+    existing.impressions += parseNum(r.Impressions);
+    existing.ctrSum += parseNum(r.CTR);
+    existing.posSum += parseNum(r.Position);
+    existing.count += 1;
+    dailyMap.set(date, existing);
+  }
+  const chart = Array.from(dailyMap.entries()).map(([date, v]) => ({
+    date,
+    clicks: v.clicks,
+    impressions: v.impressions,
+    ctr: v.count > 0 ? v.ctrSum / v.count : 0,
+    position: v.count > 0 ? v.posSum / v.count : 0,
   })).sort((a, b) => a.date.localeCompare(b.date));
 
   // ── Queries ──

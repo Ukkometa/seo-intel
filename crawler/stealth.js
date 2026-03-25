@@ -41,7 +41,7 @@ const TIMEZONES = [
 
 const LOCALES = ['en-US', 'en-GB', 'en'];
 
-// ── Stealth evasion script — injected before any page JS runs ───────────
+// ── Advanced rendering script — injected before any page JS runs ───────────
 
 export const STEALTH_INIT_SCRIPT = `
   // 1. navigator.webdriver = false (headless sets this to true)

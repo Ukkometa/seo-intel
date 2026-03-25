@@ -66,13 +66,39 @@ async function askAgent(messages, opts = {}) {
  */
 export async function isGatewayReady() {
   try {
+    // Try to read token from env or openclaw config file
+    let token = process.env.OPENCLAW_TOKEN;
+    if (!token) {
+      try {
+        const configPath = join(process.env.HOME || '~', '.openclaw', 'openclaw.json');
+        const { readFileSync } = await import('fs');
+        const raw = readFileSync(configPath, 'utf8');
+        // Gateway auth token is a 48-char hex string in the gateway.auth block
+        const matches = [...raw.matchAll(/"token":\s*"([a-f0-9]{40,})"/g)];
+        if (matches.length > 0) token = matches[matches.length - 1][1];
+      } catch {}
+    }
+    if (!token) return false;
+
+    // Verify gateway is reachable via a lightweight chat completions ping
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(`${OPENCLAW_API}/v1/models`, {
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${OPENCLAW_API}/v1/chat/completions`, {
+      method: 'POST',
       signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku-4-5',
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
     });
     clearTimeout(timeout);
-    return res.ok;
+    const ct = res.headers.get('content-type') || '';
+    return res.ok && ct.includes('application/json');
   } catch {
     return false;
   }
@@ -258,7 +284,7 @@ export async function cliAgentSetup(systemCheck) {
 
   const ask = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
 
-  console.log('\n  \x1b[36m\x1b[1m🐸 SEO Intel — Agent-Powered Setup\x1b[0m\n');
+  console.log('\n  \x1b[36m\x1b[1m🦀 SEO Intel — Agent-Powered Setup\x1b[0m\n');
   console.log('  \x1b[2mOpenClaw is guiding your setup. Type your answers, or "done" to finish.\x1b[0m\n');
 
   try {

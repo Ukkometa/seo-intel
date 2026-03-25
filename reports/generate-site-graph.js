@@ -131,7 +131,7 @@ function enrichNodes(nodes, inboundMap) {
       const u = new URL(n.url);
       n.path = u.pathname;
       n.hostname = u.hostname;
-      // Group: subdomain + first path segment (e.g. "docs.carbium.io/docs")
+      // Group: subdomain + first path segment (e.g. "docs.example.com/docs")
       const segs = u.pathname.split('/').filter(Boolean);
       n.subdomain = u.hostname.split('.').length > 2 ? u.hostname.split('.')[0] : 'www';
       n.pathGroup = segs[0] || '(root)';

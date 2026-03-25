@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { spawn } from 'child_process';
 import { dirname, join, extname } from 'path';
 import { fileURLToPath } from 'url';
+import { checkForUpdates, getUpdateInfo } from './lib/updater.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -324,6 +325,51 @@ async function handleRequest(req, res) {
   }
 
 
+  // ─── API: Stop running job ───
+  // ─── API: Update check ───
+  if (req.method === 'GET' && path === '/api/update-check') {
+    try {
+      const info = await getUpdateInfo();
+      json(res, 200, info);
+    } catch (e) {
+      json(res, 200, { hasUpdate: false, error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && path === '/api/stop') {
+    try {
+      const progress = readProgress();
+      if (!progress || progress.status !== 'running' || !progress.pid) {
+        json(res, 404, { error: 'No running job to stop' });
+        return;
+      }
+      try {
+        process.kill(progress.pid, 'SIGTERM');
+        // Give it a moment, then force kill if still alive
+        setTimeout(() => {
+          try { process.kill(progress.pid, 'SIGKILL'); } catch {}
+        }, 3000);
+      } catch (e) {
+        if (e.code !== 'ESRCH') throw e;
+        // Already dead
+      }
+      // Update progress file to reflect stopped state
+      try {
+        writeFileSync(PROGRESS_FILE, JSON.stringify({
+          ...progress,
+          status: 'stopped',
+          stopped_at: Date.now(),
+          updated_at: Date.now(),
+        }, null, 2));
+      } catch { /* best-effort */ }
+      json(res, 200, { stopped: true, pid: progress.pid, command: progress.command });
+    } catch (e) {
+      json(res, 500, { error: e.message });
+    }
+    return;
+  }
+
   // ─── API: Export actions ───
   if (req.method === 'POST' && path === '/api/export-actions') {
     try {
@@ -453,6 +499,119 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ─── API: Analyze (spawn background) ───
+  if (req.method === 'POST' && path === '/api/analyze') {
+    try {
+      const body = await readBody(req);
+      const { project } = body;
+      if (!project) { json(res, 400, { error: 'Missing project' }); return; }
+
+      const progress = readProgress();
+      if (progress?.status === 'running') {
+        json(res, 409, { error: 'Job already running', progress });
+        return;
+      }
+
+      const args = ['cli.js', 'analyze', project];
+      const child = spawn(process.execPath, args, {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      json(res, 202, { started: true, pid: child.pid, command: 'analyze', project });
+    } catch (e) {
+      json(res, 500, { error: e.message });
+    }
+    return;
+  }
+
+  // ─── API: SSE Terminal — stream command output ───
+  if (req.method === 'GET' && path === '/api/terminal') {
+    const params = url.searchParams;
+    const command = params.get('command');
+    const project = params.get('project') || '';
+
+    // Whitelist allowed commands
+    const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
+      'suggest-usecases', 'html', 'status', 'brief', 'keywords', 'report', 'guide',
+      'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export'];
+
+    if (!command || !ALLOWED.includes(command)) {
+      json(res, 400, { error: `Invalid command. Allowed: ${ALLOWED.join(', ')}` });
+      return;
+    }
+
+    // Build args
+    const args = ['cli.js', command];
+    if (project && command !== 'status' && command !== 'html') args.push(project);
+    if (params.get('stealth') === 'true') args.push('--stealth');
+    if (params.get('scope')) args.push('--scope', params.get('scope'));
+    if (params.get('format')) args.push('--format', params.get('format'));
+
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    const send = (type, data) => {
+      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+    };
+
+    send('start', { command, project, args: args.slice(1) });
+
+    const child = spawn(process.execPath, args, {
+      cwd: __dirname,
+      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    });
+
+    child.stdout.on('data', chunk => {
+      const lines = chunk.toString().split('\n');
+      for (const line of lines) {
+        if (line) send('stdout', line);
+      }
+    });
+
+    child.stderr.on('data', chunk => {
+      const lines = chunk.toString().split('\n');
+      for (const line of lines) {
+        if (line) send('stderr', line);
+      }
+    });
+
+    child.on('error', err => {
+      send('error', err.message);
+      res.end();
+    });
+
+    child.on('close', code => {
+      send('exit', { code });
+      res.end();
+    });
+
+    // Kill child if client disconnects
+    req.on('close', () => {
+      if (!child.killed) child.kill();
+    });
+
+    return;
+  }
+
+  // ─── Favicon ───
+  if (req.method === 'GET' && (path === '/favicon.ico' || path === '/favicon.png')) {
+    const faviconPath = join(__dirname, 'seo-intel.png');
+    if (existsSync(faviconPath)) {
+      serveFile(res, faviconPath);
+    } else {
+      res.writeHead(204); res.end();
+    }
+    return;
+  }
+
   // ─── 404 ───
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
@@ -466,6 +625,9 @@ const server = createServer((req, res) => {
   });
 });
 
+// Start background update check
+checkForUpdates();
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  SEO Intel Dashboard Server`);
   console.log(`  http://localhost:${PORT}\n`);
@@ -477,5 +639,13 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`    GET  /api/export-history → List saved action exports`);
   console.log(`    POST /api/crawl     → Start crawl { project, stealth? }`);
   console.log(`    POST /api/extract   → Start extract { project, stealth? }`);
-  console.log(`    POST /api/export-actions → Run export-actions { project, scope }\n`);
+  console.log(`    POST /api/export-actions → Run export-actions { project, scope }`);
+  console.log(`    GET  /api/terminal  → SSE command streaming\n`);
+
+  // Auto-open browser if requested
+  if (process.env.SEO_INTEL_AUTO_OPEN === '1') {
+    const url = `http://localhost:${PORT}`;
+    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    import('child_process').then(({ exec }) => exec(`${cmd} "${url}"`));
+  }
 });

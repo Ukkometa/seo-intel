@@ -24,6 +24,7 @@ import { getNextCrawlTarget, needsAnalysis, getCrawlStatus, loadAllConfigs } fro
 import {
   getDb, upsertDomain, upsertPage, insertExtraction,
   insertKeywords, insertHeadings, insertLinks, insertPageSchemas,
+  upsertTechnical,
   getCompetitorSummary, getKeywordMatrix, getHeadingStructure,
   getPageHash, getSchemasByProject
 } from './db/db.js';
@@ -53,10 +54,13 @@ try { mkdirSync(join(__dirname, 'config'), { recursive: true }); } catch { /* ok
  * Fast: 2s timeout per host, runs sequentially.
  */
 async function checkOllamaAvailability() {
-  const hosts = [
-    process.env.OLLAMA_URL || 'http://localhost:11434',
-    ...(process.env.OLLAMA_FALLBACK_URL ? [process.env.OLLAMA_FALLBACK_URL] : []),
-  ];
+  // Build host chain: primary → fallback → always try localhost as last resort
+  const configured = [
+    process.env.OLLAMA_URL,
+    process.env.OLLAMA_FALLBACK_URL,
+  ].filter(Boolean);
+  const localhost = 'http://localhost:11434';
+  const hosts = [...new Set([...configured, localhost])];
 
   for (const host of hosts) {
     try {
@@ -300,7 +304,7 @@ program
   .option('--max-pages <n>', 'Override max pages per domain (default from CRAWL_MAX_PAGES)', null)
   .option('--max-depth <n>', 'Override max click depth (default from CRAWL_MAX_DEPTH)', null)
   .option('--no-extract', 'Skip Qwen extraction (crawl only, extract later)')
-  .option('--stealth', 'Use stealth browser mode (bypass bot detection)')
+  .option('--stealth', 'Advanced browser mode for JS-heavy and dynamic sites')
   .option('--no-tiered', 'Disable section-aware crawling (flat BFS instead)')
   .option('--concurrency <n>', 'Domains to crawl in parallel (auto: 1 if <8GB RAM, 2 if <16GB, 3 otherwise)')
   .option('--no-discover', 'Skip automatic subdomain discovery')
@@ -478,6 +482,7 @@ program
             started_at: crawlStart,
             failed: totalFailed,
           });
+          upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
           try {
             const extractFn = await getExtractPage();
             const extraction = await extractFn(page);
@@ -494,6 +499,7 @@ program
             totalFailed++;
           }
         } else {
+          upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
           insertHeadings(db, pageId, page.headings);
           insertLinks(db, pageId, page.links);
           if (page.parsedSchemas?.length) insertPageSchemas(db, pageId, page.parsedSchemas);
@@ -1051,6 +1057,7 @@ program
         }
       }
 
+      upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
       process.stdout.write(chalk.gray(`  [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 65)} → extracting...`));
       writeProgress({
         status: 'running', command: 'run', project: next.project,
@@ -1520,7 +1527,7 @@ async function runAnalysis(project, db) {
 program
   .command('extract <project>')
   .description('Run AI extraction on all crawled-but-not-yet-extracted pages (requires Solo/Agency)')
-  .option('--stealth', 'Use stealth browser mode (for bot-blocked sites)')
+  .option('--stealth', 'Advanced browser mode for JS-heavy and dynamic sites')
   .action(async (project, opts) => {
     if (!requirePro('extract')) return;
     const db = getDb();
@@ -1549,7 +1556,7 @@ program
     if (opts.stealth) {
       const { createStealthSession } = await import('./crawler/stealth.js');
       stealthSession = await createStealthSession();
-      console.log(chalk.magenta('  🥷 Stealth session active — realistic fingerprint, cookie persistence\n'));
+      console.log(chalk.magenta('  🥷 Advanced mode — full browser rendering, persistent sessions\n'));
     }
 
     try {
@@ -1630,20 +1637,36 @@ program
 
 // ── HTML DASHBOARD ─────────────────────────────────────────────────────────
 program
-  .command('html <project>')
-  .description('Generate HTML dashboard report for a project')
-  .action((project) => {
-    // No gate — generate-html.js handles tier gating internally.
-    // Free: crawl-only dashboard. Solo: full dashboard with AI sections.
-    const config = loadConfig(project);
+  .command('html [project]')
+  .description('Generate HTML dashboard (all projects with switcher)')
+  .option('--open', 'Open dashboard in browser after generation', true)
+  .option('--no-open', 'Do not open browser')
+  .action(async (project, opts) => {
+    // Always generate the unified all-projects dashboard.
+    // project arg is accepted for backwards compatibility but ignored.
     const db = getDb();
+    const configs = loadAllConfigs();
+
+    if (!configs.length) {
+      console.log(chalk.red('No project configs found in config/ directory.'));
+      process.exit(1);
+    }
 
     const tierLabel = isPro() ? '' : chalk.dim(' (crawl-only — upgrade to Solo for full dashboard)');
-    console.log(chalk.bold.cyan(`\n📊 Generating HTML dashboard for ${project}...`) + tierLabel + '\n');
+    console.log(chalk.bold.cyan(`\n📊 Generating dashboard...`) + tierLabel + '\n');
+    configs.forEach(c => console.log(chalk.gray(`  • ${c.project} (${c.target.domain})`)));
+    console.log();
 
-    const outPath = generateHtmlDashboard(db, project, config);
+    const outPath = generateMultiDashboard(db, configs);
 
     console.log(chalk.bold.green(`✅ Dashboard generated: ${outPath}\n`));
+    console.log(chalk.dim(`   file://${outPath}\n`));
+
+    if (opts.open) {
+      const { exec } = await import('child_process');
+      const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+      exec(`${cmd} "${outPath}"`);
+    }
   });
 
 // ── SITE GRAPH ────────────────────────────────────────────────────────────────
@@ -1704,8 +1727,12 @@ program
   .command('serve')
   .description('Start dashboard web server with live crawl/extract controls')
   .option('--port <n>', 'Server port', '3000')
+  .option('--open', 'Open browser automatically', true)
+  .option('--no-open', 'Do not open browser')
   .action(async (opts) => {
-    process.env.PORT = String(parseInt(opts.port, 10));
+    const port = parseInt(opts.port, 10);
+    process.env.PORT = String(port);
+    if (opts.open) process.env.SEO_INTEL_AUTO_OPEN = '1';
     await import('./server.js');
   });
 

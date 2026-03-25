@@ -61,6 +61,19 @@ export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, i
   return db.prepare('SELECT id FROM pages WHERE url = ?').get(url);
 }
 
+export function upsertTechnical(db, { pageId, hasCanonical, hasOgTags, hasSchema, hasRobots, isMobileOk = 0 }) {
+  db.prepare(`
+    INSERT INTO technical (page_id, has_canonical, has_og_tags, has_schema, has_robots, is_mobile_ok)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(page_id) DO UPDATE SET
+      has_canonical = excluded.has_canonical,
+      has_og_tags   = excluded.has_og_tags,
+      has_schema    = excluded.has_schema,
+      has_robots    = excluded.has_robots,
+      is_mobile_ok  = excluded.is_mobile_ok
+  `).run(pageId, hasCanonical ? 1 : 0, hasOgTags ? 1 : 0, hasSchema ? 1 : 0, hasRobots ? 1 : 0, isMobileOk ? 1 : 0);
+}
+
 export function getPageHash(db, url) {
   return db.prepare('SELECT content_hash FROM pages WHERE url = ?').get(url)?.content_hash || null;
 }

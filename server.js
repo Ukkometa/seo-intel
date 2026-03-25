@@ -345,16 +345,18 @@ async function handleRequest(req, res) {
         return;
       }
       try {
+        // Graceful: SIGTERM lets the CLI close browsers / write progress
         process.kill(progress.pid, 'SIGTERM');
-        // Give it a moment, then force kill if still alive
+        // Escalate: SIGKILL after 5s if still alive (stealth browser cleanup needs time)
         setTimeout(() => {
+          try { process.kill(progress.pid, 0); } catch { return; } // already dead
           try { process.kill(progress.pid, 'SIGKILL'); } catch {}
-        }, 3000);
+        }, 5000);
       } catch (e) {
         if (e.code !== 'ESRCH') throw e;
         // Already dead
       }
-      // Update progress file to reflect stopped state
+      // Update progress file (CLI also writes this on SIGTERM, but server does it too as safety net)
       try {
         writeFileSync(PROGRESS_FILE, JSON.stringify({
           ...progress,
@@ -627,6 +629,18 @@ const server = createServer((req, res) => {
 
 // Start background update check
 checkForUpdates();
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`\n  ⚠️  Port ${PORT} is already in use — opening existing dashboard…\n`);
+    const url = `http://localhost:${PORT}`;
+    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    import('child_process').then(({ exec }) => exec(`${cmd} "${url}"`));
+    setTimeout(() => process.exit(0), 500);
+  } else {
+    throw err;
+  }
+});
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  SEO Intel Dashboard Server`);

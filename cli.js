@@ -91,6 +91,38 @@ async function checkOllamaAvailability() {
 // ── EXTRACTION PROGRESS TRACKER ──────────────────────────────────────────
 const PROGRESS_FILE = join(__dirname, '.extraction-progress.json');
 
+// ── Graceful shutdown support ──
+// Cleanup callbacks registered by crawl/extract commands (e.g. close browser)
+const _shutdownCallbacks = [];
+let _shuttingDown = false;
+
+function onShutdown(fn) { _shutdownCallbacks.push(fn); }
+function clearShutdownCallbacks() { _shutdownCallbacks.length = 0; }
+
+async function _gracefulExit(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.log(chalk.yellow(`\n⏹  Received ${signal} — stopping gracefully…`));
+
+  // Update progress file
+  try {
+    const progress = readProgress();
+    if (progress && progress.status === 'running' && progress.pid === process.pid) {
+      writeProgress({ ...progress, status: 'stopped', stopped_at: Date.now() });
+    }
+  } catch { /* best-effort */ }
+
+  // Run cleanup callbacks (close browsers, etc.)
+  for (const fn of _shutdownCallbacks) {
+    try { await Promise.resolve(fn()); } catch { /* best-effort */ }
+  }
+
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => _gracefulExit('SIGTERM'));
+process.on('SIGINT', () => _gracefulExit('SIGINT'));
+
 function writeProgress(data) {
   try {
     writeFileSync(PROGRESS_FILE, JSON.stringify({
@@ -481,6 +513,7 @@ program
             page_index: totalExtracted + 1,
             started_at: crawlStart,
             failed: totalFailed,
+            stealth: !!crawlOpts.stealth,
           });
           upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
           try {
@@ -1558,6 +1591,14 @@ program
       stealthSession = await createStealthSession();
       console.log(chalk.magenta('  🥷 Advanced mode — full browser rendering, persistent sessions\n'));
     }
+
+    // Register cleanup so SIGTERM closes the browser gracefully
+    onShutdown(async () => {
+      if (stealthSession) {
+        await stealthSession.close();
+        console.log(chalk.magenta('  🥷 Stealth session closed'));
+      }
+    });
 
     try {
       for (const row of pendingPages) {

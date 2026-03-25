@@ -418,17 +418,21 @@ function buildHtmlTemplate(data, opts = {}) {
       border-radius: var(--radius);
       padding: 14px 20px;
       display: flex;
-      align-items: center;
-      gap: 20px;
+      flex-direction: column;
+      gap: 12px;
       font-size: 0.78rem;
     }
     .extraction-status.is-running {
       border-color: rgba(232,213,163,0.3);
     }
+    .es-top-row {
+      display: flex; align-items: center; gap: 16px; width: 100%;
+    }
     .es-indicator {
       display: flex; align-items: center; gap: 8px;
       font-family: var(--font-display); font-weight: 700;
       font-size: 0.8rem; white-space: nowrap;
+      flex-shrink: 0;
     }
     .es-dot {
       width: 8px; height: 8px; border-radius: 50%;
@@ -444,21 +448,27 @@ function buildHtmlTemplate(data, opts = {}) {
       50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(232,213,163,0); }
     }
     .es-domains {
-      display: flex; gap: 12px; flex-wrap: wrap; flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 6px 20px;
+      flex: 1;
     }
     .es-domain {
       display: flex; align-items: center; gap: 6px;
     }
     .es-domain-name {
       color: var(--text-secondary); font-size: 0.72rem;
+      white-space: nowrap;
+      width: 68px; min-width: 68px; flex-shrink: 0;
+      overflow: hidden; text-overflow: ellipsis;
     }
     .es-domain-name.is-target { color: var(--accent-gold); }
     .es-bar-wrap {
-      width: 60px; height: 4px; background: var(--border-subtle);
-      border-radius: 2px; overflow: hidden;
+      flex: 1; height: 5px; background: var(--border-subtle);
+      border-radius: 2.5px; overflow: hidden;
     }
     .es-bar-fill {
-      height: 100%; border-radius: 2px;
+      height: 100%; border-radius: 2.5px;
       background: var(--color-success);
       transition: width 0.3s;
     }
@@ -466,7 +476,7 @@ function buildHtmlTemplate(data, opts = {}) {
     .es-bar-fill.low { background: var(--color-danger); }
     .es-pct {
       font-size: 0.68rem; color: var(--text-muted);
-      min-width: 28px; text-align: right;
+      width: 32px; min-width: 32px; text-align: right; flex-shrink: 0;
     }
     .es-live {
       font-size: 0.7rem; color: var(--accent-gold);
@@ -479,9 +489,14 @@ function buildHtmlTemplate(data, opts = {}) {
       background: var(--color-danger);
       animation: pulse-dot 2s ease-in-out infinite;
     }
+    .es-bottom-row {
+      display: flex; align-items: center; gap: 12px; width: 100%;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-subtle);
+    }
     .es-meta {
       display: flex; gap: 12px; align-items: center;
-      margin-left: auto; white-space: nowrap; font-size: 0.7rem;
+      white-space: nowrap; font-size: 0.7rem;
     }
     .es-meta-item { color: var(--text-muted); }
     .es-meta-item i { margin-right: 3px; font-size: 0.62rem; }
@@ -493,8 +508,7 @@ function buildHtmlTemplate(data, opts = {}) {
     /* ─── Extraction Controls (server mode) ──────────────────────────────── */
     .es-controls {
       display: flex; align-items: center; gap: 10px;
-      margin-left: 16px; padding-left: 16px;
-      border-left: 1px solid var(--border-subtle);
+      margin-left: auto;
     }
     .es-controls.hidden { display: none; }
     .es-btn {
@@ -1866,68 +1880,84 @@ function buildHtmlTemplate(data, opts = {}) {
     extractionStatus.liveProgress?.status === 'running' ? 'is-running' :
     extractionStatus.liveProgress?.status === 'crashed' ? 'is-crashed' : ''
   }">
-    <div class="es-indicator">
-      <span class="es-dot ${
-        extractionStatus.liveProgress?.status === 'running' ? 'running' :
-        extractionStatus.liveProgress?.status === 'crashed' ? 'crashed' : ''
-      }"></span>
-      ${extractionStatus.liveProgress?.status === 'running'
-        ? `<span style="color:var(--accent-gold);">Extracting</span>`
-        : extractionStatus.liveProgress?.status === 'crashed'
-          ? `<span style="color:var(--color-danger);">Crashed</span>`
-          : `<span style="color:var(--text-muted);">${extractionStatus.overallPct === 100 ? 'Fully Extracted' : extractionStatus.overallPct + '% Extracted'}</span>`
+    <!-- Row 1: Status indicator + domain coverage bars (full width) -->
+    <div class="es-top-row">
+      <div class="es-indicator">
+        <span class="es-dot ${
+          extractionStatus.liveProgress?.status === 'running' ? 'running' :
+          extractionStatus.liveProgress?.status === 'crashed' ? 'crashed' : ''
+        }"></span>
+        ${extractionStatus.liveProgress?.status === 'running'
+          ? `<span style="color:var(--accent-gold);">Extracting</span>`
+          : extractionStatus.liveProgress?.status === 'crashed'
+            ? `<span style="color:var(--color-danger);">Crashed</span>`
+            : `<span style="color:var(--text-muted);">${extractionStatus.overallPct === 100 ? 'Fully Extracted' : extractionStatus.overallPct + '% Extracted'}</span>`
+        }
+      </div>
+      <div class="es-domains">
+        ${extractionStatus.coverage.map(c => {
+          const pct = c.total_pages > 0 ? Math.round((c.extracted_pages / c.total_pages) * 100) : 0;
+          const barClass = pct === 100 ? '' : pct > 50 ? 'partial' : 'low';
+          return `
+          <div class="es-domain">
+            <span class="es-domain-name ${c.role === 'target' ? 'is-target' : ''}">${getDomainShortName(c.domain)}</span>
+            <div class="es-bar-wrap"><div class="es-bar-fill ${barClass}" style="width:${pct}%;"></div></div>
+            <span class="es-pct">${pct}%</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    <!-- Row 2: Meta info + controls -->
+    <div class="es-bottom-row">
+      <div class="es-meta">
+        ${extractionStatus.liveProgress?.status === 'running' ? `
+          <span class="es-meta-item" style="color:var(--accent-gold);">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            ${extractionStatus.liveProgress.current_url ? extractionStatus.liveProgress.current_url.replace(/https?:\/\/[^/]+/, '').slice(0, 30) : ''}
+            ${extractionStatus.liveProgress.total ? ` · ${extractionStatus.liveProgress.page_index}/${extractionStatus.liveProgress.total}` : ''}
+          </span>
+        ` : ''}
+        ${extractionStatus.liveProgress?.status === 'crashed' ? `
+          <span class="es-meta-item blocked">
+            <i class="fa-solid fa-skull"></i> PID ${extractionStatus.liveProgress.pid} dead
+          </span>
+        ` : ''}
+        ${extractionStatus.liveProgress?.skipped > 0 ? `
+          <span class="es-meta-item skipped">
+            <i class="fa-solid fa-forward"></i> ${extractionStatus.liveProgress.skipped} skipped
+          </span>
+        ` : ''}
+        ${extractionStatus.hashedPages > 0 ? `
+          <span class="es-meta-item">
+            <i class="fa-solid fa-fingerprint"></i> ${extractionStatus.hashedPages} hashed
+          </span>
+        ` : ''}
+      </div>
+      <div class="es-controls" id="esControls${suffix}">
+      ${extractionStatus.liveProgress?.status === 'running' && extractionStatus.liveProgress?.command === 'crawl'
+        ? `<button class="es-btn running" id="btnCrawl${suffix}" onclick="startJob('crawl','${project}')" disabled>
+            <i class="fa-solid fa-spinner fa-spin"></i> Crawling\u2026
+          </button>`
+        : `<button class="es-btn" id="btnCrawl${suffix}" onclick="startJob('crawl','${project}')"${extractionStatus.liveProgress?.status === 'running' ? ' disabled' : ''}>
+            <i class="fa-solid fa-spider"></i> Crawl
+          </button>`
       }
-    </div>
-    <div class="es-domains">
-      ${extractionStatus.coverage.map(c => {
-        const pct = c.total_pages > 0 ? Math.round((c.extracted_pages / c.total_pages) * 100) : 0;
-        const barClass = pct === 100 ? '' : pct > 50 ? 'partial' : 'low';
-        return `
-        <div class="es-domain">
-          <span class="es-domain-name ${c.role === 'target' ? 'is-target' : ''}">${getDomainShortName(c.domain)}</span>
-          <div class="es-bar-wrap"><div class="es-bar-fill ${barClass}" style="width:${pct}%;"></div></div>
-          <span class="es-pct">${pct}%</span>
-        </div>`;
-      }).join('')}
-    </div>
-    <div class="es-meta">
-      ${extractionStatus.liveProgress?.status === 'running' ? `
-        <span class="es-meta-item" style="color:var(--accent-gold);">
-          <i class="fa-solid fa-spinner fa-spin"></i>
-          ${extractionStatus.liveProgress.current_url ? extractionStatus.liveProgress.current_url.replace(/https?:\/\/[^/]+/, '').slice(0, 30) : ''}
-          ${extractionStatus.liveProgress.total ? ` · ${extractionStatus.liveProgress.page_index}/${extractionStatus.liveProgress.total}` : ''}
-        </span>
-      ` : ''}
-      ${extractionStatus.liveProgress?.status === 'crashed' ? `
-        <span class="es-meta-item blocked">
-          <i class="fa-solid fa-skull"></i> PID ${extractionStatus.liveProgress.pid} dead
-        </span>
-      ` : ''}
-      ${extractionStatus.liveProgress?.skipped > 0 ? `
-        <span class="es-meta-item skipped">
-          <i class="fa-solid fa-forward"></i> ${extractionStatus.liveProgress.skipped} skipped
-        </span>
-      ` : ''}
-      ${extractionStatus.hashedPages > 0 ? `
-        <span class="es-meta-item">
-          <i class="fa-solid fa-fingerprint"></i> ${extractionStatus.hashedPages} hashed
-        </span>
-      ` : ''}
-    </div>
-    <div class="es-controls" id="esControls${suffix}">
-      <button class="es-btn" id="btnCrawl${suffix}" onclick="startJob('crawl','${project}')">
-        <i class="fa-solid fa-spider"></i> Crawl
-      </button>
-      <button class="es-btn" id="btnExtract${suffix}" onclick="startJob('extract','${project}')">
-        <i class="fa-solid fa-brain"></i> Extract
-      </button>
-      <button class="es-btn es-btn-stop" id="btnStop${suffix}" onclick="stopJob()" style="display:none;">
+      ${extractionStatus.liveProgress?.status === 'running' && extractionStatus.liveProgress?.command === 'extract'
+        ? `<button class="es-btn running" id="btnExtract${suffix}" onclick="startJob('extract','${project}')" disabled>
+            <i class="fa-solid fa-spinner fa-spin"></i> Extracting\u2026
+          </button>`
+        : `<button class="es-btn" id="btnExtract${suffix}" onclick="startJob('extract','${project}')"${extractionStatus.liveProgress?.status === 'running' ? ' disabled' : ''}>
+            <i class="fa-solid fa-brain"></i> Extract
+          </button>`
+      }
+      <button class="es-btn es-btn-stop" id="btnStop${suffix}" onclick="stopJob()" style="display:${extractionStatus.liveProgress?.status === 'running' ? 'inline-flex' : 'none'};">
         <i class="fa-solid fa-stop"></i> Stop
       </button>
       <label class="es-stealth-toggle">
-        <input type="checkbox" id="stealthToggle${suffix}">
+        <input type="checkbox" id="stealthToggle${suffix}"${extractionStatus.liveProgress?.stealth ? ' checked' : ''}>
         <i class="fa-solid fa-user-ninja"></i> Stealth
       </label>
+    </div>
     </div>
   </div>
 
@@ -3646,6 +3676,11 @@ function buildHtmlTemplate(data, opts = {}) {
       fetch('/api/progress')
         .then(function(r) { return r.json(); })
         .then(function(data) {
+          // Sync stealth toggle with progress state
+          var stealthEl = document.getElementById('stealthToggle' + sfx);
+          if (stealthEl && data.stealth !== undefined) {
+            stealthEl.checked = !!data.stealth;
+          }
           if (data.status === 'running') {
             setButtonsState(true, data.command);
             startPolling();

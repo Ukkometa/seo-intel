@@ -1,13 +1,43 @@
+# ─── Dependencies ───
 node_modules/
-froggo-package/
-scripts/
-*.bak
-*.bak-*
+
+# ─── Personal project configs (never commit) ───
+config/carbium.json
+config/ukkometa.json
+config/risunouto.json
+
+# ─── Proprietary layer (not on npm, not on GitHub) ───
+analysis/
+extractor/
+
+# ─── Database & runtime files ───
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
 seo-intel.db*
+.extraction-progress.json
+
+# ─── Reports output (generated, not source) ───
+reports/*.json
+reports/*.html
+reports/*.md
+reports/*.txt
+reports/*.csv
+
+# ─── Crawl/session data ───
+gsc/
+.sessions/
+.cache/
+.tokens/
+
+# ─── Environment ───
 .env
 .env.local
 
-# Dev-only docs (internal, not for public repo)
+# ─── Internal dev docs (not for public repo) ───
 CLAUDE_CODE_BRIEF_*.md
 SECURITY*.md
 SECURITY-*.md
@@ -15,25 +45,15 @@ PRODUCT_STATUS.md
 agent-task*.md
 FROGGO_PACKAGE_SPEC.md
 COMMANDS.md
-carbium
+froggo-package/
+scripts/
 
-# Personal project configs (never commit these)
-config/carbium.json
-config/ukkometa.json
-config/risunouto.json
-*.db
-*.sqlite
-*.sqlite-wal
-*.sqlite-shm
-*.db-wal
-*.db-shm
-reports/*.json
-reports/*.md
-reports/*.txt
-reports/*.html
+# ─── Build artifacts ───
+*.tgz
+*.zip
+*.bak
+*.bak-*
+
+# ─── OS ───
 .DS_Store
-.sessions/
-.cache/
-.tokens/
-.extraction-progress.json
-gsc/
+Thumbs.db

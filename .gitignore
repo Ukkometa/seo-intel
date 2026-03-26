@@ -5,13 +5,18 @@ node_modules/
 config/carbium.json
 config/ukkometa.json
 config/risunouto.json
+carbium
+carbium/
 
 # ─── Proprietary layer (not on npm, not on GitHub) ───
 analysis/
+analyses/
 extractor/
+archive/
 
 # ─── IDE / tool configs ───
 .claude/
+CLAUDE.md
 
 # ─── Database & runtime files ───
 *.db

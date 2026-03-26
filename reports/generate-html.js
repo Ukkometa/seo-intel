@@ -525,8 +525,13 @@ function buildHtmlTemplate(data, opts = {}) {
       white-space: nowrap;
     }
     .es-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
-    .es-btn-stop { border-color: rgba(220,80,80,0.3); color: #dc5050; }
-    .es-btn-stop:hover { border-color: #dc5050; color: #ff6b6b; background: rgba(220,80,80,0.08); }
+    .es-btn-stop { border-color: var(--border-card); color: var(--text-muted); }
+    .es-btn-stop:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
+    .es-btn-stop.active { border-color: rgba(220,80,80,0.5); color: #dc5050; animation: stopPulse 2s ease-in-out infinite; }
+    .es-btn-stop.active:hover { border-color: #dc5050; color: #ff6b6b; background: rgba(220,80,80,0.08); }
+    @keyframes stopPulse { 0%,100% { border-color: rgba(220,80,80,0.3); } 50% { border-color: rgba(220,80,80,0.7); } }
+    .es-btn-restart { border-color: rgba(100,160,220,0.3); color: #6ca0dc; }
+    .es-btn-restart:hover { border-color: #6ca0dc; color: #8fc0f0; background: rgba(100,160,220,0.08); }
     .es-btn:disabled {
       opacity: 0.4; cursor: not-allowed;
       border-color: var(--border-card);
@@ -1950,8 +1955,11 @@ function buildHtmlTemplate(data, opts = {}) {
             <i class="fa-solid fa-brain"></i> Extract
           </button>`
       }
-      <button class="es-btn es-btn-stop" id="btnStop${suffix}" onclick="stopJob()" style="display:${extractionStatus.liveProgress?.status === 'running' ? 'inline-flex' : 'none'};">
+      <button class="es-btn es-btn-stop${extractionStatus.liveProgress?.status === 'running' ? ' active' : ''}" id="btnStop${suffix}" onclick="stopJob()">
         <i class="fa-solid fa-stop"></i> Stop
+      </button>
+      <button class="es-btn es-btn-restart" id="btnRestart${suffix}" onclick="restartServer()">
+        <i class="fa-solid fa-rotate-right"></i> Restart
       </button>
       <label class="es-stealth-toggle">
         <input type="checkbox" id="stealthToggle${suffix}"${extractionStatus.liveProgress?.stealth ? ' checked' : ''}>
@@ -1981,7 +1989,8 @@ function buildHtmlTemplate(data, opts = {}) {
           ${pro ? `<button class="term-btn" data-cmd="extract" data-project="${project}"><i class="fa-solid fa-brain"></i> Extract</button>
           <button class="term-btn" data-cmd="analyze" data-project="${project}"><i class="fa-solid fa-chart-column"></i> Analyze</button>
           <button class="term-btn" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>
-          <button class="term-btn" data-cmd="keywords" data-project="${project}"><i class="fa-solid fa-key"></i> Keywords</button>` : ''}
+          <button class="term-btn" data-cmd="keywords" data-project="${project}"><i class="fa-solid fa-key"></i> Keywords</button>
+          <button class="term-btn" data-cmd="templates" data-project="${project}"><i class="fa-solid fa-clone"></i> Templates</button>` : ''}
           <button class="term-btn" data-cmd="status" data-project=""><i class="fa-solid fa-circle-info"></i> Status</button>
           <button class="term-btn" data-cmd="guide" data-project="${project}"><i class="fa-solid fa-map"></i> Guide</button>
           <button class="term-btn" data-cmd="setup" data-project="" style="margin-left:auto;border-color:rgba(232,213,163,0.25);"><i class="fa-solid fa-gear"></i> Setup</button>
@@ -2084,7 +2093,10 @@ function buildHtmlTemplate(data, opts = {}) {
       if (extra?.stealth) params.set('stealth', 'true');
       if (extra?.format) params.set('format', extra.format);
 
-      appendLine('$ seo-intel ' + command + (proj ? ' ' + proj : '') + (extra?.scope ? ' --scope ' + extra.scope : ''), 'cmd');
+      var stealthFlag = extra?.stealth ? ' --stealth' : '';
+      appendLine('$ seo-intel ' + command + (proj ? ' ' + proj : '') + stealthFlag + (extra?.scope ? ' --scope ' + extra.scope : ''), 'cmd');
+
+      var isCrawlOrExtract = (command === 'crawl' || command === 'extract');
 
       eventSource = new EventSource('/api/terminal?' + params.toString());
       eventSource.onmessage = function(e) {
@@ -2101,29 +2113,56 @@ function buildHtmlTemplate(data, opts = {}) {
             status.style.color = code === 0 ? 'var(--color-success)' : 'var(--color-danger)';
             eventSource.close();
             eventSource = null;
+            // Update status bar when crawl/extract finishes
+            if (isCrawlOrExtract && window._setButtonsState) window._setButtonsState(false, null);
           }
         } catch (_) {}
       };
       eventSource.onerror = function() {
         if (running) {
-          appendLine('Connection lost.', 'error');
+          // SSE disconnected but crawl/extract continues server-side
+          if (isCrawlOrExtract) {
+            appendLine('Terminal disconnected — job continues in background.', 'stderr');
+          } else {
+            appendLine('Connection lost.', 'error');
+          }
           running = false;
-          status.textContent = 'disconnected';
-          status.style.color = 'var(--color-danger)';
+          status.textContent = isCrawlOrExtract ? 'backgrounded' : 'disconnected';
+          status.style.color = isCrawlOrExtract ? 'var(--text-muted)' : 'var(--color-danger)';
         }
         eventSource?.close();
         eventSource = null;
       };
     }
 
-    // Button clicks
+    // Expose terminal for status bar buttons
+    window._terminalRun = function(cmd, proj, extra) { runCommand(cmd, proj, extra); };
+    window._terminalStop = function() {
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      if (running) {
+        appendLine('Stopped.', 'exit-err');
+        running = false;
+        status.textContent = 'stopped';
+        status.style.color = 'var(--color-warning)';
+      }
+    };
+
+    // Button clicks — crawl/extract read stealth toggle
     document.querySelectorAll('.terminal-panel .term-btn').forEach(function(btn) {
       if (btn.closest('.terminal-panel') !== output.closest('.terminal-panel')) return;
       btn.addEventListener('click', function() {
         const cmd = btn.getAttribute('data-cmd');
         const proj = btn.getAttribute('data-project');
         const scope = btn.getAttribute('data-scope');
-        runCommand(cmd, proj, scope ? { scope } : undefined);
+        var extra = scope ? { scope: scope } : {};
+        // Crawl/extract: read stealth toggle + update status bar
+        if (cmd === 'crawl' || cmd === 'extract') {
+          var stealthEl = document.querySelector('[id^="stealthToggle"]');
+          if (stealthEl?.checked) extra.stealth = true;
+          if (window._setButtonsState) window._setButtonsState(true, cmd);
+          if (window._startPolling) window._startPolling();
+        }
+        runCommand(cmd, proj, extra);
       });
     });
 
@@ -3558,41 +3597,55 @@ function buildHtmlTemplate(data, opts = {}) {
       let pollTimer = null;
 
       window.startJob = function(command, proj) {
-        const stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
-        const body = { project: proj, stealth: stealth };
+        var stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
+        var extra = {};
+        if (stealth) extra.stealth = true;
 
-        fetch('/api/' + command, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.error) { alert('Cannot start: ' + data.error); return; }
-          setButtonsState(true, command);
-          startPolling();
-        })
-        .catch(function(err) { alert('Server error: ' + err.message); });
+        // Route through terminal for visible output
+        if (window._terminalRun) {
+          window._terminalRun(command, proj, extra);
+        }
+        setButtonsState(true, command);
+        startPolling();
       };
 
       window.stopJob = function() {
+        // Close terminal SSE (server detaches crawl/extract, so we also hit /api/stop)
+        if (window._terminalStop) window._terminalStop();
         fetch('/api/stop', { method: 'POST' })
           .then(function(r) { return r.json(); })
-          .then(function(data) {
-            if (data.stopped) {
-              setButtonsState(false, null);
-            }
-          })
-          .catch(function(err) { alert('Stop failed: ' + err.message); });
+          .then(function() { setButtonsState(false, null); })
+          .catch(function() { setButtonsState(false, null); });
       };
 
-      function setButtonsState(disabled, activeCmd) {
+      window.restartServer = function() {
+        if (!confirm('Restart SEO Intel? This will stop any running jobs and refresh the dashboard.')) return;
+        var btnR = document.getElementById('btnRestart' + sfx);
+        if (btnR) { btnR.disabled = true; btnR.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Restarting\u2026'; }
+        // Stop terminal SSE
+        if (window._terminalStop) window._terminalStop();
+        fetch('/api/restart', { method: 'POST' })
+          .then(function() {
+            // Server is restarting — wait a moment then reload
+            setTimeout(function() { window.location.reload(); }, 2000);
+          })
+          .catch(function() {
+            // Server might already be dead — try reloading anyway
+            setTimeout(function() { window.location.reload(); }, 2000);
+          });
+      };
+
+      // Expose for terminal IIFE to call back
+      window._setButtonsState = setButtonsState;
+      window._startPolling = startPolling;
+
+      function setButtonsState(isRunning, activeCmd) {
         var btnC = document.getElementById('btnCrawl' + sfx);
         var btnE = document.getElementById('btnExtract' + sfx);
         var btnS = document.getElementById('btnStop' + sfx);
         if (btnC) {
-          btnC.disabled = disabled;
-          if (disabled && activeCmd === 'crawl') {
+          btnC.disabled = isRunning;
+          if (isRunning && activeCmd === 'crawl') {
             btnC.classList.add('running');
             btnC.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Crawling\u2026';
           } else {
@@ -3601,8 +3654,8 @@ function buildHtmlTemplate(data, opts = {}) {
           }
         }
         if (btnE) {
-          btnE.disabled = disabled;
-          if (disabled && activeCmd === 'extract') {
+          btnE.disabled = isRunning;
+          if (isRunning && activeCmd === 'extract') {
             btnE.classList.add('running');
             btnE.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Extracting\u2026';
           } else {
@@ -3611,7 +3664,12 @@ function buildHtmlTemplate(data, opts = {}) {
           }
         }
         if (btnS) {
-          btnS.style.display = disabled ? 'inline-flex' : 'none';
+          // Stop button always visible — turns red+pulsing when something is running
+          if (isRunning) {
+            btnS.classList.add('active');
+          } else {
+            btnS.classList.remove('active');
+          }
         }
       }
 
@@ -4762,50 +4820,57 @@ function buildMultiHtmlTemplate(allProjectData) {
       window.startJob = function(command, proj) {
         var sfx = '-' + proj;
         var stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
-        fetch('/api/' + command, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: proj, stealth: stealth }),
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.error) { alert('Cannot start: ' + data.error); return; }
-          setButtonsState(true, command);
-          startPolling();
-        })
-        .catch(function(err) { alert('Server error: ' + err.message); });
+        var extra = {};
+        if (stealth) extra.stealth = true;
+
+        // Route through terminal for visible output
+        if (window._terminalRun) {
+          window._terminalRun(command, proj, extra);
+        }
+        setButtonsState(true, command);
+        startPolling();
       };
 
       window.stopJob = function() {
+        if (window._terminalStop) window._terminalStop();
         fetch('/api/stop', { method: 'POST' })
           .then(function(r) { return r.json(); })
-          .then(function(data) {
-            if (data.stopped) setButtonsState(false, null);
-          })
-          .catch(function(err) { alert('Stop failed: ' + err.message); });
+          .then(function() { setButtonsState(false, null); })
+          .catch(function() { setButtonsState(false, null); });
       };
 
-      function setButtonsState(disabled, activeCmd) {
+      window.restartServer = function() {
+        if (!confirm('Restart SEO Intel? This will stop any running jobs and refresh the dashboard.')) return;
+        if (window._terminalStop) window._terminalStop();
+        fetch('/api/restart', { method: 'POST' })
+          .then(function() { setTimeout(function() { window.location.reload(); }, 2000); })
+          .catch(function() { setTimeout(function() { window.location.reload(); }, 2000); });
+      };
+
+      window._setButtonsState = setButtonsState;
+      window._startPolling = startPolling;
+
+      function setButtonsState(isRunning, activeCmd) {
         var sfx = '-' + currentProject;
         var btnC = document.getElementById('btnCrawl' + sfx);
         var btnE = document.getElementById('btnExtract' + sfx);
         var btnS = document.getElementById('btnStop' + sfx);
         if (btnC) {
-          btnC.disabled = disabled;
-          btnC.classList.toggle('running', disabled && activeCmd === 'crawl');
-          btnC.innerHTML = disabled && activeCmd === 'crawl'
+          btnC.disabled = isRunning;
+          btnC.classList.toggle('running', isRunning && activeCmd === 'crawl');
+          btnC.innerHTML = isRunning && activeCmd === 'crawl'
             ? '<i class="fa-solid fa-spinner fa-spin"></i> Crawling\u2026'
             : '<i class="fa-solid fa-spider"></i> Crawl';
         }
         if (btnE) {
-          btnE.disabled = disabled;
-          btnE.classList.toggle('running', disabled && activeCmd === 'extract');
-          btnE.innerHTML = disabled && activeCmd === 'extract'
+          btnE.disabled = isRunning;
+          btnE.classList.toggle('running', isRunning && activeCmd === 'extract');
+          btnE.innerHTML = isRunning && activeCmd === 'extract'
             ? '<i class="fa-solid fa-spinner fa-spin"></i> Extracting\u2026'
             : '<i class="fa-solid fa-brain"></i> Extract';
         }
         if (btnS) {
-          btnS.style.display = disabled ? 'inline-flex' : 'none';
+          if (isRunning) { btnS.classList.add('active'); } else { btnS.classList.remove('active'); }
         }
       }
 

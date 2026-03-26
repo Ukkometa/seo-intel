@@ -547,11 +547,16 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
   // ── Quality gate — detect shells, blocked pages, empty content ──
   const quality = assessQuality({ wordCount, bodyText, title, status });
 
+  // Full body text for DB storage (extraction reads this); truncated for log output
+  const fullBodyText = sanitize(bodyText, 50000); // ~200K chars — enough for any real page
+  const shortBodyText = sanitize(bodyText, 2000);  // compact version for logging
+
   return {
     url, depth, status, loadMs, wordCount, isIndexable,
     title, metaDesc, headings,
     links: [...internalLinks, ...externalLinks],
-    bodyText: sanitize(bodyText, 2000),
+    bodyText: shortBodyText,
+    fullBodyText,
     schemaTypes, parsedSchemas, vitals, publishedDate, modifiedDate,
     contentHash: hash,
     quality: quality.ok, qualityReason: quality.reason,

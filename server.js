@@ -297,7 +297,7 @@ async function handleRequest(req, res) {
   if (req.method === 'POST' && path === '/api/extract') {
     try {
       const body = await readBody(req);
-      const { project, stealth } = body;
+      const { project } = body;
       if (!project) { json(res, 400, { error: 'Missing project' }); return; }
 
       // Conflict guard
@@ -308,7 +308,6 @@ async function handleRequest(req, res) {
       }
 
       const args = ['cli.js', 'extract', project];
-      if (stealth) args.push('--stealth');
 
       const child = spawn(process.execPath, args, {
         cwd: __dirname,
@@ -366,6 +365,38 @@ async function handleRequest(req, res) {
         }, null, 2));
       } catch { /* best-effort */ }
       json(res, 200, { stopped: true, pid: progress.pid, command: progress.command });
+    } catch (e) {
+      json(res, 500, { error: e.message });
+    }
+    return;
+  }
+
+  // ─── API: Restart — kill running jobs + restart server ───
+  if (req.method === 'POST' && path === '/api/restart') {
+    try {
+      // 1. Kill any running job
+      const progress = readProgress();
+      if (progress?.status === 'running' && progress.pid) {
+        try { process.kill(progress.pid, 'SIGTERM'); } catch {}
+        try {
+          writeFileSync(PROGRESS_FILE, JSON.stringify({
+            ...progress, status: 'stopped', stopped_at: Date.now(), updated_at: Date.now(),
+          }, null, 2));
+        } catch {}
+      }
+      json(res, 200, { restarting: true });
+
+      // 2. Restart the server process after response is sent
+      setTimeout(() => {
+        const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
+          cwd: __dirname,
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env, SEO_INTEL_AUTO_OPEN: '0' },
+        });
+        child.unref();
+        process.exit(0);
+      }, 300);
     } catch (e) {
       json(res, 500, { error: e.message });
     }
@@ -538,7 +569,7 @@ async function handleRequest(req, res) {
     // Whitelist allowed commands
     const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
       'suggest-usecases', 'html', 'status', 'brief', 'keywords', 'report', 'guide',
-      'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export'];
+      'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export', 'templates'];
 
     if (!command || !ALLOWED.includes(command)) {
       json(res, 400, { error: `Invalid command. Allowed: ${ALLOWED.join(', ')}` });
@@ -564,14 +595,21 @@ async function handleRequest(req, res) {
       res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
     };
 
+    const isLongRunning = ['crawl', 'extract'].includes(command);
+
     send('start', { command, project, args: args.slice(1) });
 
     const child = spawn(process.execPath, args, {
       cwd: __dirname,
       env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      // Crawl/extract: detach so they survive SSE disconnect
+      ...(isLongRunning ? { detached: true } : {}),
     });
 
+    let clientClosed = false;
+
     child.stdout.on('data', chunk => {
+      if (clientClosed) return;
       const lines = chunk.toString().split('\n');
       for (const line of lines) {
         if (line) send('stdout', line);
@@ -579,6 +617,7 @@ async function handleRequest(req, res) {
     });
 
     child.stderr.on('data', chunk => {
+      if (clientClosed) return;
       const lines = chunk.toString().split('\n');
       for (const line of lines) {
         if (line) send('stderr', line);
@@ -586,18 +625,24 @@ async function handleRequest(req, res) {
     });
 
     child.on('error', err => {
-      send('error', err.message);
-      res.end();
+      if (!clientClosed) { send('error', err.message); res.end(); }
     });
 
     child.on('close', code => {
-      send('exit', { code });
-      res.end();
+      if (!clientClosed) { send('exit', { code }); res.end(); }
     });
 
-    // Kill child if client disconnects
+    // Client disconnect: kill short commands, let crawl/extract continue
     req.on('close', () => {
-      if (!child.killed) child.kill();
+      clientClosed = true;
+      if (isLongRunning) {
+        // Detach — crawl/extract keeps running, progress file tracks it
+        child.unref();
+        if (child.stdout) child.stdout.destroy();
+        if (child.stderr) child.stderr.destroy();
+      } else {
+        if (!child.killed) child.kill();
+      }
     });
 
     return;

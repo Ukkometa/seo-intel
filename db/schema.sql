@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS pages (
   published_date TEXT,               -- ISO string or null
   modified_date  TEXT,               -- ISO string or null
   content_hash   TEXT,               -- SHA-256 of body text for incremental crawling
+  title          TEXT,               -- page <title>
+  meta_desc      TEXT,               -- meta description
+  body_text      TEXT,               -- cleaned body text for extraction (stored at crawl time)
   FOREIGN KEY (domain_id) REFERENCES domains(id)
 );
 
@@ -109,6 +112,51 @@ CREATE TABLE IF NOT EXISTS page_schemas (
   raw_json    TEXT NOT NULL,            -- full JSON-LD object for future queries
   extracted_at INTEGER NOT NULL
 );
+
+-- Template analysis tables
+CREATE TABLE IF NOT EXISTS template_groups (
+  id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+  project                   TEXT NOT NULL,
+  domain                    TEXT NOT NULL,
+  pattern                   TEXT NOT NULL,
+  url_count                 INTEGER NOT NULL,
+  sample_size               INTEGER NOT NULL DEFAULT 0,
+  avg_word_count            REAL,
+  content_similarity        REAL,
+  dom_similarity            REAL,
+  gsc_urls_with_impressions INTEGER DEFAULT 0,
+  gsc_total_clicks          INTEGER DEFAULT 0,
+  gsc_total_impressions     INTEGER DEFAULT 0,
+  gsc_avg_position          REAL,
+  indexation_efficiency     REAL,
+  score                     INTEGER,
+  verdict                   TEXT,
+  recommendation            TEXT,
+  analyzed_at               INTEGER NOT NULL,
+  UNIQUE(project, domain, pattern)
+);
+
+CREATE TABLE IF NOT EXISTS template_samples (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id        INTEGER NOT NULL REFERENCES template_groups(id) ON DELETE CASCADE,
+  url             TEXT NOT NULL,
+  sample_role     TEXT NOT NULL,
+  status_code     INTEGER,
+  word_count      INTEGER,
+  title           TEXT,
+  meta_desc       TEXT,
+  has_canonical   INTEGER DEFAULT 0,
+  has_schema      INTEGER DEFAULT 0,
+  is_indexable    INTEGER DEFAULT 1,
+  dom_fingerprint TEXT,
+  content_hash    TEXT,
+  body_text       TEXT,
+  crawled_at      INTEGER,
+  UNIQUE(group_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_template_groups_project ON template_groups(project);
+CREATE INDEX IF NOT EXISTS idx_template_samples_group ON template_samples(group_id);
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain_id);

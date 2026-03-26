@@ -21,6 +21,9 @@ export function getDb(dbPath = './seo-intel.db') {
   // Migrations for existing databases
   try { _db.exec('ALTER TABLE pages ADD COLUMN content_hash TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE pages ADD COLUMN first_seen_at INTEGER'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE pages ADD COLUMN title TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE pages ADD COLUMN meta_desc TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE pages ADD COLUMN body_text TEXT'); } catch { /* already exists */ }
 
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
@@ -42,11 +45,11 @@ export function upsertDomain(db, { domain, project, role }) {
   `).run(domain, project, role, now, now);
 }
 
-export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable, clickDepth = 0, publishedDate = null, modifiedDate = null, contentHash = null }) {
+export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable, clickDepth = 0, publishedDate = null, modifiedDate = null, contentHash = null, title = null, metaDesc = null, bodyText = null }) {
   const now = Date.now();
   db.prepare(`
-    INSERT INTO pages (domain_id, url, crawled_at, first_seen_at, status_code, word_count, load_ms, is_indexable, click_depth, published_date, modified_date, content_hash)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pages (domain_id, url, crawled_at, first_seen_at, status_code, word_count, load_ms, is_indexable, click_depth, published_date, modified_date, content_hash, title, meta_desc, body_text)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(url) DO UPDATE SET
       crawled_at     = excluded.crawled_at,
       status_code    = excluded.status_code,
@@ -55,8 +58,11 @@ export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, i
       click_depth    = excluded.click_depth,
       published_date = excluded.published_date,
       modified_date  = excluded.modified_date,
-      content_hash   = excluded.content_hash
-  `).run(domainId, url, now, now, statusCode, wordCount, loadMs, isIndexable ? 1 : 0, clickDepth, publishedDate, modifiedDate, contentHash);
+      content_hash   = excluded.content_hash,
+      title          = excluded.title,
+      meta_desc      = excluded.meta_desc,
+      body_text      = excluded.body_text
+  `).run(domainId, url, now, now, statusCode, wordCount, loadMs, isIndexable ? 1 : 0, clickDepth, publishedDate, modifiedDate, contentHash, title || null, metaDesc || null, bodyText || null);
   // first_seen_at is NOT in the ON CONFLICT UPDATE — it stays from original INSERT
   return db.prepare('SELECT id FROM pages WHERE url = ?').get(url);
 }
@@ -212,6 +218,147 @@ export function getKeywordMatrix(db, project) {
     GROUP BY k.keyword, d.domain
     ORDER BY freq DESC
   `).all(project);
+}
+
+// ── Template analysis ─────────────────────────────────────────────────────
+
+export function upsertTemplateGroup(db, g) {
+  return db.prepare(`
+    INSERT INTO template_groups
+      (project, domain, pattern, url_count, sample_size,
+       avg_word_count, content_similarity, dom_similarity,
+       gsc_urls_with_impressions, gsc_total_clicks, gsc_total_impressions,
+       gsc_avg_position, indexation_efficiency, score, verdict, recommendation,
+       analyzed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project, domain, pattern) DO UPDATE SET
+      url_count = excluded.url_count,
+      sample_size = excluded.sample_size,
+      avg_word_count = excluded.avg_word_count,
+      content_similarity = excluded.content_similarity,
+      dom_similarity = excluded.dom_similarity,
+      gsc_urls_with_impressions = excluded.gsc_urls_with_impressions,
+      gsc_total_clicks = excluded.gsc_total_clicks,
+      gsc_total_impressions = excluded.gsc_total_impressions,
+      gsc_avg_position = excluded.gsc_avg_position,
+      indexation_efficiency = excluded.indexation_efficiency,
+      score = excluded.score,
+      verdict = excluded.verdict,
+      recommendation = excluded.recommendation,
+      analyzed_at = excluded.analyzed_at
+  `).run(
+    g.project, g.domain, g.pattern, g.urlCount, g.sampleSize || 0,
+    g.avgWordCount ?? null, g.contentSimilarity ?? null, g.domSimilarity ?? null,
+    g.gscUrlsWithImpressions || 0, g.gscTotalClicks || 0, g.gscTotalImpressions || 0,
+    g.gscAvgPosition ?? null, g.indexationEfficiency ?? null,
+    g.score ?? null, g.verdict || null, JSON.stringify(g.recommendation || []),
+    g.analyzedAt || Date.now()
+  );
+}
+
+export function getTemplateGroupId(db, project, domain, pattern) {
+  return db.prepare(
+    'SELECT id FROM template_groups WHERE project = ? AND domain = ? AND pattern = ?'
+  ).get(project, domain, pattern)?.id;
+}
+
+export function upsertTemplateSample(db, s) {
+  db.prepare(`
+    INSERT INTO template_samples
+      (group_id, url, sample_role, status_code, word_count,
+       title, meta_desc, has_canonical, has_schema, is_indexable,
+       dom_fingerprint, content_hash, body_text, crawled_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(group_id, url) DO UPDATE SET
+      sample_role = excluded.sample_role,
+      status_code = excluded.status_code,
+      word_count = excluded.word_count,
+      title = excluded.title,
+      meta_desc = excluded.meta_desc,
+      has_canonical = excluded.has_canonical,
+      has_schema = excluded.has_schema,
+      is_indexable = excluded.is_indexable,
+      dom_fingerprint = excluded.dom_fingerprint,
+      content_hash = excluded.content_hash,
+      body_text = excluded.body_text,
+      crawled_at = excluded.crawled_at
+  `).run(
+    s.groupId, s.url, s.sampleRole, s.statusCode ?? null, s.wordCount ?? null,
+    s.title || null, s.metaDesc || null,
+    s.hasCanonical ? 1 : 0, s.hasSchema ? 1 : 0, s.isIndexable ? 1 : 0,
+    s.domFingerprint || null, s.contentHash || null, s.bodyText || null,
+    s.crawledAt || Date.now()
+  );
+}
+
+export function getTemplateGroups(db, project) {
+  return db.prepare(
+    'SELECT * FROM template_groups WHERE project = ? ORDER BY url_count DESC'
+  ).all(project);
+}
+
+export function getTemplateSamples(db, groupId) {
+  return db.prepare(
+    'SELECT * FROM template_samples WHERE group_id = ? ORDER BY sample_role, url'
+  ).all(groupId);
+}
+
+// ── Domain sync / prune ───────────────────────────────────────────────────
+
+/**
+ * Remove DB domains (+ all child data) that no longer exist in config.
+ * Returns array of pruned domain names.
+ */
+export function pruneStaleDomains(db, project, configDomains) {
+  // configDomains = Set or array of domain strings currently in config
+  const validSet = new Set(configDomains);
+
+  const dbDomains = db.prepare(
+    'SELECT id, domain FROM domains WHERE project = ?'
+  ).all(project);
+
+  const stale = dbDomains.filter(d => !validSet.has(d.domain));
+  if (!stale.length) return [];
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    for (const { id, domain } of stale) {
+      // Delete all child tables referencing pages in this domain
+      const pageIds = db.prepare(
+        'SELECT id FROM pages WHERE domain_id = ?'
+      ).all(id).map(r => r.id);
+
+      if (pageIds.length) {
+        const placeholders = pageIds.map(() => '?').join(',');
+        db.prepare(`DELETE FROM links WHERE source_id IN (${placeholders})`).run(...pageIds);
+        db.prepare(`DELETE FROM technical WHERE page_id IN (${placeholders})`).run(...pageIds);
+        db.prepare(`DELETE FROM headings WHERE page_id IN (${placeholders})`).run(...pageIds);
+        db.prepare(`DELETE FROM page_schemas WHERE page_id IN (${placeholders})`).run(...pageIds);
+        db.prepare(`DELETE FROM extractions WHERE page_id IN (${placeholders})`).run(...pageIds);
+        db.prepare(`DELETE FROM keywords WHERE page_id IN (${placeholders})`).run(...pageIds);
+        db.prepare(`DELETE FROM pages WHERE domain_id = ?`).run(id);
+      }
+
+      // Template groups for this domain
+      db.prepare(
+        'DELETE FROM template_samples WHERE group_id IN (SELECT id FROM template_groups WHERE project = ? AND domain = ?)'
+      ).run(project, domain);
+      db.prepare(
+        'DELETE FROM template_groups WHERE project = ? AND domain = ?'
+      ).run(project, domain);
+
+      db.prepare('DELETE FROM domains WHERE id = ?').run(id);
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+
+  return stale.map(d => d.domain);
 }
 
 export function getHeadingStructure(db, project) {

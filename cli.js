@@ -24,11 +24,11 @@ import { getNextCrawlTarget, needsAnalysis, getCrawlStatus, loadAllConfigs } fro
 import {
   getDb, upsertDomain, upsertPage, insertExtraction,
   insertKeywords, insertHeadings, insertLinks, insertPageSchemas,
-  upsertTechnical,
+  upsertTechnical, pruneStaleDomains,
   getCompetitorSummary, getKeywordMatrix, getHeadingStructure,
   getPageHash, getSchemasByProject
 } from './db/db.js';
-import { generateHtmlDashboard, generateMultiDashboard } from './reports/generate-html.js';
+import { generateMultiDashboard } from './reports/generate-html.js';
 import { buildTechnicalActions } from './exports/technical.js';
 import { buildCompetitiveActions } from './exports/competitive.js';
 import { buildSuggestiveActions } from './exports/suggestive.js';
@@ -393,6 +393,21 @@ program
       }
     }
 
+    // ── Prune stale domains (DB entries no longer in config) ─────────────
+    {
+      const configDomains = new Set([
+        config.target?.domain,
+        ...(config.owned || []).map(o => o.domain),
+        ...(config.competitors || []).map(c => c.domain),
+      ].filter(Boolean));
+
+      const pruned = pruneStaleDomains(db, project, configDomains);
+      if (pruned.length) {
+        console.log(chalk.yellow(`\n  🧹 Pruned ${pruned.length} stale domain(s) from DB (no longer in config):`));
+        for (const d of pruned) console.log(chalk.dim(`     − ${d}`));
+      }
+    }
+
     // ── Tier gate: Free tier = crawl-only, no AI extraction ──────────────
     if (opts.extract !== false && !isPro()) {
       console.log(chalk.dim('\n  ℹ  Free tier: crawl-only mode (AI extraction requires Solo/Agency)'));
@@ -488,6 +503,9 @@ program
           publishedDate: page.publishedDate || null,
           modifiedDate: page.modifiedDate || null,
           contentHash: page.contentHash || null,
+          title: page.title || null,
+          metaDesc: page.metaDesc || null,
+          bodyText: page.fullBodyText || page.bodyText || null,
         });
         const pageId = pageRes?.id;
 
@@ -579,9 +597,10 @@ program
     if (totalSkipped > 0) console.log(chalk.blue(`\n📊 Incremental: ${totalSkipped} unchanged pages skipped (same content hash)`));
     if (totalBlocked > 0) console.log(chalk.red(`\n⛔ ${totalBlocked} domain(s) blocked (rate-limited or WAF)`));
     const elapsed = ((Date.now() - crawlStart) / 1000).toFixed(1);
-    // Auto-regenerate dashboard so it never goes stale after a crawl
+    // Auto-regenerate dashboard (always multi-project so all projects stay current)
     try {
-      const dashPath = generateHtmlDashboard(db, project, config);
+      const allConfigs = loadAllConfigs();
+      const dashPath = generateMultiDashboard(db, allConfigs);
       console.log(chalk.dim(`  📊 Dashboard refreshed → ${dashPath}`));
     } catch (dashErr) {
       console.log(chalk.dim(`  ⚠  Dashboard refresh skipped: ${dashErr.message}`));
@@ -697,9 +716,10 @@ program
     // Print summary
     printAnalysisSummary(analysis, project);
 
-    // Auto-regenerate dashboard so it reflects the new analysis immediately
+    // Auto-regenerate dashboard (always multi-project so all projects stay current)
     try {
-      const dashPath = generateHtmlDashboard(db, project, config);
+      const allConfigs = loadAllConfigs();
+      const dashPath = generateMultiDashboard(db, allConfigs);
       console.log(chalk.dim(`  📊 Dashboard refreshed → ${dashPath}`));
     } catch (dashErr) {
       console.log(chalk.dim(`  ⚠  Dashboard refresh skipped: ${dashErr.message}`));
@@ -1074,6 +1094,9 @@ program
         publishedDate: page.publishedDate || null,
         modifiedDate: page.modifiedDate || null,
         contentHash: page.contentHash || null,
+        title: page.title || null,
+        metaDesc: page.metaDesc || null,
+        bodyText: page.fullBodyText || page.bodyText || null,
       });
       const pageId = pageRes?.id;
 
@@ -1379,6 +1402,7 @@ program
   .option('--add-owned <domain>', 'Add an owned subdomain')
   .option('--remove-owned <domain>', 'Remove an owned subdomain')
   .option('--set-target <domain>', 'Change the target domain')
+  .option('--prune', 'Remove DB data for domains no longer in config')
   .action((project, opts) => {
     const configPath = join(__dirname, `config/${project}.json`);
     let config;
@@ -1471,6 +1495,24 @@ program
       console.log(chalk.dim(`\n  Saved → config/${project}.json`));
     }
 
+    // ── Prune stale DB data (auto on remove, or manual --prune) ─────────
+    if (modified || opts.prune) {
+      const db = getDb();
+      const configDomains = new Set([
+        config.target?.domain,
+        ...(config.owned || []).map(o => o.domain),
+        ...(config.competitors || []).map(c => c.domain),
+      ].filter(Boolean));
+
+      const pruned = pruneStaleDomains(db, project, configDomains);
+      if (pruned.length) {
+        console.log(chalk.yellow(`\n  🧹 Pruned ${pruned.length} stale domain(s) from DB:`));
+        for (const d of pruned) console.log(chalk.dim(`     − ${d}`));
+      } else if (opts.prune) {
+        console.log(chalk.dim('\n  ✓ No stale domains to prune'));
+      }
+    }
+
     // ── Always show current config
     console.log(chalk.bold.cyan(`\n  📋 ${project} — Domain Configuration\n`));
     console.log(chalk.white('  Target:'));
@@ -1560,13 +1602,14 @@ async function runAnalysis(project, db) {
 program
   .command('extract <project>')
   .description('Run AI extraction on all crawled-but-not-yet-extracted pages (requires Solo/Agency)')
-  .option('--stealth', 'Advanced browser mode for JS-heavy and dynamic sites')
-  .action(async (project, opts) => {
+  .action(async (project) => {
     if (!requirePro('extract')) return;
     const db = getDb();
+
+    // Query pages that have body_text stored (from crawl) but no extraction yet
     const pendingPages = db.prepare(`
-      SELECT p.id, p.url, p.word_count,
-             e.id as extracted
+      SELECT p.id, p.url, p.word_count, p.title, p.meta_desc, p.body_text,
+             p.published_date, p.modified_date
       FROM pages p
       JOIN domains d ON d.id = p.domain_id
       LEFT JOIN extractions e ON e.page_id = p.id
@@ -1578,102 +1621,241 @@ program
       process.exit(0);
     }
 
-    const mode = opts.stealth ? chalk.magenta('STEALTH') : chalk.gray('standard');
-    console.log(chalk.bold.cyan(`\n⚙️  Extracting ${pendingPages.length} pages for ${project} via Qwen [${mode}]...\n`));
+    // Check how many have body_text stored vs need re-crawl
+    const withContent = pendingPages.filter(r => r.body_text);
+    const needsRecrawl = pendingPages.length - withContent.length;
+
+    console.log(chalk.bold.cyan(`\n⚙️  Extracting ${pendingPages.length} pages for ${project} via Qwen...\n`));
+    if (needsRecrawl > 0) {
+      console.log(chalk.yellow(`  ⚠  ${needsRecrawl} pages have no stored content (crawled before v1.1.6). Re-crawl to populate.\n`));
+    }
 
     const extractStart = Date.now();
-    let done = 0, failed = 0;
+    let done = 0, failed = 0, skipped = 0;
 
-    // ── Stealth: single session across all pages (cookie accumulation) ──
-    let stealthSession = null;
-    if (opts.stealth) {
-      const { createStealthSession } = await import('./crawler/stealth.js');
-      stealthSession = await createStealthSession();
-      console.log(chalk.magenta('  🥷 Advanced mode — full browser rendering, persistent sessions\n'));
-    }
-
-    // Register cleanup so SIGTERM closes the browser gracefully
-    onShutdown(async () => {
-      if (stealthSession) {
-        await stealthSession.close();
-        console.log(chalk.magenta('  🥷 Stealth session closed'));
-      }
-    });
+    // ── Pre-extract template grouping: sample N per group, skip the rest ──
+    const SAMPLE_PER_GROUP = 5;
+    const MIN_GROUP_FOR_SAMPLING = 10;
+    let extractQueue = pendingPages.filter(r => r.body_text); // only pages with stored content
 
     try {
-      for (const row of pendingPages) {
-        process.stdout.write(chalk.gray(`  [${done + failed + 1}/${pendingPages.length}] ${row.url.slice(0, 65)} → `));
-        if (opts.stealth) process.stdout.write(chalk.magenta('stealth '));
-        process.stdout.write(chalk.gray('fetching...'));
+      const { clusterUrls } = await import('./analyses/templates/cluster.js');
+      const { groups } = clusterUrls(
+        extractQueue.map(r => ({ url: r.url })),
+        { minGroupSize: MIN_GROUP_FOR_SAMPLING }
+      );
 
-        writeProgress({
-          status: 'running', command: 'extract', project,
-          current_url: row.url,
-          page_index: done + failed + 1, total: pendingPages.length,
-          percent: Math.round(((done + failed) / pendingPages.length) * 100),
-          started_at: extractStart, failed,
-          stealth: !!opts.stealth,
-        });
+      if (groups.length > 0) {
+        const skipUrls = new Set();
 
-        try {
-          let pageData;
+        for (const group of groups) {
+          const urls = group.urls;
+          if (urls.length <= SAMPLE_PER_GROUP) continue;
 
-          if (stealthSession) {
-            // Stealth: reuse persistent browser session
-            pageData = await stealthSession.fetchPage(row.url);
-          } else {
-            // Standard: quick single-page crawl
-            const { crawlAll } = await import('./crawler/index.js');
-            const crawled = await crawlAll(row.url);
-            pageData = crawled[0] || null;
+          const sampleSet = new Set();
+          sampleSet.add(urls[0]); sampleSet.add(urls[1]);
+          sampleSet.add(urls[urls.length - 1]); sampleSet.add(urls[urls.length - 2]);
+          sampleSet.add(urls[Math.floor(urls.length / 2)]);
+
+          const skippedCount = urls.length - sampleSet.size;
+          for (const u of urls) {
+            if (!sampleSet.has(u)) skipUrls.add(u);
           }
-
-          if (!pageData || pageData.status >= 400) {
-            const reason = pageData ? `HTTP ${pageData.status}` : 'no data';
-            process.stdout.write(chalk.red(` ✗ ${reason}\n`));
-            failed++;
-            if (stealthSession) {
-              // Jittered delay even on failure — don't hammer a blocking site
-              await new Promise(r => setTimeout(r, 1500 + Math.random() * 2000));
-            }
-            continue;
-          }
-
-          process.stdout.write(chalk.gray(' extracting...'));
-          const extractFn = await getExtractPage();
-          const extraction = await extractFn(pageData);
-          insertExtraction(db, { pageId: row.id, data: extraction });
-          insertKeywords(db, row.id, extraction.keywords);
-
-          // Also update headings + links + schemas with fresh data from stealth fetch
-          if (stealthSession) {
-            insertHeadings(db, row.id, pageData.headings);
-            insertLinks(db, row.id, pageData.links);
-            if (pageData.parsedSchemas?.length) insertPageSchemas(db, row.id, pageData.parsedSchemas);
-          }
-
-          process.stdout.write(chalk.green(` ✓${pageData.parsedSchemas?.length ? ` [${pageData.parsedSchemas.length} schema]` : ''}\n`));
-          done++;
-        } catch (err) {
-          process.stdout.write(chalk.red(` ✗ ${err.message}\n`));
-          failed++;
+          console.log(chalk.yellow(`  [template] ${group.pattern} → ${urls.length} pages, sampling ${sampleSet.size}, skipping ${skippedCount}`));
         }
 
-        // Jittered delay in stealth mode (2-5s) to mimic human browsing
-        if (stealthSession) {
-          await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+        if (skipUrls.size > 0) {
+          extractQueue = extractQueue.filter(r => !skipUrls.has(r.url));
+          skipped += skipUrls.size;
+          console.log(chalk.yellow(`  [template] ${withContent.length} extractable → ${extractQueue.length} to extract (${skipUrls.size} template-skipped)\n`));
         }
       }
-    } finally {
-      // Always close stealth session
-      if (stealthSession) {
-        await stealthSession.close();
-        console.log(chalk.magenta(`\n  🥷 Stealth session closed (${stealthSession.getPageCount()} pages fetched)`));
+    } catch (e) {
+      console.log(chalk.gray(`  [template] Pattern detection skipped: ${e.message}`));
+    }
+
+    // ── Consecutive failure tracking per URL pattern ──
+    const CONSEC_FAIL_THRESHOLD = 3;
+    const patternFailCounts = new Map();
+    const skippedPatterns = new Set();
+
+    function getPatternKey(url) {
+      try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        return u.hostname + '/' + parts.map(p =>
+          (p.length > 20 || /^[0-9a-fA-F]{8,}$/.test(p) || /^0x/.test(p) || /[-_]/.test(p)) ? '{var}' : p
+        ).join('/');
+      } catch { return url; }
+    }
+
+    // ── Content similarity detection ──
+    const SIMILARITY_THRESHOLD = 0.80;
+    const SIMILARITY_SAMPLE_SIZE = 3;
+    const patternFingerprints = new Map();
+
+    function textToShingles(text, n = 3) {
+      const words = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+      const shingles = new Set();
+      for (let i = 0; i <= words.length - n; i++) {
+        shingles.add(words.slice(i, i + n).join(' '));
+      }
+      return shingles;
+    }
+
+    function jaccardSimilarity(a, b) {
+      if (!a.size || !b.size) return 0;
+      let intersection = 0;
+      for (const s of a) { if (b.has(s)) intersection++; }
+      return intersection / (a.size + b.size - intersection);
+    }
+
+    function checkPatternSimilarity(patKey, newShingles) {
+      if (!patternFingerprints.has(patKey)) patternFingerprints.set(patKey, []);
+      const fps = patternFingerprints.get(patKey);
+      fps.push(newShingles);
+      if (fps.length < SIMILARITY_SAMPLE_SIZE || fps.length > SIMILARITY_SAMPLE_SIZE) return false;
+      for (let i = 0; i < fps.length; i++) {
+        for (let j = i + 1; j < fps.length; j++) {
+          if (jaccardSimilarity(fps[i], fps[j]) < SIMILARITY_THRESHOLD) return false;
+        }
+      }
+      return true;
+    }
+
+    // ── Prepare headings + schema queries (per-page lookups from DB) ──
+    const getHeadings = db.prepare('SELECT level, text FROM headings WHERE page_id = ? ORDER BY id');
+    const getSchemaTypes = db.prepare('SELECT DISTINCT schema_type FROM page_schemas WHERE page_id = ?');
+
+    const totalToProcess = extractQueue.length;
+    console.log(chalk.gray(`  📖 Reading from DB — no network needed\n`));
+
+    for (const row of extractQueue) {
+      const patKey = getPatternKey(row.url);
+      if (skippedPatterns.has(patKey)) {
+        skipped++;
+        continue;
+      }
+
+      const pos = done + failed + 1;
+      process.stdout.write(chalk.gray(`  [${pos}/${totalToProcess}] ${row.url.slice(0, 70)} → `));
+      process.stdout.write(chalk.gray('extracting...'));
+
+      writeProgress({
+        status: 'running', command: 'extract', project,
+        current_url: row.url,
+        page_index: pos, total: totalToProcess,
+        percent: Math.round(((done + failed) / totalToProcess) * 100),
+        started_at: extractStart, failed, skipped,
+      });
+
+      let pageFailed = false;
+
+      try {
+        // Read headings + schema types from DB
+        const headings = getHeadings.all(row.id);
+        const schemaTypes = getSchemaTypes.all(row.id).map(r => r.schema_type);
+
+        const extractFn = await getExtractPage();
+        const extraction = await extractFn({
+          url: row.url,
+          title: row.title || '',
+          metaDesc: row.meta_desc || '',
+          headings,
+          bodyText: row.body_text,
+          schemaTypes,
+          publishedDate: row.published_date,
+          modifiedDate: row.modified_date,
+        });
+        insertExtraction(db, { pageId: row.id, data: extraction });
+        insertKeywords(db, row.id, extraction.keywords);
+
+        const isDegraded = extraction.extraction_source === 'degraded';
+        if (isDegraded) {
+          process.stdout.write(chalk.yellow(` ⚠ degraded\n`));
+          done++;
+          pageFailed = true;
+        } else {
+          process.stdout.write(chalk.green(` ✓\n`));
+          done++;
+          patternFailCounts.set(patKey, 0);
+        }
+
+        // ── Content similarity detection ──
+        if (row.body_text.length > 50) {
+          const shingles = textToShingles(row.body_text);
+          if (checkPatternSimilarity(patKey, shingles) && !skippedPatterns.has(patKey)) {
+            const remaining = extractQueue.filter(r => getPatternKey(r.url) === patKey).length - (patternFingerprints.get(patKey)?.length || 0);
+            skippedPatterns.add(patKey);
+            if (remaining > 0) {
+              console.log(chalk.yellow(`  [similarity] 🔍 ${SIMILARITY_SAMPLE_SIZE} pages from ${patKey} are ${Math.round(SIMILARITY_THRESHOLD * 100)}%+ identical — skipping ${remaining} remaining`));
+            }
+          }
+        }
+      } catch (err) {
+        process.stdout.write(chalk.red(` ✗ ${err.message}\n`));
+        failed++;
+        pageFailed = true;
+      }
+
+      // ── Track consecutive failures per pattern ──
+      if (pageFailed) {
+        const count = (patternFailCounts.get(patKey) || 0) + 1;
+        patternFailCounts.set(patKey, count);
+        if (count >= CONSEC_FAIL_THRESHOLD) {
+          const remaining = extractQueue.filter(r => !skippedPatterns.has(getPatternKey(r.url)) && getPatternKey(r.url) === patKey).length;
+          skippedPatterns.add(patKey);
+          console.log(chalk.yellow(`  [template] ⚡ ${count} consecutive failures for ${patKey} — skipping ~${remaining} remaining pages`));
+        }
       }
     }
 
-    writeProgress({ status: 'completed', command: 'extract', project, extracted: done, failed, total: pendingPages.length, started_at: extractStart, finished_at: Date.now() });
-    console.log(chalk.bold.green(`\n✅ Extraction complete: ${done} extracted, ${failed} failed\n`));
+    writeProgress({ status: 'completed', command: 'extract', project, extracted: done, failed, skipped, total: pendingPages.length, started_at: extractStart, finished_at: Date.now() });
+    const skipMsg = skipped > 0 ? chalk.yellow(`, ${skipped} template-skipped`) : '';
+    const recrawlMsg = needsRecrawl > 0 ? chalk.yellow(`, ${needsRecrawl} need re-crawl`) : '';
+    console.log(chalk.bold.green(`\n✅ Extraction complete: ${done} extracted, ${failed} failed${skipMsg}${recrawlMsg}\n`));
+  });
+
+// ── TEMPLATES ANALYSIS ────────────────────────────────────────────────────
+program
+  .command('templates <project>')
+  .description('Detect programmatic template pages — assess SEO value without crawling all of them')
+  .option('--min-group <n>', 'Minimum URLs to qualify as a template group', '10')
+  .option('--sample-size <n>', 'Pages to stealth-crawl per template group', '20')
+  .option('--skip-crawl', 'Skip sample crawl (pattern analysis + GSC only)')
+  .option('--skip-gsc', 'Skip GSC overlay phase')
+  .option('--skip-competitors', 'Skip competitor sitemap census')
+  .action(async (project, opts) => {
+    if (!requirePro('templates')) return;
+
+    console.log(chalk.bold.cyan(`\n🔍 SEO Intel — Template Analysis`));
+    console.log(chalk.dim(`  Project: ${project}`));
+
+    try {
+      const { runTemplatesAnalysis } = await import('./analyses/templates/index.js');
+      const report = await runTemplatesAnalysis(project, {
+        minGroupSize: parseInt(opts.minGroup) || 10,
+        sampleSize: parseInt(opts.sampleSize) || 20,
+        skipCrawl: !!opts.skipCrawl,
+        skipGsc: !!opts.skipGsc,
+        skipCompetitors: !!opts.skipCompetitors,
+        log: (msg) => console.log(chalk.gray(msg)),
+      });
+
+      if (report.groups.length === 0) {
+        console.log(chalk.yellow(`\n  No template patterns detected.\n`));
+        process.exit(0);
+      }
+
+      // Summary
+      console.log(chalk.bold.green(`\n✅ Template analysis complete`));
+      console.log(chalk.dim(`  ${report.stats.totalGroups} groups · ${report.stats.totalGrouped.toLocaleString()} URLs · ${(report.stats.coverage * 100).toFixed(0)}% of sitemap`));
+      console.log(chalk.dim(`  Run ${chalk.white('seo-intel html ' + project)} to see the full dashboard.\n`));
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      if (process.env.DEBUG) console.error(err.stack);
+      process.exit(1);
+    }
   });
 
 // ── HTML DASHBOARD ─────────────────────────────────────────────────────────
@@ -1741,10 +1923,10 @@ program
     }
   });
 
-// ── HTML ALL-PROJECTS DASHBOARD ──────────────────────────────────────────────
+// ── HTML ALL-PROJECTS DASHBOARD (alias for html — kept for backwards compat) ──
 program
   .command('html-all')
-  .description('Generate a single HTML dashboard with all projects (dropdown switcher)')
+  .description('Alias for "html" — generates the all-projects dashboard')
   .action(() => {
     const db = getDb();
     const configs = loadAllConfigs();

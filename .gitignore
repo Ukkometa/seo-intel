@@ -45,7 +45,13 @@ gsc/
 .env
 .env.local
 
-# ─── Internal dev docs (not for public repo) ───
+# ─── Internal dev docs (Obsidian vault, not for public repo) ───
+PUBLISH.md
+PUBLISHING.md
+ROADMAP.md
+BUGS.md
+ARCHITECTURE.md
+DASHBOARD_DOCTRINE.md
 CLAUDE_CODE_BRIEF_*.md
 SECURITY*.md
 SECURITY-*.md
@@ -54,7 +60,9 @@ agent-task*.md
 FROGGO_PACKAGE_SPEC.md
 COMMANDS.md
 froggo-package/
+seo-intel-promo/
 scripts/
+.firecrawl/
 
 # ─── Build artifacts ───
 *.tgz

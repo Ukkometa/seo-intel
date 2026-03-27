@@ -501,13 +501,11 @@ async function handleRequest(req, res) {
         envContent = readFileSync(envPath, 'utf8');
       }
 
-      // Determine key type
-      const isFroggo = key.startsWith('FROGGO_') || key.length > 60;
-      const envVar = isFroggo ? 'FROGGO_TOKEN' : 'SEO_INTEL_LICENSE';
+      const envVar = 'SEO_INTEL_LICENSE';
 
-      // Remove existing lines for both key types
+      // Remove existing license line
       const lines = envContent.split('\n').filter(l =>
-        !l.startsWith('SEO_INTEL_LICENSE=') && !l.startsWith('FROGGO_TOKEN=')
+        !l.startsWith('SEO_INTEL_LICENSE=')
       );
       lines.push(`${envVar}=${key}`);
 

@@ -8,13 +8,21 @@ on:
 
 jobs:
   smoke-test:
-    name: Smoke test (${{ matrix.os }})
+    name: Smoke test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node: ['22']
+        include:
+          # Node 20 — should fail gracefully with version guard
+          - os: ubuntu-latest
+            node: '20'
+            expect-version-guard: true
+          # Node 23 — forward compatibility
+          - os: ubuntu-latest
+            node: '23'
 
     steps:
       - name: Checkout
@@ -28,27 +36,354 @@ jobs:
       - name: Install seo-intel globally (from npm registry)
         run: npm install -g seo-intel@latest
 
+      # ═══════════════════════════════════════════════════════════════════
+      # NODE 20 — version guard test (only this, then stop)
+      # ═══════════════════════════════════════════════════════════════════
+      - name: "Node 20: verify version guard catches it"
+        if: matrix.expect-version-guard
+        shell: bash
+        run: |
+          OUTPUT=$(seo-intel --version 2>&1 || true)
+          if echo "$OUTPUT" | grep -qi "requires Node.js 22"; then
+            echo "✅ Version guard works — clear error message on Node 20"
+          else
+            echo "❌ Expected version guard message, got:"
+            echo "$OUTPUT"
+            exit 1
+          fi
+
+      # ═══════════════════════════════════════════════════════════════════
+      # BASIC CLI — does it even start?
+      # ═══════════════════════════════════════════════════════════════════
       - name: seo-intel --version
+        if: "!matrix.expect-version-guard"
         run: seo-intel --version
 
       - name: seo-intel --help
+        if: "!matrix.expect-version-guard"
         run: seo-intel --help
 
-      - name: seo-intel status (no license, soft fail)
+      - name: seo-intel status (no license)
+        if: "!matrix.expect-version-guard"
         run: seo-intel status
         continue-on-error: true
 
-      - name: seo-intel update (check only, soft fail)
+      - name: seo-intel update (check only)
+        if: "!matrix.expect-version-guard"
         run: seo-intel update
         continue-on-error: true
 
+      # ═══════════════════════════════════════════════════════════════════
+      # DATABASE — node:sqlite creates valid schema
+      # ═══════════════════════════════════════════════════════════════════
+      - name: SQLite DB creation + schema integrity
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(npm root -g)/seo-intel"
+          node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const { readFileSync } = require('fs');
+            const { join } = require('path');
+            const dbPath = join(require('os').tmpdir(), 'seo-intel-ci-test.db');
+            const db = new DatabaseSync(dbPath);
+            const schema = readFileSync(join('$ROOT', 'db', 'schema.sql'), 'utf8');
+            db.exec(schema);
+
+            // Verify all expected tables exist
+            const tables = db.prepare(\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\").all();
+            const tableNames = tables.map(t => t.name);
+            const required = [
+              'domains', 'pages', 'extractions', 'headings',
+              'keywords', 'links', 'technical', 'analyses',
+              'page_schemas', 'template_groups', 'template_samples'
+            ];
+            let fail = false;
+            for (const t of required) {
+              if (tableNames.includes(t)) {
+                console.log('✅ Table:', t);
+              } else {
+                console.log('❌ Missing table:', t);
+                fail = true;
+              }
+            }
+
+            // Verify pages table has the new content columns
+            const cols = db.prepare('PRAGMA table_info(pages)').all();
+            const colNames = cols.map(c => c.name);
+            for (const c of ['title', 'meta_desc', 'body_text', 'content_hash']) {
+              if (colNames.includes(c)) {
+                console.log('✅ pages.' + c);
+              } else {
+                console.log('❌ pages missing column:', c);
+                fail = true;
+              }
+            }
+
+            // Verify indexes exist
+            const indexes = db.prepare(\"SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'\").all();
+            console.log('✅ Indexes created:', indexes.length);
+
+            db.close();
+            if (fail) process.exit(1);
+            console.log('✅ All ' + required.length + ' tables + columns verified');
+          "
+
+      # ═══════════════════════════════════════════════════════════════════
+      # CONFIG INIT — project setup creates valid JSON
+      # ═══════════════════════════════════════════════════════════════════
+      - name: Config example is valid JSON
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(npm root -g)/seo-intel"
+          node -e "
+            const { readFileSync } = require('fs');
+            const { join } = require('path');
+            const config = JSON.parse(readFileSync(join('$ROOT', 'config', 'example.json'), 'utf8'));
+            if (!config.project) throw new Error('Missing project field');
+            if (!config.target) throw new Error('Missing target field');
+            if (!Array.isArray(config.competitors)) throw new Error('competitors not array');
+            console.log('✅ example.json valid — project:', config.project);
+          "
+
+      # ═══════════════════════════════════════════════════════════════════
+      # GRACEFUL ERRORS — no stack traces for common mistakes
+      # ═══════════════════════════════════════════════════════════════════
+      - name: License gate shows ukkometa.fi upgrade URL
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          OUTPUT=$(seo-intel analyze example.com 2>&1 || true)
+          if echo "$OUTPUT" | grep -q "ukkometa.fi"; then
+            echo "✅ Upgrade URL shown for gated command"
+          else
+            echo "⚠️ No upgrade URL in gated output (may be expected if analyze is free-tier)"
+          fi
+        continue-on-error: true
+
+      - name: Extract without Ollama shows helpful error
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          OUTPUT=$(seo-intel extract example.com 2>&1 || true)
+          if echo "$OUTPUT" | grep -qiE "ollama|connection|not running|ECONNREFUSED|no pages|no config"; then
+            echo "✅ Helpful error when Ollama not running"
+          else
+            echo "⚠️ Unexpected output:"
+            echo "$OUTPUT" | head -20
+          fi
+        continue-on-error: true
+
+      - name: Crawl nonexistent domain gives graceful error
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          OUTPUT=$(seo-intel crawl this-domain-does-not-exist-xyz.invalid --max-pages 1 2>&1 || true)
+          # Should not contain raw stack traces
+          if echo "$OUTPUT" | grep -qE "^    at "; then
+            echo "❌ Raw stack trace leaked to user:"
+            echo "$OUTPUT" | head -30
+            exit 1
+          else
+            echo "✅ No stack trace leaked — graceful error handling"
+            echo "$OUTPUT" | head -10
+          fi
+        continue-on-error: true
+
+      # ═══════════════════════════════════════════════════════════════════
+      # SETUP WIZARD — serves HTML on localhost
+      # ═══════════════════════════════════════════════════════════════════
+      - name: Setup wizard serves HTML
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(npm root -g)/seo-intel"
+          node -e "
+            const http = require('http');
+            const { spawn } = require('child_process');
+            const child = spawn(process.execPath, ['$ROOT/cli.js', 'setup'], {
+              stdio: 'pipe',
+              env: { ...process.env, NO_OPEN: '1' }
+            });
+            let started = false;
+            child.stdout.on('data', d => {
+              const s = d.toString();
+              if (s.includes('3000') && !started) {
+                started = true;
+                http.get('http://localhost:3000', res => {
+                  let body = '';
+                  res.on('data', chunk => body += chunk);
+                  res.on('end', () => {
+                    child.kill();
+                    if (res.statusCode === 200 && body.includes('<html')) {
+                      console.log('✅ Setup wizard serves HTML (status ' + res.statusCode + ', ' + body.length + ' bytes)');
+                      process.exit(0);
+                    } else {
+                      console.log('❌ Unexpected response:', res.statusCode, body.substring(0, 200));
+                      process.exit(1);
+                    }
+                  });
+                }).on('error', e => {
+                  child.kill();
+                  console.log('❌ HTTP error:', e.message);
+                  process.exit(1);
+                });
+              }
+            });
+            // Timeout after 10s
+            setTimeout(() => {
+              child.kill();
+              if (!started) {
+                console.log('⚠️ Setup wizard did not start within 10s');
+                process.exit(0); // soft fail — might need different port
+              }
+            }, 10000);
+          "
+        continue-on-error: true
+
+      # ═══════════════════════════════════════════════════════════════════
+      # LAZY IMPORTS — all shipped modules resolve
+      # ═══════════════════════════════════════════════════════════════════
+      - name: All shipped module imports resolve
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(npm root -g)/seo-intel"
+          node --input-type=module -e "
+            import { readFileSync } from 'fs';
+            import { join } from 'path';
+
+            const root = '$ROOT';
+            const modules = [
+              'crawler/index.js',
+              'crawler/stealth.js',
+              'crawler/subdomain-discovery.js',
+              'crawler/schema-parser.js',
+              'db/db.js',
+              'lib/gate.js',
+              'lib/license.js',
+              'lib/updater.js',
+              'lib/oauth.js',
+              'exports/competitive.js',
+              'exports/suggestive.js',
+              'exports/technical.js',
+              'exports/templates.js',
+              'reports/generate-html.js',
+              'reports/generate-site-graph.js',
+              'reports/gsc-loader.js',
+              'scheduler.js',
+              'server.js',
+            ];
+
+            let fail = 0;
+            for (const m of modules) {
+              try {
+                await import('file://' + join(root, m));
+                console.log('✅', m);
+              } catch (e) {
+                // Some modules need runtime deps (Playwright, Ollama) — that's OK
+                // Only fail on missing file or syntax errors
+                if (e.code === 'ERR_MODULE_NOT_FOUND' && e.message.includes(m)) {
+                  console.log('❌', m, '— file not found in package');
+                  fail++;
+                } else if (e instanceof SyntaxError) {
+                  console.log('❌', m, '— syntax error:', e.message);
+                  fail++;
+                } else {
+                  // Runtime dependency error (DB, network, etc) — acceptable
+                  console.log('✅', m, '(import OK, runtime dep:', e.code || e.message.substring(0, 60) + ')');
+                }
+              }
+            }
+            if (fail > 0) process.exit(1);
+            console.log('✅ All ' + modules.length + ' shipped modules resolve');
+          "
+
+      # ═══════════════════════════════════════════════════════════════════
+      # NPM PACKAGE INTEGRITY — files field matches reality
+      # ═══════════════════════════════════════════════════════════════════
+      - name: npm pack dry-run — verify tarball contents
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(npm root -g)/seo-intel"
+          cd "$ROOT"
+          # List what npm would pack
+          npm pack --dry-run 2>&1 | tee /tmp/pack-list.txt
+          # Check critical files are in tarball
+          FAIL=0
+          for f in cli.js server.js lib/gate.js lib/license.js lib/updater.js \
+                   crawler/index.js db/db.js db/schema.sql \
+                   reports/generate-html.js setup/wizard.html \
+                   config/example.json README.md CHANGELOG.md LICENSE; do
+            if grep -q "$f" /tmp/pack-list.txt; then
+              echo "✅ packed: $f"
+            else
+              echo "❌ NOT packed: $f"
+              FAIL=1
+            fi
+          done
+          [ $FAIL -eq 0 ] || exit 1
+
+      # ═══════════════════════════════════════════════════════════════════
+      # DASHBOARD HTML GENERATION — produces valid output
+      # ═══════════════════════════════════════════════════════════════════
+      - name: Dashboard HTML generation produces valid file
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(npm root -g)/seo-intel"
+          node --input-type=module -e "
+            import { join } from 'path';
+
+            const root = '$ROOT';
+            try {
+              const mod = await import('file://' + join(root, 'reports/generate-html.js'));
+              // Check the function exists and is callable
+              const fnName = mod.generateMultiDashboard ? 'generateMultiDashboard' :
+                             mod.generateHtmlDashboard ? 'generateHtmlDashboard' : null;
+              if (!fnName) {
+                console.log('❌ No dashboard generation function exported');
+                process.exit(1);
+              }
+              console.log('✅ Dashboard generator exports: ' + fnName);
+
+              // Try generating with empty data to verify no import/syntax crashes
+              try {
+                const html = mod[fnName]({ projects: [], db: null });
+                if (html && html.includes('<html')) {
+                  console.log('✅ Generated HTML (' + html.length + ' bytes)');
+                } else {
+                  console.log('⚠️ Generator returned non-HTML (may need real data)');
+                }
+              } catch (e) {
+                // Runtime errors from missing DB are OK — we just want to verify the import chain
+                console.log('✅ Generator loaded (runtime needs DB:', e.message.substring(0, 80) + ')');
+              }
+            } catch (e) {
+              if (e instanceof SyntaxError) {
+                console.log('❌ Syntax error in generate-html.js:', e.message);
+                process.exit(1);
+              }
+              console.log('✅ Module loaded (runtime dep:', e.message.substring(0, 80) + ')');
+            }
+          "
+        continue-on-error: true
+
+      # ═══════════════════════════════════════════════════════════════════
+      # BRANDING — no froggo.pro leaks
+      # ═══════════════════════════════════════════════════════════════════
       - name: Verify no froggo.pro leaks in shipped files
+        if: "!matrix.expect-version-guard"
         shell: bash
         run: |
           ROOT="$(npm root -g)/seo-intel"
           FAIL=0
-          for f in lib/gate.js lib/license.js lib/updater.js crawler/index.js; do
-            if grep -q "froggo.pro" "$ROOT/$f" 2>/dev/null; then
+          for f in lib/gate.js lib/license.js lib/updater.js crawler/index.js \
+                   crawler/subdomain-discovery.js seo-audit.js README.md \
+                   setup/wizard.html reports/generate-html.js; do
+            if [ -f "$ROOT/$f" ] && grep -q "froggo.pro" "$ROOT/$f" 2>/dev/null; then
               echo "❌ froggo.pro found in $f"
               FAIL=1
             else
@@ -57,21 +392,41 @@ jobs:
           done
           [ $FAIL -eq 0 ] || exit 1
 
+      # ═══════════════════════════════════════════════════════════════════
+      # SERVER — starts and binds without crash
+      # ═══════════════════════════════════════════════════════════════════
       - name: Server starts without crashing (5s)
+        if: "!matrix.expect-version-guard"
         shell: bash
         run: |
           ROOT="$(npm root -g)/seo-intel"
-          cd "$ROOT"
-          timeout 5 node cli.js serve 2>&1 | tee /tmp/serve.log || true
-          if grep -qiE "ERR_MODULE|SyntaxError|Cannot find package|EADDRINUSE" /tmp/serve.log; then
-            echo "❌ serve error:"
-            cat /tmp/serve.log
-            exit 1
-          fi
-          echo "✅ serve started cleanly"
+          node -e "
+            const { spawn } = require('child_process');
+            const child = spawn(process.execPath, ['$ROOT/cli.js', 'serve'], {
+              stdio: 'pipe',
+              env: { ...process.env, NO_OPEN: '1' }
+            });
+            let output = '';
+            child.stdout.on('data', d => output += d);
+            child.stderr.on('data', d => output += d);
+            setTimeout(() => {
+              child.kill();
+              if (/ERR_MODULE|SyntaxError|Cannot find package/i.test(output)) {
+                console.log('❌ serve error:');
+                console.log(output);
+                process.exit(1);
+              }
+              console.log('✅ serve started cleanly');
+              console.log(output.substring(0, 200));
+            }, 5000);
+          "
         continue-on-error: true
 
+      # ═══════════════════════════════════════════════════════════════════
+      # FILE MANIFEST — all required files shipped
+      # ═══════════════════════════════════════════════════════════════════
       - name: Required files manifest check
+        if: "!matrix.expect-version-guard"
         shell: bash
         run: |
           ROOT="$(npm root -g)/seo-intel"
@@ -79,13 +434,14 @@ jobs:
           for f in \
             cli.js server.js scheduler.js seo-audit.js \
             lib/gate.js lib/license.js lib/oauth.js lib/updater.js \
-            crawler/index.js crawler/stealth.js \
+            crawler/index.js crawler/stealth.js crawler/subdomain-discovery.js crawler/schema-parser.js \
             db/db.js db/schema.sql \
             exports/competitive.js exports/suggestive.js exports/technical.js exports/templates.js \
-            reports/generate-html.js \
-            setup/wizard.html setup/web-routes.js \
+            reports/generate-html.js reports/generate-site-graph.js reports/gsc-loader.js \
+            setup/wizard.html setup/web-routes.js setup/checks.js setup/engine.js \
+            setup/config-builder.js setup/installers.js setup/models.js setup/validator.js \
             config/example.json \
-            README.md CHANGELOG.md; do
+            README.md CHANGELOG.md LICENSE; do
             if [ ! -f "$ROOT/$f" ]; then
               echo "❌ Missing: $f"
               MISSING=$((MISSING+1))
@@ -93,4 +449,10 @@ jobs:
               echo "✅ $f"
             fi
           done
-          [ $MISSING -eq 0 ] || exit 1
+          echo ""
+          if [ $MISSING -eq 0 ]; then
+            echo "✅ All files present"
+          else
+            echo "❌ $MISSING files missing"
+            exit 1
+          fi

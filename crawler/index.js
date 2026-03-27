@@ -11,6 +11,7 @@ const MAX_PAGES    = parseInt(process.env.CRAWL_MAX_PAGES  || '50');
 const MAX_DEPTH    = parseInt(process.env.CRAWL_MAX_DEPTH  || '3');
 const TIMEOUT      = parseInt(process.env.CRAWL_TIMEOUT_MS || '12000');
 const PAGE_BUDGET  = parseInt(process.env.PAGE_BUDGET_MS   || '25000'); // hard per-page wall-clock limit
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1']);
 
 // ── Content quality gate ────────────────────────────────────────────────
 const SHELL_PATTERNS = /id=["'](root|app|__next|__nuxt)["']|<noscript[^>]*>.*enable javascript/i;
@@ -190,7 +191,10 @@ export async function* crawlDomain(startUrl, opts = {}) {
   const effectiveUA = isDocsHostname ? GOOGLEBOT_UA : defaultUA;
 
   async function tryLoadLlmsTxt() {
-    const llmsUrl = `https://${base.hostname}/llms.txt`;
+    const llmsOrigin = base.protocol === 'http:' && !LOOPBACK_HOSTNAMES.has(base.hostname)
+      ? `https://${base.host}`
+      : base.origin;
+    const llmsUrl = `${llmsOrigin}/llms.txt`;
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), Math.min(TIMEOUT, 8000));
@@ -224,6 +228,11 @@ export async function* crawlDomain(startUrl, opts = {}) {
       const unique = [...new Set(urls)];
       let added = 0;
       for (const u of unique) {
+        try {
+          if (new URL(u).hostname !== base.hostname) continue;
+        } catch {
+          continue;
+        }
         if (!queue.some(q => q.url === u)) {
           queue.push({ url: u, depth: 1 });
           added++;

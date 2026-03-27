@@ -1,4 +1,16 @@
 #!/usr/bin/env node
+
+// ── Node.js version guard ───────────────────────────────────────────────
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 5)) {
+  console.error(
+    `\n  SEO Intel requires Node.js 22.5 or later.\n` +
+    `  You have Node.js ${process.versions.node}.\n\n` +
+    `  Install the latest LTS:  https://nodejs.org\n`
+  );
+  process.exit(1);
+}
+
 import 'dotenv/config';
 import { program } from 'commander';
 import { spawnSync } from 'child_process';
@@ -46,6 +58,13 @@ checkForUpdates();
 // Ensure reports/ and config/ directories exist
 try { mkdirSync(join(__dirname, 'reports'), { recursive: true }); } catch { /* ok */ }
 try { mkdirSync(join(__dirname, 'config'), { recursive: true }); } catch { /* ok */ }
+
+function defaultSiteUrl(domain) {
+  const host = String(domain || '').trim();
+  const hostname = host.split(':')[0].replace(/^\[|\]$/g, '');
+  const protocol = hostname === 'localhost' || hostname === '127.0.0.1' ? 'http' : 'https';
+  return `${protocol}://${host}`;
+}
 
 // ── AI AVAILABILITY PREFLIGHT ────────────────────────────────────────────
 /**
@@ -435,7 +454,7 @@ program
         else if (config.competitors?.includes(site)) site.role = 'competitor';
         else site.role = 'owned';
       }
-      if (!site.url && site.domain) site.url = `https://${site.domain}`;
+      if (!site.url && site.domain) site.url = defaultSiteUrl(site.domain);
     }
 
     const sites = opts.domain
@@ -674,7 +693,8 @@ program
     console.log(chalk.gray(`Prompt saved: ${promptPath}`));
 
     // Call Gemini via gemini CLI (reuse existing auth)
-    const result = await callGemini(prompt);
+    process.env._SEO_INTEL_PROJECT = project;
+    const result = await callAnalysisModel(prompt, opts.model);
 
     if (!result) {
       console.error(chalk.red('No response from model.'));
@@ -991,17 +1011,117 @@ function loadConfig(project) {
 }
 
 async function callGemini(prompt) {
-  // Use gemini CLI (already auth'd via OpenClaw)
-  const { execSync } = await import('child_process');
+  return callAnalysisModel(prompt, 'gemini');
+}
+
+function getOpenClawToken() {
+  const envToken = process.env.OPENCLAW_TOKEN?.trim();
+  if (envToken) return envToken;
+
   try {
-    const result = execSync(
-      `echo ${JSON.stringify(prompt)} | gemini -p -`,
-      { maxBuffer: 10 * 1024 * 1024, timeout: 120000 }
-    ).toString();
-    return result;
+    const configPath = join(process.env.HOME || process.env.USERPROFILE || '', '.openclaw', 'openclaw.json');
+    const raw = readFileSync(configPath, 'utf8');
+    const matches = [...raw.matchAll(/"token":\s*"([a-f0-9]{40,})"/g)];
+    if (matches.length > 0) return matches[matches.length - 1][1];
+  } catch {}
+
+  return null;
+}
+
+async function callOpenClaw(prompt, model = 'default') {
+  const token = getOpenClawToken();
+  if (!token) throw new Error('OpenClaw token not found');
+
+  const timeoutMs = parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.GEMINI_TIMEOUT_MS || '120000', 10);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch('http://127.0.0.1:18789/v1/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model === 'openclaw' ? 'default' : model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 4000,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`OpenClaw API error: ${res.status} ${await res.text()}`);
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function callAnalysisModel(prompt, model = 'gemini') {
+  const requestedModel = String(model || 'gemini').trim();
+  const normalizedModel = requestedModel.toLowerCase();
+
+  if (normalizedModel !== 'gemini') {
+    try {
+      return await callOpenClaw(prompt, requestedModel);
+    } catch (err) {
+      console.error('[openclaw]', err.message);
+      return null;
+    }
+  }
+
+  const timeoutMs = parseInt(process.env.GEMINI_TIMEOUT_MS || '120000', 10);
+  try {
+    const result = spawnSync('gemini', ['-p', '-'], {
+      input: prompt,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024
+    });
+
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(result.stderr?.trim() || `gemini exited with status ${result.status}`);
+    }
+
+    return result.stdout;
   } catch (err) {
-    console.error('[gemini]', err.message);
-    return null;
+    const fallbackModel = process.env.OPENCLAW_ANALYSIS_MODEL || 'default';
+    try {
+      console.warn(`[gemini] ${err.message}`);
+      console.log(chalk.yellow(`Gemini CLI unavailable, retrying via OpenClaw (${fallbackModel})...\n`));
+      return await callOpenClaw(prompt, fallbackModel);
+    } catch (fallbackErr) {
+      // Produce clear, actionable error messages
+      const geminiMsg = err.message || '';
+      const ocMsg = fallbackErr.message || '';
+
+      const isTimeout = geminiMsg.includes('ETIMEDOUT') || geminiMsg.includes('timeout') || err.name === 'AbortError';
+      const isGatewayDown = ocMsg.includes('ECONNREFUSED') || ocMsg.includes('token not found') || ocMsg.includes('gateway');
+
+      console.error(chalk.red('\n  ✗ Analysis failed — no model available\n'));
+
+      if (isTimeout) {
+        console.error(chalk.yellow('  Gemini timed out.') + chalk.dim(' Try: GEMINI_TIMEOUT_MS=180000 seo-intel analyze ' + (process.env._SEO_INTEL_PROJECT || '<project>')));
+      } else {
+        console.error(chalk.dim(`  Gemini: ${geminiMsg}`));
+      }
+
+      if (isGatewayDown) {
+        console.error(chalk.yellow('  OpenClaw gateway is not running.'));
+        console.error(chalk.dim('  Start it:   ') + chalk.cyan('openclaw gateway'));
+        console.error(chalk.dim('  Or set key: ') + chalk.cyan('echo "GEMINI_API_KEY=your-key" >> .env'));
+      } else {
+        console.error(chalk.dim(`  OpenClaw: ${ocMsg}`));
+      }
+
+      console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));
+      return null;
+    }
   }
 }
 
@@ -1268,8 +1388,8 @@ program
     if (info.npmVersion) {
       console.log(chalk.gray('  npm registry:     ') + chalk.white(info.npmVersion));
     }
-    if (info.froggoVersion) {
-      console.log(chalk.gray('  ukkometa.fi:      ') + chalk.white(info.froggoVersion));
+    if (info.ukkometaVersion) {
+      console.log(chalk.gray('  ukkometa.fi:      ') + chalk.white(info.ukkometaVersion));
     }
 
     if (!info.hasUpdate) {
@@ -1428,7 +1548,7 @@ program
     // ── Add competitor
     if (opts.add) {
       const domain = domainFromUrl(opts.add);
-      const url = opts.add.startsWith('http') ? opts.add : `https://${opts.add}`;
+      const url = opts.add.startsWith('http') ? opts.add : defaultSiteUrl(opts.add);
       if (config.competitors.some(c => c.domain === domain)) {
         console.log(chalk.yellow(`  ⚠ ${domain} is already a competitor`));
       } else {
@@ -1455,7 +1575,7 @@ program
     if (opts.addOwned) {
       if (!config.owned) config.owned = [];
       const domain = domainFromUrl(opts.addOwned);
-      const url = opts.addOwned.startsWith('http') ? opts.addOwned : `https://${opts.addOwned}`;
+      const url = opts.addOwned.startsWith('http') ? opts.addOwned : defaultSiteUrl(opts.addOwned);
       if (config.owned.some(o => o.domain === domain)) {
         console.log(chalk.yellow(`  ⚠ ${domain} is already an owned domain`));
       } else {
@@ -1482,7 +1602,7 @@ program
     // ── Change target
     if (opts.setTarget) {
       const domain = domainFromUrl(opts.setTarget);
-      const url = opts.setTarget.startsWith('http') ? opts.setTarget : `https://${opts.setTarget}`;
+      const url = opts.setTarget.startsWith('http') ? opts.setTarget : defaultSiteUrl(opts.setTarget);
       config.target = { url, domain, role: 'target' };
       config.context.url = url;
       console.log(chalk.green(`  ✓ Target changed to: ${domain}`));

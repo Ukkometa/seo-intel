@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.10 (2026-03-27)
+
+### Security
+- Fix SSRF: llms.txt URLs now respect robots.txt before enqueue (crawler/index.js)
+
+### Fixes
+- SQL injection audit complete — all queries use parameterised statements (no changes needed)
+
+### Testing
+- Mock crawl test passes end-to-end: crawls http://localhost:19876, stores 7 pages in SQLite
+- CI: Ubuntu job now runs mock crawl test after smoke checks
+- Fixed mock-crawl-test.js: server binds to 127.0.0.1, CLI resolved from install root, DB assertions corrected
+
 ## 1.1.9 (2026-03-27)
 
 ### Security

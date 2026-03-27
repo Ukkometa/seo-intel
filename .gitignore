@@ -61,7 +61,9 @@ FROGGO_PACKAGE_SPEC.md
 COMMANDS.md
 froggo-package/
 seo-intel-promo/
-scripts/
+scripts/*
+!scripts/
+!scripts/mock-crawl-test.js
 .firecrawl/
 
 # ─── Build artifacts ───

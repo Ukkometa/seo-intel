@@ -233,6 +233,10 @@ export async function* crawlDomain(startUrl, opts = {}) {
         } catch {
           continue;
         }
+        if (!opts.stealth) {
+          const robotsResult = await checkRobots(u).catch(() => ({ allowed: true }));
+          if (!robotsResult.allowed) continue;
+        }
         if (!queue.some(q => q.url === u)) {
           queue.push({ url: u, depth: 1 });
           added++;

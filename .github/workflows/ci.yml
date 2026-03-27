@@ -456,3 +456,9 @@ jobs:
             echo "❌ $MISSING files missing"
             exit 1
           fi
+
+      - name: Mock crawl test
+        if: "!matrix.expect-version-guard && matrix.os == 'ubuntu-latest' && matrix.node == '22'"
+        run: node scripts/mock-crawl-test.js
+        working-directory: ${{ github.workspace }}
+        shell: bash

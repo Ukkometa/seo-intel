@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke-test:
+    name: Smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install seo-intel globally (from source)
+        run: npm install -g .
+
+      - name: seo-intel --version
+        run: seo-intel --version
+
+      - name: seo-intel --help
+        run: seo-intel --help
+
+      - name: seo-intel status (no license)
+        run: seo-intel status
+        continue-on-error: true
+
+      - name: seo-intel update (check only)
+        run: seo-intel update
+        continue-on-error: true
+
+      - name: Verify ukkometa.fi branding in gate.js
+        shell: bash
+        run: |
+          GATE=$(node -e "console.log(require('path').join(require('child_process').execSync('npm root -g').toString().trim(), 'seo-intel/lib/gate.js'))")
+          if grep -q "froggo.pro" "$GATE"; then
+            echo "❌ froggo.pro still present in gate.js"
+            exit 1
+          else
+            echo "✅ gate.js clean"
+          fi
+
+      - name: Verify ukkometa.fi branding in updater.js
+        shell: bash
+        run: |
+          UPDATER=$(node -e "console.log(require('path').join(require('child_process').execSync('npm root -g').toString().trim(), 'seo-intel/lib/updater.js'))")
+          if grep -q "froggo.pro" "$UPDATER"; then
+            echo "❌ froggo.pro still present in updater.js"
+            exit 1
+          else
+            echo "✅ updater.js clean"
+          fi
+
+      - name: Verify license.js endpoint
+        shell: bash
+        run: |
+          LICENSE=$(node -e "console.log(require('path').join(require('child_process').execSync('npm root -g').toString().trim(), 'seo-intel/lib/license.js'))")
+          if grep -q "froggo.pro" "$LICENSE"; then
+            echo "❌ froggo.pro still present in license.js"
+            exit 1
+          else
+            echo "✅ license.js clean"
+          fi
+
+      - name: Server starts and binds (5s timeout)
+        shell: bash
+        run: |
+          timeout 5 seo-intel serve 2>&1 | tee serve.log || true
+          if grep -qi "error\|EADDRINUSE\|cannot\|failed" serve.log; then
+            echo "⚠️ Potential serve issue — check serve.log"
+            cat serve.log
+          else
+            echo "✅ serve started cleanly"
+          fi
+
+      - name: Check all required files are present
+        shell: bash
+        run: |
+          ROOT=$(node -e "console.log(require('path').join(require('child_process').execSync('npm root -g').toString().trim(), 'seo-intel'))")
+          FILES=(
+            "cli.js"
+            "server.js"
+            "scheduler.js"
+            "seo-audit.js"
+            "lib/gate.js"
+            "lib/license.js"
+            "lib/oauth.js"
+            "lib/updater.js"
+            "crawler/index.js"
+            "crawler/stealth.js"
+            "db/db.js"
+            "db/schema.sql"
+            "exports/competitive.js"
+            "exports/suggestive.js"
+            "exports/technical.js"
+            "exports/templates.js"
+            "reports/generate-html.js"
+            "setup/wizard.html"
+            "setup/web-routes.js"
+            "config/example.json"
+            "README.md"
+            "CHANGELOG.md"
+          )
+          MISSING=0
+          for f in "${FILES[@]}"; do
+            if [ ! -f "$ROOT/$f" ]; then
+              echo "❌ Missing: $f"
+              MISSING=$((MISSING+1))
+            fi
+          done
+          if [ $MISSING -eq 0 ]; then
+            echo "✅ All required files present"
+          else
+            exit 1
+          fi

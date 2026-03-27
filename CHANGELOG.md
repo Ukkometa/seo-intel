@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.8 (2026-03-27)
+
+- Rebranded all references from froggo.pro → ukkometa.fi (endpoints, dashboard links, license validation, bot user-agents, skill)
+- Pricing updated: €9.99/mo · €79/yr
+- Contact updated: ukko@ukkometa.fi
+- Added README.md and CHANGELOG.md to npm package and LS zip
+
 ## 1.1.7 (2026-03-26)
 
 ### New Features
@@ -26,3 +33,10 @@
 ## 1.1.5 (2026-03-21)
 
 - Update checker, job stop API, background analyze, LAN Ollama hosts, `html` CLI command, wizard UX improvements.
+
+## 1.1.8 (2026-03-27)
+
+- Rebranded all references from froggo.pro → ukkometa.fi (endpoints, dashboard links, license validation, bot user-agents, skill)
+- Pricing updated: €9.99/mo · €79/yr
+- Contact updated: ukko@ukkometa.fi
+- Added README.md and CHANGELOG.md to npm package and LS zip

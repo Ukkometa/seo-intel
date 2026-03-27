@@ -142,6 +142,6 @@ Wire via OpenClaw cron for proactive weekly briefings delivered to your chat.
 | Tier | Price | Features |
 |---|---|---|
 | Free | €0 | Unlimited crawl, technical exports, crawl-only dashboard |
-| Solo | €9.99/mo or €79/yr | Full AI pipeline, all exports, full dashboard |
+| Solo | €19.99/mo or €199.99/yr | Full AI pipeline, all exports, full dashboard |
 
 Solo via [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/).

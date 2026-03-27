@@ -1824,7 +1824,7 @@ function buildHtmlTemplate(data, opts = {}) {
         </p>
         <a href="https://ukkometa.fi/en/seo-intel/" target="_blank"
            style="display:inline-block;padding:10px 24px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.8rem;font-weight:500;text-decoration:none;">
-          Upgrade to Solo — €19.99/mo →
+          Upgrade to Solo — €9.99/mo →
         </a>
         <div style="font-size:0.62rem;color:var(--text-muted);margin-top:8px;">
           €199/yr saves ~17%
@@ -3138,7 +3138,7 @@ function buildHtmlTemplate(data, opts = {}) {
       </p>
       <a href="https://ukkometa.fi/en/seo-intel/" target="_blank"
          style="display:inline-block; padding:8px 20px; background:var(--accent-gold); color:var(--text-dark); border-radius:var(--radius); font-size:0.78rem; font-weight:500; text-decoration:none;">
-        Upgrade to Solo — €19.99/mo →
+        Upgrade to Solo — €9.99/mo →
       </a>
     </div>
     ` : ''}

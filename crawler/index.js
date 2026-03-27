@@ -186,7 +186,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
   // When hostname contains "docs.", spoof Googlebot UA to reduce WAF friction.
   const isDocsHostname = base.hostname.toLowerCase().includes('docs.');
   const GOOGLEBOT_UA = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
-  const defaultUA = 'Mozilla/5.0 (compatible; SEOIntelBot/1.0; +https://froggo.pro/seo-intel/bot)';
+  const defaultUA = 'Mozilla/5.0 (compatible; SEOIntelBot/1.0; +https://ukkometa.fi/en/seo-intel/bot)';
   const effectiveUA = isDocsHostname ? GOOGLEBOT_UA : defaultUA;
 
   async function tryLoadLlmsTxt() {

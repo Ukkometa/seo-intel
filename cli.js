@@ -1269,7 +1269,7 @@ program
       console.log(chalk.gray('  npm registry:     ') + chalk.white(info.npmVersion));
     }
     if (info.froggoVersion) {
-      console.log(chalk.gray('  froggo.pro:       ') + chalk.white(info.froggoVersion));
+      console.log(chalk.gray('  ukkometa.fi:      ') + chalk.white(info.froggoVersion));
     }
 
     if (!info.hasUpdate) {

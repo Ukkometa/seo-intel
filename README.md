@@ -75,7 +75,7 @@ seo-intel suggest-usecases myproject --scope docs      # infer what pages/docs s
 | `schemas <project>` | Schema.org coverage analysis |
 | `update` | Check for updates |
 
-### Solo (€19.99/mo · [ukkometa.fi/seo-intel](https://ukkometa.fi/seo-intel))
+### Solo (€9.99/mo · [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/))
 
 | Command | Description |
 |---------|-------------|
@@ -194,7 +194,7 @@ Upload your GSC data for ranking insights:
 - 1 project, 500 pages/domain
 - Crawl, extract, setup, basic reports
 
-### Pro Tier ($49 one-time)
+### Solo (€9.99/mo · €79/yr)
 - Unlimited projects and pages
 - All analysis commands, GSC insights, scheduling
 
@@ -203,7 +203,7 @@ Upload your GSC data for ranking insights:
 echo "SEO_INTEL_LICENSE=SI-xxxx-xxxx-xxxx-xxxx" >> .env
 ```
 
-Get a key at [froggo.pro/seo-intel](https://froggo.pro/seo-intel)
+Get a key at [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/)
 
 ## Updates
 

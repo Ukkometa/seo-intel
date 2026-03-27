@@ -181,7 +181,7 @@ async function checkHttp(hostname) {
       signal: controller.signal,
       redirect: 'follow',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; SEOIntelBot/1.0; +https://froggo.pro/seo-intel/bot)',
+        'User-Agent': 'Mozilla/5.0 (compatible; SEOIntelBot/1.0; +https://ukkometa.fi/en/seo-intel/bot)',
       },
     });
 

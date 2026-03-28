@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1 (2026-03-28)
+
+### Dashboard
+- Remove redundant Crawl/Extract buttons from status bar — terminal already has them
+- Status bar now shows only Stop, Restart, and Stealth toggle (cleaner UI)
+- Stealth toggle still controls `--stealth` flag for terminal Crawl/Extract buttons
+
 ## 1.2.0 (2026-03-28)
 
 ### AEO — AI Citability Audit (new feature)

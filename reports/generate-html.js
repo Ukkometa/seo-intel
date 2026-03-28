@@ -1960,22 +1960,6 @@ function buildHtmlTemplate(data, opts = {}) {
         ` : ''}
       </div>
       <div class="es-controls" id="esControls${suffix}">
-      ${extractionStatus.liveProgress?.status === 'running' && extractionStatus.liveProgress?.command === 'crawl'
-        ? `<button class="es-btn running" id="btnCrawl${suffix}" onclick="startJob('crawl','${project}')" disabled>
-            <i class="fa-solid fa-spinner fa-spin"></i> Crawling\u2026
-          </button>`
-        : `<button class="es-btn" id="btnCrawl${suffix}" onclick="startJob('crawl','${project}')"${extractionStatus.liveProgress?.status === 'running' ? ' disabled' : ''}>
-            <i class="fa-solid fa-spider"></i> Crawl
-          </button>`
-      }
-      ${extractionStatus.liveProgress?.status === 'running' && extractionStatus.liveProgress?.command === 'extract'
-        ? `<button class="es-btn running" id="btnExtract${suffix}" onclick="startJob('extract','${project}')" disabled>
-            <i class="fa-solid fa-spinner fa-spin"></i> Extracting\u2026
-          </button>`
-        : `<button class="es-btn" id="btnExtract${suffix}" onclick="startJob('extract','${project}')"${extractionStatus.liveProgress?.status === 'running' ? ' disabled' : ''}>
-            <i class="fa-solid fa-brain"></i> Extract
-          </button>`
-      }
       <button class="es-btn es-btn-stop${extractionStatus.liveProgress?.status === 'running' ? ' active' : ''}" id="btnStop${suffix}" onclick="stopJob()">
         <i class="fa-solid fa-stop"></i> Stop
       </button>

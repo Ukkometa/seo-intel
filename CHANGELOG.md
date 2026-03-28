@@ -1,11 +1,12 @@
 # Changelog
 
-## 1.2.1 (2026-03-28)
+## 1.2.3 (2026-03-28)
 
 ### Dashboard
 - Remove redundant Crawl/Extract buttons from status bar — terminal already has them
 - Status bar now shows only Stop, Restart, and Stealth toggle (cleaner UI)
-- Stealth toggle still controls `--stealth` flag for terminal Crawl/Extract buttons
+- Fix stealth toggle scoping in multi-project dashboard — each project panel reads its own toggle
+- Stop button now clears crashed processes (dead PIDs) instead of showing stale "running" state
 
 ## 1.2.0 (2026-03-28)
 

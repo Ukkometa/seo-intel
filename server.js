@@ -339,32 +339,39 @@ async function handleRequest(req, res) {
   if (req.method === 'POST' && path === '/api/stop') {
     try {
       const progress = readProgress();
-      if (!progress || progress.status !== 'running' || !progress.pid) {
+      if (!progress || !progress.pid) {
         json(res, 404, { error: 'No running job to stop' });
         return;
       }
-      try {
-        // Graceful: SIGTERM lets the CLI close browsers / write progress
-        process.kill(progress.pid, 'SIGTERM');
-        // Escalate: SIGKILL after 5s if still alive (stealth browser cleanup needs time)
-        setTimeout(() => {
-          try { process.kill(progress.pid, 0); } catch { return; } // already dead
-          try { process.kill(progress.pid, 'SIGKILL'); } catch {}
-        }, 5000);
-      } catch (e) {
-        if (e.code !== 'ESRCH') throw e;
-        // Already dead
+
+      // Check if process is actually alive
+      let isAlive = false;
+      try { process.kill(progress.pid, 0); isAlive = true; } catch { isAlive = false; }
+
+      if (isAlive) {
+        try {
+          // Graceful: SIGTERM lets the CLI close browsers / write progress
+          process.kill(progress.pid, 'SIGTERM');
+          // Escalate: SIGKILL after 5s if still alive (stealth browser cleanup needs time)
+          setTimeout(() => {
+            try { process.kill(progress.pid, 0); } catch { return; } // already dead
+            try { process.kill(progress.pid, 'SIGKILL'); } catch {}
+          }, 5000);
+        } catch (e) {
+          if (e.code !== 'ESRCH') throw e;
+        }
       }
-      // Update progress file (CLI also writes this on SIGTERM, but server does it too as safety net)
+
+      // Update progress file — clears both running and crashed states
       try {
         writeFileSync(PROGRESS_FILE, JSON.stringify({
           ...progress,
-          status: 'stopped',
+          status: isAlive ? 'stopped' : 'crashed_cleared',
           stopped_at: Date.now(),
           updated_at: Date.now(),
         }, null, 2));
       } catch { /* best-effort */ }
-      json(res, 200, { stopped: true, pid: progress.pid, command: progress.command });
+      json(res, 200, { stopped: true, pid: progress.pid, command: progress.command, wasAlive: isAlive });
     } catch (e) {
       json(res, 500, { error: e.message });
     }

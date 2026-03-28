@@ -2162,7 +2162,7 @@ function buildHtmlTemplate(data, opts = {}) {
         var extra = scope ? { scope: scope } : {};
         // Crawl/extract: read stealth toggle + update status bar
         if (cmd === 'crawl' || cmd === 'extract') {
-          var stealthEl = document.querySelector('[id^="stealthToggle"]');
+          var stealthEl = btn.closest('.project-panel')?.querySelector('[id^="stealthToggle"]') || document.getElementById('stealthToggle' + suffix);
           if (stealthEl?.checked) extra.stealth = true;
           if (window._setButtonsState) window._setButtonsState(true, cmd);
           if (window._startPolling) window._startPolling();

@@ -48,6 +48,7 @@ function _insightFingerprint(type, item) {
     case 'technical_gap':     raw = item.gap || ''; break;
     case 'positioning':       raw = 'positioning'; break;
     case 'keyword_inventor':  raw = item.phrase || ''; break;
+    case 'citability_gap':    raw = item.url || ''; break;
     default:                  raw = JSON.stringify(item);
   }
   return raw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -512,6 +513,7 @@ export function pruneStaleDomains(db, project, configDomains) {
         db.prepare(`DELETE FROM page_schemas WHERE page_id IN (${placeholders})`).run(...pageIds);
         db.prepare(`DELETE FROM extractions WHERE page_id IN (${placeholders})`).run(...pageIds);
         db.prepare(`DELETE FROM keywords WHERE page_id IN (${placeholders})`).run(...pageIds);
+        try { db.prepare(`DELETE FROM citability_scores WHERE page_id IN (${placeholders})`).run(...pageIds); } catch { /* table may not exist */ }
         db.prepare(`DELETE FROM pages WHERE domain_id = ?`).run(id);
       }
 

@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url';
 import { loadGscData } from './gsc-loader.js';
 import { isPro } from '../lib/license.js';
 import { getActiveInsights } from '../db/db.js';
+import { getCitabilityScores } from '../analyses/aeo/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,6 +104,10 @@ function gatherProjectData(db, project, config) {
   // Keyword Inventor data
   const keywordsReport = getLatestKeywordsReport(project);
 
+  // AEO / AI Citability scores
+  let citabilityData = null;
+  try { citabilityData = getCitabilityScores(db, project); } catch { /* table may not exist yet */ }
+
   // Extraction status
   const extractionStatus = getExtractionStatus(db, project, config);
 
@@ -126,7 +131,7 @@ function gatherProjectData(db, project, config) {
     ctaLandscape, entityTopicMap, schemaBreakdown,
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
-    keywordsReport, extractionStatus, gscData, domainArch, gscInsights,
+    keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData,
   };
 
   // Rollback the owned→target merge so the actual DB is unchanged
@@ -189,7 +194,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ctaLandscape, entityTopicMap, schemaBreakdown,
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
-    keywordsReport, extractionStatus, gscData, domainArch, gscInsights,
+    keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData,
   } = data;
 
   const totalPages = domains.reduce((sum, d) => sum + d.page_count, 0);
@@ -3143,6 +3148,9 @@ function buildHtmlTemplate(data, opts = {}) {
       <div class="section-divider-line"></div>
     </div>` : ''}
 
+    <!-- ═══ AEO / AI CITABILITY AUDIT ═══ -->
+    ${pro && citabilityData?.length ? buildAeoCard(citabilityData, escapeHtml) : ''}
+
     <!-- ═══ LONG-TAIL OPPORTUNITIES ═══ -->
     ${pro && latestAnalysis?.long_tails?.length ? `
     <div class="card full-width" id="long-tails">
@@ -4962,6 +4970,103 @@ function buildMultiHtmlTemplate(allProjectData) {
   </script>
 </body>
 </html>`;
+}
+
+// ─── AEO Card Builder ────────────────────────────────────────────────────────
+
+function buildAeoCard(citabilityData, escapeHtml) {
+  const targetScores = citabilityData.filter(s => s.role === 'target' || s.role === 'owned');
+  const compScores = citabilityData.filter(s => s.role === 'competitor');
+  if (!targetScores.length) return '';
+
+  const avgTarget = Math.round(targetScores.reduce((a, s) => a + s.score, 0) / targetScores.length);
+  const avgComp = compScores.length ? Math.round(compScores.reduce((a, s) => a + s.score, 0) / compScores.length) : null;
+  const delta = avgComp !== null ? avgTarget - avgComp : null;
+
+  const tierCounts = { excellent: 0, good: 0, needs_work: 0, poor: 0 };
+  for (const s of targetScores) tierCounts[s.tier]++;
+
+  const signals = ['entity_authority', 'structured_claims', 'answer_density', 'qa_proximity', 'freshness', 'schema_coverage'];
+  const signalAvgs = signals.map(sig => ({
+    label: sig.replace(/_/g, ' '),
+    avg: Math.round(targetScores.reduce((a, s) => a + (s[sig] || 0), 0) / targetScores.length),
+  }));
+
+  const scoreColor = (s) => s >= 75 ? '#4ade80' : s >= 55 ? '#facc15' : s >= 35 ? '#ff8c00' : '#ef4444';
+
+  // Page rows (worst first, limit 25)
+  const pageRows = targetScores
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 25)
+    .map(s => {
+      let path;
+      try { path = new URL(s.url).pathname; } catch { path = s.url; }
+      let intents = [];
+      try { intents = JSON.parse(s.ai_intents || '[]'); } catch { /* ok */ }
+      const weakest = signals
+        .map(sig => ({ sig: sig.replace(/_/g, ' '), val: s[sig] || 0 }))
+        .sort((a, b) => a.val - b.val)
+        .slice(0, 2);
+      const tierBadge = s.tier === 'excellent' ? 'high' : s.tier === 'poor' ? 'low' : 'medium';
+      return `
+          <tr>
+            <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${scoreColor(s.score)};margin-right:6px;"></span><strong>${s.score}</strong></td>
+            <td class="phrase-cell" title="${escapeHtml(s.url)}">${escapeHtml(path.slice(0, 55))}</td>
+            <td>${escapeHtml((s.title || '').slice(0, 40) || '—')}</td>
+            <td><span class="badge badge-${tierBadge}">${s.tier.replace('_', ' ')}</span></td>
+            <td style="font-size:0.75rem;color:var(--text-muted)">${intents.map(i => i.replace('_', ' ')).join(', ')}</td>
+            <td style="font-size:0.75rem;color:var(--text-muted)">${weakest.map(w => w.sig).join(', ')}</td>
+          </tr>`;
+    }).join('');
+
+  const signalBars = signalAvgs.map(s => `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <span style="width:130px;font-size:0.78rem;color:var(--text-secondary);text-transform:capitalize;">${s.label}</span>
+            <div style="flex:1;background:var(--card-bg);border-radius:4px;height:14px;overflow:hidden;">
+              <div style="width:${s.avg}%;height:100%;background:${scoreColor(s.avg)};border-radius:4px;transition:width .5s;"></div>
+            </div>
+            <span style="font-size:0.75rem;color:var(--text-muted);width:35px;text-align:right;">${s.avg}</span>
+          </div>`).join('');
+
+  let compStatHtml = '';
+  if (avgComp !== null) {
+    compStatHtml += `<div class="ki-stat"><span class="ki-stat-number" style="color:${scoreColor(avgComp)}">${avgComp}</span><span class="ki-stat-label">Competitor Avg</span></div>`;
+  }
+  if (delta !== null) {
+    compStatHtml += `<div class="ki-stat"><span class="ki-stat-number" style="color:${delta >= 0 ? '#4ade80' : '#ef4444'}">${delta > 0 ? '+' : ''}${delta}</span><span class="ki-stat-label">Delta</span></div>`;
+  }
+
+  return `
+    <div class="card full-width" id="aeo-citability">
+      <h2><span class="icon"><i class="fa-solid fa-robot"></i></span> AI Citability Audit</h2>
+      <div class="ki-stat-bar">
+        <div class="ki-stat"><span class="ki-stat-number" style="color:${scoreColor(avgTarget)}">${avgTarget}</span><span class="ki-stat-label">Target Avg</span></div>
+        ${compStatHtml}
+        <div class="ki-stat"><span class="ki-stat-number" style="color:#4ade80">${tierCounts.excellent}</span><span class="ki-stat-label">Excellent</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:#facc15">${tierCounts.good}</span><span class="ki-stat-label">Good</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:#ff8c00">${tierCounts.needs_work}</span><span class="ki-stat-label">Needs Work</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:#ef4444">${tierCounts.poor}</span><span class="ki-stat-label">Poor</span></div>
+      </div>
+
+      <div style="display:flex;gap:2rem;margin:1.5rem 0;flex-wrap:wrap;">
+        <div style="flex:1;min-width:300px;">
+          <h3 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.8rem;">
+            <i class="fa-solid fa-signal" style="font-size:0.7rem;margin-right:3px;"></i> Signal Strength
+          </h3>
+          ${signalBars}
+        </div>
+      </div>
+
+      <h3 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.6rem;margin-top:1rem;">
+        <i class="fa-solid fa-list-ol" style="font-size:0.7rem;margin-right:3px;"></i> Page Scores (worst first)
+      </h3>
+      <div class="analysis-table-wrap">
+        <table class="analysis-table">
+          <thead><tr><th>Score</th><th>Page</th><th>Title</th><th>Tier</th><th>AI Intent</th><th>Weakest</th></tr></thead>
+          <tbody>${pageRows}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 // ─── Data Gathering Functions ────────────────────────────────────────────────

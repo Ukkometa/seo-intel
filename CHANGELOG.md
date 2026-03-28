@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 (2026-03-28)
+
+### AEO — AI Citability Audit (new feature)
+- **New command: `seo-intel aeo <project>`** (alias: `citability`) — score every page for how well AI assistants can cite it
+- Per-page citability score (0-100) computed from 6 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage
+- AI Query Intent classification per page: synthesis, decision support, implementation, exploration, validation
+- Tier breakdown: excellent (75+), good (55-74), needs work (35-54), poor (<35)
+- Signal strength analysis — identifies your weakest citability signals site-wide
+- Compares target vs competitor citability scores with delta
+- Low-scoring pages automatically feed into Intelligence Ledger as `citability_gap` insights
+- Dashboard: new "AI Citability Audit" card with stat bar, signal strength bars, and page score table
+- Runs on existing crawl data — zero new network calls, zero Ollama required
+- `--target-only` flag to skip competitor scoring
+- `--save` flag to export `.md` report
+
 ## 1.1.12 (2026-03-28)
 
 ### Intelligence Ledger

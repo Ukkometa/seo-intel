@@ -176,6 +176,24 @@ CREATE TABLE IF NOT EXISTS template_samples (
 CREATE INDEX IF NOT EXISTS idx_template_groups_project ON template_groups(project);
 CREATE INDEX IF NOT EXISTS idx_template_samples_group ON template_samples(group_id);
 
+-- AEO / AI Citability scores (one per page, re-scorable)
+CREATE TABLE IF NOT EXISTS citability_scores (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id           INTEGER UNIQUE NOT NULL REFERENCES pages(id),
+  score             INTEGER NOT NULL,           -- composite 0-100
+  entity_authority  INTEGER NOT NULL DEFAULT 0,
+  structured_claims INTEGER NOT NULL DEFAULT 0,
+  answer_density    INTEGER NOT NULL DEFAULT 0,
+  qa_proximity      INTEGER NOT NULL DEFAULT 0,
+  freshness         INTEGER NOT NULL DEFAULT 0,
+  schema_coverage   INTEGER NOT NULL DEFAULT 0,
+  ai_intents        TEXT,                       -- JSON array: synthesis, decision_support, etc.
+  tier              TEXT NOT NULL DEFAULT 'poor', -- excellent | good | needs_work | poor
+  scored_at         INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_citability_page ON citability_scores(page_id);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain_id);
 CREATE INDEX IF NOT EXISTS idx_keywords_page ON keywords(page_id);

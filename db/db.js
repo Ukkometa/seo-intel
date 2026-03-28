@@ -24,13 +24,188 @@ export function getDb(dbPath = './seo-intel.db') {
   try { _db.exec('ALTER TABLE pages ADD COLUMN title TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE pages ADD COLUMN meta_desc TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE pages ADD COLUMN body_text TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE analyses ADD COLUMN technical_gaps TEXT'); } catch { /* already exists */ }
 
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
 
-  // page_schemas table is created by schema.sql — no migration needed (new table)
+  // Migrate existing analyses → insights (one-time)
+  _migrateAnalysesToInsights(_db);
 
   return _db;
+}
+
+// ── Insight fingerprinting ──────────────────────────────────────────────────
+
+function _insightFingerprint(type, item) {
+  let raw;
+  switch (type) {
+    case 'keyword_gap':       raw = item.keyword || ''; break;
+    case 'long_tail':         raw = item.phrase || ''; break;
+    case 'quick_win':         raw = `${item.page || ''}::${item.issue || ''}`; break;
+    case 'new_page':          raw = item.target_keyword || item.title || ''; break;
+    case 'content_gap':       raw = item.topic || ''; break;
+    case 'technical_gap':     raw = item.gap || ''; break;
+    case 'positioning':       raw = 'positioning'; break;
+    case 'keyword_inventor':  raw = item.phrase || ''; break;
+    default:                  raw = JSON.stringify(item);
+  }
+  return raw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// ── Migrate all historical analyses into insights ───────────────────────────
+
+function _migrateAnalysesToInsights(db) {
+  const count = db.prepare('SELECT COUNT(*) as n FROM insights').get().n;
+  if (count > 0) return; // already migrated
+
+  const rows = db.prepare('SELECT * FROM analyses ORDER BY generated_at ASC').all();
+  if (!rows.length) return;
+
+  const safeJsonParse = (s) => { try { return JSON.parse(s); } catch { return null; } };
+
+  const upsertStmt = db.prepare(`
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
+    VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      data = excluded.data
+  `);
+
+  db.exec('BEGIN');
+  try {
+    for (const row of rows) {
+      const ts = row.generated_at;
+      const fields = [
+        ['keyword_gap',   safeJsonParse(row.keyword_gaps)],
+        ['long_tail',     safeJsonParse(row.long_tails)],
+        ['quick_win',     safeJsonParse(row.quick_wins)],
+        ['new_page',      safeJsonParse(row.new_pages)],
+        ['content_gap',   safeJsonParse(row.content_gaps)],
+        ['technical_gap', safeJsonParse(row.technical_gaps)],
+      ];
+      for (const [type, items] of fields) {
+        if (!Array.isArray(items)) continue;
+        for (const item of items) {
+          const fp = _insightFingerprint(type, item);
+          if (!fp) continue;
+          upsertStmt.run(row.project, type, fp, ts, ts, row.id, JSON.stringify(item));
+        }
+      }
+      // positioning is a singleton object, not an array
+      const pos = safeJsonParse(row.positioning);
+      if (pos && typeof pos === 'object' && Object.keys(pos).length) {
+        const fp = _insightFingerprint('positioning', pos);
+        upsertStmt.run(row.project, 'positioning', fp, ts, ts, row.id, JSON.stringify(pos));
+      }
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    console.error('[db] insights migration failed:', e.message);
+  }
+}
+
+// ── Insight upsert (called after each analyze/keywords run) ─────────────────
+
+export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, timestamp) {
+  const upsertStmt = db.prepare(`
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
+    VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      data = excluded.data
+  `);
+
+  const ts = timestamp || Date.now();
+  db.exec('BEGIN');
+  try {
+    const fields = [
+      ['keyword_gap',   analysis.keyword_gaps],
+      ['long_tail',     analysis.long_tails],
+      ['quick_win',     analysis.quick_wins],
+      ['new_page',      analysis.new_pages],
+      ['content_gap',   analysis.content_gaps],
+      ['technical_gap', analysis.technical_gaps],
+    ];
+    for (const [type, items] of fields) {
+      if (!Array.isArray(items)) continue;
+      for (const item of items) {
+        const fp = _insightFingerprint(type, item);
+        if (!fp) continue;
+        upsertStmt.run(project, type, fp, ts, ts, analysisId, JSON.stringify(item));
+      }
+    }
+    if (analysis.positioning && typeof analysis.positioning === 'object') {
+      const fp = _insightFingerprint('positioning', analysis.positioning);
+      upsertStmt.run(project, 'positioning', fp, ts, ts, analysisId, JSON.stringify(analysis.positioning));
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    console.error('[db] insight upsert failed:', e.message);
+  }
+}
+
+export function upsertInsightsFromKeywords(db, project, keywordsReport) {
+  const upsertStmt = db.prepare(`
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
+    VALUES (?, 'keyword_inventor', 'active', ?, ?, ?, NULL, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      data = excluded.data
+  `);
+
+  const ts = Date.now();
+  const allClusters = keywordsReport.keyword_clusters || [];
+  const allKws = allClusters.flatMap(c => (c.keywords || []).map(k => ({ ...k, cluster: c.topic })));
+
+  db.exec('BEGIN');
+  try {
+    for (const kw of allKws) {
+      const fp = _insightFingerprint('keyword_inventor', kw);
+      if (!fp) continue;
+      upsertStmt.run(project, fp, ts, ts, JSON.stringify(kw));
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    console.error('[db] keyword insight upsert failed:', e.message);
+  }
+}
+
+// ── Read active insights (accumulated across all runs) ──────────────────────
+
+export function getActiveInsights(db, project) {
+  const rows = db.prepare(
+    `SELECT * FROM insights WHERE project = ? AND status = 'active' ORDER BY type, last_seen DESC`
+  ).all(project);
+
+  const grouped = {};
+  for (const row of rows) {
+    if (!grouped[row.type]) grouped[row.type] = [];
+    const parsed = JSON.parse(row.data);
+    parsed._insight_id = row.id;
+    parsed._first_seen = row.first_seen;
+    parsed._last_seen = row.last_seen;
+    grouped[row.type].push(parsed);
+  }
+
+  return {
+    keyword_gaps: grouped.keyword_gap || [],
+    long_tails: grouped.long_tail || [],
+    quick_wins: grouped.quick_win || [],
+    new_pages: grouped.new_page || [],
+    content_gaps: grouped.content_gap || [],
+    technical_gaps: grouped.technical_gap || [],
+    positioning: grouped.positioning?.[0] || null,
+    keyword_inventor: grouped.keyword_inventor || [],
+    generated_at: rows.length ? Math.max(...rows.map(r => r.last_seen)) : null,
+  };
+}
+
+export function updateInsightStatus(db, id, status) {
+  db.prepare('UPDATE insights SET status = ? WHERE id = ?').run(status, id);
 }
 
 export function upsertDomain(db, { domain, project, role }) {

@@ -18,6 +18,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { loadGscData } from './gsc-loader.js';
 import { isPro } from '../lib/license.js';
+import { getActiveInsights } from '../db/db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -69,7 +70,7 @@ function gatherProjectData(db, project, config) {
   const domains = getDomainStats(db, project, config);
   const keywords = getTopKeywords(db, project);
   const keywordGaps = getKeywordGaps(db, project);
-  const latestAnalysis = getLatestAnalysis(db, project);
+  const latestAnalysis = getActiveInsights(db, project);
   const keywordHeatmap = getKeywordHeatmapData(db, project, allDomains, latestAnalysis);
   const technicalScores = getTechnicalScores(db, project, config);
   const internalLinks = getInternalLinkStats(db, project);
@@ -621,6 +622,21 @@ function buildHtmlTemplate(data, opts = {}) {
     .badge-low { background: rgba(142,203,168,0.12); color: var(--color-success); }
     .badge-target { background: rgba(232,213,163,0.15); color: var(--accent-gold); }
     .badge-competitor { background: rgba(124,109,235,0.15); color: var(--accent-purple); }
+
+    /* ─── Insight Actions (Intelligence Ledger) ──────────────────────────── */
+    .insight-action { display: flex; gap: 4px; }
+    .insight-btn {
+      width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border-card);
+      background: transparent; color: var(--text-muted); cursor: pointer;
+      display: flex; align-items: center; justify-content: center; font-size: 0.6rem;
+      transition: all 0.2s ease; padding: 0;
+    }
+    .insight-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+    .insight-btn.btn-done:hover { border-color: var(--color-success); color: var(--color-success); }
+    .insight-btn.btn-dismiss:hover { border-color: var(--color-danger); color: var(--color-danger); }
+    tr.insight-done { opacity: 0.3; text-decoration: line-through; }
+    .new-page-card.insight-done, .positioning-card.insight-done { opacity: 0.3; }
+    .insight-age { font-size: 0.65rem; color: var(--text-muted); white-space: nowrap; }
 
     /* ─── Heatmap Dots ───────────────────────────────────────────────────── */
     .dot {
@@ -2722,13 +2738,14 @@ function buildHtmlTemplate(data, opts = {}) {
       <h2><span class="icon"><i class="fa-solid fa-wrench"></i></span> Technical SEO Gaps</h2>
       <div class="analysis-table-wrap">
         <table class="analysis-table">
-          <thead><tr><th>Gap</th><th>Competitors with it</th><th>Fix</th></tr></thead>
+          <thead><tr><th>Gap</th><th>Competitors with it</th><th>Fix</th><th></th></tr></thead>
           <tbody>
             ${(latestAnalysis.technical_gaps).map(tg => `
-            <tr>
+            <tr data-insight-id="${tg._insight_id || ''}">
               <td><strong>${escapeHtml(tg.gap || '—')}</strong></td>
               <td>${(tg.competitors_with_it || []).map(d => `<span class="comp-tag">${escapeHtml(d)}</span>`).join(' ') || '—'}</td>
               <td>${escapeHtml(tg.fix || '—')}</td>
+              <td class="insight-action">${tg._insight_id ? `<button class="insight-btn btn-done" onclick="insightAction(this,'done')" title="Mark done"><i class="fa-solid fa-check"></i></button><button class="insight-btn btn-dismiss" onclick="insightAction(this,'dismissed')" title="Dismiss"><i class="fa-solid fa-xmark"></i></button>` : ''}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -2749,14 +2766,15 @@ function buildHtmlTemplate(data, opts = {}) {
       <h2><span class="icon"><i class="fa-solid fa-bolt"></i></span> Quick Wins</h2>
       <div class="analysis-table-wrap">
         <table class="analysis-table">
-          <thead><tr><th>Page</th><th>Issue</th><th>Fix</th><th>Impact</th></tr></thead>
+          <thead><tr><th>Page</th><th>Issue</th><th>Fix</th><th>Impact</th><th></th></tr></thead>
           <tbody>
             ${(latestAnalysis.quick_wins).map(w => `
-            <tr>
+            <tr data-insight-id="${w._insight_id || ''}">
               <td class="mono">${escapeHtml(w.page || '—')}</td>
               <td>${escapeHtml(w.issue || '—')}</td>
               <td>${escapeHtml(w.fix || '—')}</td>
               <td><span class="badge badge-${w.impact || 'medium'}">${w.impact || '—'}</span></td>
+              <td class="insight-action">${w._insight_id ? `<button class="insight-btn btn-done" onclick="insightAction(this,'done')" title="Mark done"><i class="fa-solid fa-check"></i></button><button class="insight-btn btn-dismiss" onclick="insightAction(this,'dismissed')" title="Dismiss"><i class="fa-solid fa-xmark"></i></button>` : ''}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -2770,10 +2788,11 @@ function buildHtmlTemplate(data, opts = {}) {
       <h2><span class="icon"><i class="fa-solid fa-file-circle-plus"></i></span> New Pages to Create</h2>
       <div class="new-pages-grid" style="grid-template-columns: 1fr;">
         ${(latestAnalysis.new_pages).map(np => `
-        <div class="new-page-card priority-${np.priority || 'medium'}">
+        <div class="new-page-card priority-${np.priority || 'medium'}" data-insight-id="${np._insight_id || ''}">
           <div class="new-page-header">
             <span class="new-page-title">${escapeHtml(np.title || np.slug || 'Untitled')}</span>
             <span class="badge badge-${np.priority || 'medium'}">${np.priority || '—'}</span>
+            ${np._insight_id ? `<span class="insight-action" style="margin-left:auto;"><button class="insight-btn btn-done" onclick="insightAction(this,'done')" title="Mark done"><i class="fa-solid fa-check"></i></button><button class="insight-btn btn-dismiss" onclick="insightAction(this,'dismissed')" title="Dismiss"><i class="fa-solid fa-xmark"></i></button></span>` : ''}
           </div>
           <div class="new-page-keyword"><i class="fa-solid fa-key" style="font-size:0.7rem;opacity:0.5;margin-right:4px;"></i>${escapeHtml(np.target_keyword || '—')}</div>
           <div class="new-page-angle">${escapeHtml(np.content_angle || np.why || '—')}</div>
@@ -2821,11 +2840,12 @@ function buildHtmlTemplate(data, opts = {}) {
       <h2><span class="icon"><i class="fa-solid fa-magnifying-glass-minus"></i></span> Content Gaps</h2>
       <div class="insights-grid">
         ${(latestAnalysis.content_gaps).map(gap => `
-        <div class="insight-card medium">
+        <div class="insight-card medium" data-insight-id="${gap._insight_id || ''}">
           <div class="insight-header">
             <span class="insight-icon"><i class="fa-solid fa-clipboard" style="font-size:0.8rem;"></i></span>
             <span class="insight-title">${escapeHtml(gap.topic || gap.suggested_title || 'Gap')}</span>
             <span class="badge badge-medium">${gap.format || 'content'}</span>
+            ${gap._insight_id ? `<span class="insight-action" style="margin-left:auto;"><button class="insight-btn btn-done" onclick="insightAction(this,'done')" title="Done"><i class="fa-solid fa-check"></i></button><button class="insight-btn btn-dismiss" onclick="insightAction(this,'dismissed')" title="Dismiss"><i class="fa-solid fa-xmark"></i></button></span>` : ''}
           </div>
           <div class="insight-desc">${escapeHtml(gap.why_it_matters || '')}</div>
           ${gap.covered_by?.length ? `<div class="covered-by">Covered by: ${gap.covered_by.map(d => `<span class="comp-tag">${escapeHtml(d)}</span>`).join(' ')}</div>` : ''}
@@ -2857,33 +2877,6 @@ function buildHtmlTemplate(data, opts = {}) {
                 <td class="mono" style="font-size:0.78rem;">${topComp ? escapeHtml(topComp[0]) + ' (' + topComp[1] + ')' : '—'}</td>
                 <td>${c.avg_word_count || '—'}</td>
               </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    ` : ''}
-
-    <!-- ═══ LONG-TAIL OPPORTUNITIES ═══ -->
-    ${pro && latestAnalysis?.long_tails?.length ? `
-    <div class="card full-width" id="long-tails">
-      <h2><span class="icon"><i class="fa-solid fa-binoculars"></i></span> Long-tail Opportunities</h2>
-      <div class="analysis-table-wrap">
-        <table class="analysis-table">
-          <thead><tr><th>Phrase</th><th>Intent</th><th>Type</th><th>Best Placement</th><th>2nd</th><th>Priority</th></tr></thead>
-          <tbody>
-            ${(latestAnalysis.long_tails).map(lt => {
-              const p1 = lt.placement?.[0];
-              const p2 = lt.placement?.[1];
-              return `
-            <tr>
-              <td class="phrase-cell">"${escapeHtml(lt.phrase || '—')}"</td>
-              <td>${escapeHtml(lt.intent || '—')}</td>
-              <td><span class="type-tag">${escapeHtml(lt.page_type || '—')}</span></td>
-              <td class="placement-cell">${p1 ? `<span class="prop-tag prop-${p1.property}">${escapeHtml(p1.property)}</span> <span class="placement-url">${escapeHtml(p1.url || '')}</span>` : '—'}</td>
-              <td class="placement-cell">${p2 ? `<span class="prop-tag prop-${p2.property}">${escapeHtml(p2.property)}</span>` : '—'}</td>
-              <td><span class="badge badge-${lt.priority || 'medium'}">${lt.priority || '—'}</span></td>
-            </tr>`;
             }).join('')}
           </tbody>
         </table>
@@ -3150,6 +3143,34 @@ function buildHtmlTemplate(data, opts = {}) {
       <div class="section-divider-line"></div>
     </div>` : ''}
 
+    <!-- ═══ LONG-TAIL OPPORTUNITIES ═══ -->
+    ${pro && latestAnalysis?.long_tails?.length ? `
+    <div class="card full-width" id="long-tails">
+      <h2><span class="icon"><i class="fa-solid fa-binoculars"></i></span> Long-tail Opportunities</h2>
+      <div class="analysis-table-wrap">
+        <table class="analysis-table">
+          <thead><tr><th>Phrase</th><th>Intent</th><th>Type</th><th>Best Placement</th><th>2nd</th><th>Priority</th><th></th></tr></thead>
+          <tbody>
+            ${(latestAnalysis.long_tails).map(lt => {
+              const p1 = lt.placement?.[0];
+              const p2 = lt.placement?.[1];
+              return `
+            <tr data-insight-id="${lt._insight_id || ''}">
+              <td class="phrase-cell">"${escapeHtml(lt.phrase || '—')}"</td>
+              <td>${escapeHtml(lt.intent || '—')}</td>
+              <td><span class="type-tag">${escapeHtml(lt.page_type || '—')}</span></td>
+              <td class="placement-cell">${p1 ? `<span class="prop-tag prop-${p1.property}">${escapeHtml(p1.property)}</span> <span class="placement-url">${escapeHtml(p1.url || '')}</span>` : '—'}</td>
+              <td class="placement-cell">${p2 ? `<span class="prop-tag prop-${p2.property}">${escapeHtml(p2.property)}</span>` : '—'}</td>
+              <td><span class="badge badge-${lt.priority || 'medium'}">${lt.priority || '—'}</span></td>
+              <td class="insight-action">${lt._insight_id ? `<button class="insight-btn btn-done" onclick="insightAction(this,'done')" title="Mark done"><i class="fa-solid fa-check"></i></button><button class="insight-btn btn-dismiss" onclick="insightAction(this,'dismissed')" title="Dismiss"><i class="fa-solid fa-xmark"></i></button>` : ''}</td>
+            </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    ` : ''}
+
     <!-- ═══ KEYWORD INVENTOR ═══ -->
     ${pro && keywordsReport ? (() => {
       const allClusters = keywordsReport.keyword_clusters || [];
@@ -3243,6 +3264,24 @@ function buildHtmlTemplate(data, opts = {}) {
   </div>
 
   <div class="timestamp">Generated: ${new Date().toISOString()} | SEO Intel Dashboard v3</div>
+  <script>
+    async function insightAction(btn, status) {
+      const row = btn.closest('[data-insight-id]');
+      const id = row?.dataset?.insightId;
+      if (!id) return;
+      try {
+        const res = await fetch('/api/insights/' + id + '/status', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ status })
+        });
+        if (res.ok) {
+          row.classList.add('insight-done');
+          setTimeout(() => { row.style.display = 'none'; }, 600);
+        }
+      } catch(e) { console.warn('Insight update failed:', e); }
+    }
+  </script>
   </div><!-- /.project-panel -->`;
 
   // ── panelOnly mode: return just the project panel (for multi-project) ──

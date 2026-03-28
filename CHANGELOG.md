@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.12 (2026-03-28)
+
+### Intelligence Ledger
+- Analysis insights now **accumulate across runs** instead of showing only the latest
+- New `insights` table with fingerprint-based dedup — re-running `analyze` adds new ideas without losing old ones
+- Dashboard shows all active insights: 65 long-tails, 36 keyword gaps, 23 content gaps (vs 4 from latest-only)
+- Done/dismiss buttons on every insight card — mark fixes as done, dismiss irrelevant suggestions
+- `POST /api/insights/:id/status` endpoint for status toggling (active/done/dismissed)
+- Keywords Inventor also persists to Intelligence Ledger via `keywords --save`
+
+### Improvements
+- Prompt and raw output files now save as `.md` with YAML frontmatter (Obsidian-compatible)
+- Long-tail Opportunities moved to Research section where it belongs
+- Migrated all existing prompt `.txt` files to `.md` with frontmatter
+
+## 1.1.11 (2026-03-27)
+
+### Fixes
+- Extraction now preflights Ollama hosts at run start and only uses live hosts during crawl/extract
+- Dead fallback hosts no longer poison the run or trigger noisy repeated circuit-breaker fallback spam
+- Degraded mode messaging is clearer and only activates when no live extraction host remains
+- Extractor timeout errors now include host/model/timeout context
+
 ## 1.1.10 (2026-03-27)
 
 ### Security

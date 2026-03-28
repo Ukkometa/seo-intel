@@ -38,7 +38,8 @@ import {
   insertKeywords, insertHeadings, insertLinks, insertPageSchemas,
   upsertTechnical, pruneStaleDomains,
   getCompetitorSummary, getKeywordMatrix, getHeadingStructure,
-  getPageHash, getSchemasByProject
+  getPageHash, getSchemasByProject,
+  upsertInsightsFromAnalysis, upsertInsightsFromKeywords,
 } from './db/db.js';
 import { generateMultiDashboard } from './reports/generate-html.js';
 import { buildTechnicalActions } from './exports/technical.js';
@@ -66,42 +67,76 @@ function defaultSiteUrl(domain) {
   return `${protocol}://${host}`;
 }
 
+function resolveExtractionRuntime(config) {
+  const primaryUrl = config?.crawl?.ollamaHost || process.env.OLLAMA_URL || 'http://localhost:11434';
+  const primaryModel = config?.crawl?.extractionModel || process.env.OLLAMA_MODEL || 'qwen3:4b';
+  const fallbackUrl = process.env.OLLAMA_FALLBACK_URL || '';
+  const fallbackModel = process.env.OLLAMA_FALLBACK_MODEL || primaryModel;
+  const localhost = 'http://localhost:11434';
+
+  const candidates = [
+    { host: String(primaryUrl).trim().replace(/\/+$/, ''), model: String(primaryModel).trim() || 'qwen3:4b' },
+  ];
+
+  if (fallbackUrl) {
+    candidates.push({
+      host: String(fallbackUrl).trim().replace(/\/+$/, ''),
+      model: String(fallbackModel).trim() || String(primaryModel).trim() || 'qwen3:4b',
+    });
+  }
+
+  if (!candidates.some(candidate => candidate.host === localhost)) {
+    candidates.push({ host: localhost, model: String(primaryModel).trim() || 'qwen3:4b' });
+  }
+
+  const seen = new Set();
+  return candidates.filter(candidate => {
+    if (!candidate.host) return false;
+    const key = `${candidate.host}::${candidate.model}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function applyExtractionRuntimeConfig(config) {
+  if (!config?.crawl) return;
+  if (config.crawl.ollamaHost) process.env.OLLAMA_URL = config.crawl.ollamaHost;
+  if (config.crawl.extractionModel) process.env.OLLAMA_MODEL = config.crawl.extractionModel;
+}
+
 // ── AI AVAILABILITY PREFLIGHT ────────────────────────────────────────────
 /**
  * Check if any AI extraction backend is reachable.
  * Tries: primary Ollama → fallback Ollama → returns false.
  * Fast: 2s timeout per host, runs sequentially.
  */
-async function checkOllamaAvailability() {
-  // Build host chain: primary → fallback → always try localhost as last resort
-  const configured = [
-    process.env.OLLAMA_URL,
-    process.env.OLLAMA_FALLBACK_URL,
-  ].filter(Boolean);
-  const localhost = 'http://localhost:11434';
-  const hosts = [...new Set([...configured, localhost])];
+async function checkOllamaAvailability(config) {
+  const candidates = resolveExtractionRuntime(config);
+  let sawReachableHost = false;
 
-  for (const host of hosts) {
+  for (const candidate of candidates) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${host}/api/tags`, { signal: controller.signal });
+      const res = await fetch(`${candidate.host}/api/tags`, { signal: controller.signal });
       clearTimeout(timeout);
       if (res.ok) {
         const data = await res.json();
         const models = (data.models || []).map(m => m.name);
-        const targetModel = process.env.OLLAMA_MODEL || 'qwen3:4b';
-        const hasModel = models.some(m => m.startsWith(targetModel.split(':')[0]));
+        sawReachableHost = true;
+        const hasModel = models.some(m => m && m.split(':')[0] === candidate.model.split(':')[0]);
         if (hasModel) {
           return true; // Ollama reachable + model available
         }
-        // Ollama reachable but model missing — warn but allow degraded extraction
-        console.log(chalk.yellow(`  ⚠️  Ollama at ${host} is reachable but model "${targetModel}" not found`));
-        console.log(chalk.dim(`  Available models: ${models.join(', ') || 'none'}`));
-        console.log(chalk.dim(`  Run: ollama pull ${targetModel}`));
-        return false;
       }
     } catch { /* host unreachable, try next */ }
+  }
+
+  if (sawReachableHost) {
+    const primary = candidates[0];
+    console.log(chalk.yellow(`  ⚠️  Ollama is reachable but model "${primary?.model || 'qwen3:4b'}" was not found on any live host`));
+    console.log(chalk.dim(`  Run: ollama pull ${primary?.model || 'qwen3:4b'}`));
   }
 
   return false;
@@ -362,6 +397,7 @@ program
   .action(async (project, opts) => {
     const config = loadConfig(project);
     const db = getDb();
+    applyExtractionRuntimeConfig(config);
 
     // ── Auto-discover subdomains for target domain ──────────────────────
     if (opts.discover !== false && config.target?.domain) {
@@ -435,7 +471,7 @@ program
 
     // ── BUG-003/009: AI preflight — check Ollama availability before crawl ──
     if (opts.extract !== false) {
-      const ollamaAvailable = await checkOllamaAvailability();
+      const ollamaAvailable = await checkOllamaAvailability(config);
       if (!ollamaAvailable) {
         console.log(chalk.yellow('\n  ⚠️  No AI extraction available (Ollama unreachable, no API keys configured)'));
         console.log(chalk.white('  → Switching to ') + chalk.bold.green('crawl-only mode') + chalk.white(' — raw data will be collected without AI extraction'));
@@ -687,9 +723,11 @@ program
     console.log(chalk.yellow(`Prompt length: ~${Math.round(prompt.length / 4)} tokens`));
     console.log(chalk.yellow('Sending to Gemini...\n'));
 
-    // Save prompt for debugging
-    const promptPath = join(__dirname, `reports/${project}-prompt-${Date.now()}.txt`);
-    writeFileSync(promptPath, prompt, 'utf8');
+    // Save prompt for debugging (markdown for Obsidian/agent compatibility)
+    const promptTs = Date.now();
+    const promptPath = join(__dirname, `reports/${project}-prompt-${promptTs}.md`);
+    const promptFrontmatter = `---\nproject: ${project}\ngenerated: ${new Date(promptTs).toISOString()}\ntype: analysis-prompt\nmodel: gemini\n---\n\n`;
+    writeFileSync(promptPath, promptFrontmatter + prompt, 'utf8');
     console.log(chalk.gray(`Prompt saved: ${promptPath}`));
 
     // Call Gemini via gemini CLI (reuse existing auth)
@@ -708,7 +746,7 @@ program
       analysis = JSON.parse(jsonMatch[0]);
     } catch {
       console.error(chalk.red('Could not parse JSON from response. Saving raw output.'));
-      const rawPath = join(__dirname, `reports/${project}-raw-${Date.now()}.txt`);
+      const rawPath = join(__dirname, `reports/${project}-raw-${Date.now()}.md`);
       writeFileSync(rawPath, result, 'utf8');
       process.exit(1);
     }
@@ -718,11 +756,12 @@ program
     writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
 
     // Save to DB (so HTML dashboard picks it up)
+    const analysisTs = Date.now();
     db.prepare(`
       INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      project, Date.now(), 'gemini',
+      project, analysisTs, 'gemini',
       JSON.stringify(analysis.keyword_gaps || []),
       JSON.stringify(analysis.long_tails || []),
       JSON.stringify(analysis.quick_wins || []),
@@ -732,6 +771,10 @@ program
       JSON.stringify(analysis.technical_gaps || []),
       result,
     );
+
+    // Upsert individual insights (Intelligence Ledger — accumulates across runs)
+    const analysisRowId = db.prepare('SELECT last_insert_rowid() as id').get().id;
+    upsertInsightsFromAnalysis(db, project, analysisRowId, analysis, analysisTs);
 
     // Print summary
     printAnalysisSummary(analysis, project);
@@ -869,7 +912,7 @@ Respond ONLY with a single valid JSON object matching this exact schema. No expl
       data = JSON.parse(jsonMatch[0]);
     } catch {
       console.error(chalk.red('Could not parse JSON from Gemini response.'));
-      const rawPath = join(__dirname, `reports/${project}-keywords-raw-${Date.now()}.txt`);
+      const rawPath = join(__dirname, `reports/${project}-keywords-raw-${Date.now()}.md`);
       writeFileSync(rawPath, result, 'utf8');
       console.error(chalk.gray(`Raw output saved: ${rawPath}`));
       process.exit(1);
@@ -933,6 +976,10 @@ Respond ONLY with a single valid JSON object matching this exact schema. No expl
       const outPath = join(__dirname, `reports/${project}-keywords-${Date.now()}.json`);
       writeFileSync(outPath, JSON.stringify(data, null, 2), 'utf8');
       console.log(chalk.bold.green(`✅ Report saved: ${outPath}\n`));
+
+      // Persist keyword inventor insights to Intelligence Ledger
+      const db = getDb();
+      upsertInsightsFromKeywords(db, project, data);
     }
   });
 
@@ -1183,6 +1230,7 @@ program
     }
 
     console.log(chalk.bold.cyan(`\n🔍 Cron run: crawling ${next.domain} [${next.role}] (project: ${next.project})\n`));
+    applyExtractionRuntimeConfig(loadConfig(next.project));
 
     const runStart = Date.now();
 
@@ -1683,7 +1731,9 @@ async function runAnalysis(project, db) {
     headingStructure: headings, context: config.context,
   });
 
-  writeFileSync(join(__dirname, `reports/${project}-prompt-${Date.now()}.txt`), prompt, 'utf8');
+  const promptTs2 = Date.now();
+  const promptFm2 = `---\nproject: ${project}\ngenerated: ${new Date(promptTs2).toISOString()}\ntype: analysis-prompt\nmodel: gemini\n---\n\n`;
+  writeFileSync(join(__dirname, `reports/${project}-prompt-${promptTs2}.md`), promptFm2 + prompt, 'utf8');
 
   const result = await callGemini(prompt);
   if (!result) { console.error(chalk.red('Gemini returned no response.')); process.exit(1); }
@@ -1695,11 +1745,12 @@ async function runAnalysis(project, db) {
     writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
 
     // Save to DB
+    const analysisTs2 = Date.now();
     db.prepare(`
       INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      project, Date.now(), 'gemini',
+      project, analysisTs2, 'gemini',
       JSON.stringify(analysis.keyword_gaps || []),
       JSON.stringify(analysis.long_tails || []),
       JSON.stringify(analysis.quick_wins || []),
@@ -1709,6 +1760,10 @@ async function runAnalysis(project, db) {
       JSON.stringify(analysis.technical_gaps || []),
       result,
     );
+
+    // Upsert individual insights (Intelligence Ledger)
+    const analysisRowId2 = db.prepare('SELECT last_insert_rowid() as id').get().id;
+    upsertInsightsFromAnalysis(db, project, analysisRowId2, analysis, analysisTs2);
 
     printAnalysisSummary(analysis, project);
     console.log(chalk.green(`\n✅ Analysis saved: ${outPath}`));
@@ -1724,6 +1779,7 @@ program
   .description('Run AI extraction on all crawled-but-not-yet-extracted pages (requires Solo/Agency)')
   .action(async (project) => {
     if (!requirePro('extract')) return;
+    applyExtractionRuntimeConfig(loadConfig(project));
     const db = getDb();
 
     // Query pages that have body_text stored (from crawl) but no extraction yet

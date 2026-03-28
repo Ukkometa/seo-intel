@@ -530,6 +530,27 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ─── API: Update insight status (Intelligence Ledger) ───
+  const insightMatch = path.match(/^\/api\/insights\/(\d+)\/status$/);
+  if (req.method === 'POST' && insightMatch) {
+    try {
+      const id = parseInt(insightMatch[1]);
+      const body = await readBody(req);
+      const status = body.status;
+      if (!['active', 'done', 'dismissed'].includes(status)) {
+        json(res, 400, { error: 'Invalid status. Use: active, done, dismissed' });
+        return;
+      }
+      const { getDb, updateInsightStatus } = await import('./db/db.js');
+      const db = getDb();
+      updateInsightStatus(db, id, status);
+      json(res, 200, { success: true, id, status });
+    } catch (e) {
+      json(res, 500, { error: e.message });
+    }
+    return;
+  }
+
   // ─── API: Analyze (spawn background) ───
   if (req.method === 'POST' && path === '/api/analyze') {
     try {

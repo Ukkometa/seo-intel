@@ -82,18 +82,36 @@ CREATE TABLE IF NOT EXISTS technical (
 );
 
 CREATE TABLE IF NOT EXISTS analyses (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  project       TEXT NOT NULL,
-  generated_at  INTEGER NOT NULL,
-  model         TEXT NOT NULL,
-  keyword_gaps  TEXT,  -- JSON array
-  long_tails    TEXT,  -- JSON array
-  quick_wins    TEXT,  -- JSON array
-  new_pages     TEXT,  -- JSON array
-  content_gaps  TEXT,  -- JSON array
-  positioning   TEXT,
-  raw           TEXT   -- full model response
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  project         TEXT NOT NULL,
+  generated_at    INTEGER NOT NULL,
+  model           TEXT NOT NULL,
+  keyword_gaps    TEXT,  -- JSON array
+  long_tails      TEXT,  -- JSON array
+  quick_wins      TEXT,  -- JSON array
+  new_pages       TEXT,  -- JSON array
+  content_gaps    TEXT,  -- JSON array
+  positioning     TEXT,
+  technical_gaps  TEXT,  -- JSON array
+  raw             TEXT   -- full model response
 );
+
+-- Intelligence Ledger: individual insights accumulated across analysis runs
+CREATE TABLE IF NOT EXISTS insights (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  project             TEXT NOT NULL,
+  type                TEXT NOT NULL,   -- keyword_gap | long_tail | quick_win | new_page | content_gap | technical_gap | positioning | keyword_inventor
+  status              TEXT NOT NULL DEFAULT 'active',  -- active | done | dismissed
+  fingerprint         TEXT NOT NULL,   -- normalised dedup key
+  first_seen          INTEGER NOT NULL, -- epoch ms
+  last_seen           INTEGER NOT NULL, -- epoch ms
+  source_analysis_id  INTEGER,         -- FK to analyses.id (NULL for keyword_inventor)
+  data                TEXT NOT NULL,   -- JSON blob for the individual item
+  UNIQUE(project, type, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_project_status ON insights(project, status);
+CREATE INDEX IF NOT EXISTS idx_insights_project_type ON insights(project, type);
 
 CREATE TABLE IF NOT EXISTS page_schemas (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

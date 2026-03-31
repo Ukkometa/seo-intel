@@ -372,7 +372,7 @@ jobs:
         continue-on-error: true
 
       # ═══════════════════════════════════════════════════════════════════
-      # BRANDING — no froggo.pro leaks
+      # BRANDING — verify no old froggo.pro URLs remain in shipped files
       # ═══════════════════════════════════════════════════════════════════
       - name: Verify no froggo.pro leaks in shipped files
         if: "!matrix.expect-version-guard"

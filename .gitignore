@@ -57,9 +57,7 @@ SECURITY*.md
 SECURITY-*.md
 PRODUCT_STATUS.md
 agent-task*.md
-FROGGO_PACKAGE_SPEC.md
 COMMANDS.md
-froggo-package/
 seo-intel-promo/
 scripts/*
 !scripts/

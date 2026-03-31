@@ -595,7 +595,8 @@ async function handleRequest(req, res) {
     // Whitelist allowed commands
     const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
       'suggest-usecases', 'html', 'status', 'brief', 'keywords', 'report', 'guide',
-      'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export', 'templates'];
+      'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export', 'templates',
+      'aeo', 'blog-draft'];
 
     if (!command || !ALLOWED.includes(command)) {
       json(res, 400, { error: `Invalid command. Allowed: ${ALLOWED.join(', ')}` });
@@ -608,6 +609,10 @@ async function handleRequest(req, res) {
     if (params.get('stealth') === 'true') args.push('--stealth');
     if (params.get('scope')) args.push('--scope', params.get('scope'));
     if (params.get('format')) args.push('--format', params.get('format'));
+    if (params.get('topic')) args.push('--topic', params.get('topic'));
+    if (params.get('lang')) args.push('--lang', params.get('lang'));
+    if (params.get('model')) args.push('--model', params.get('model'));
+    if (params.has('save')) args.push('--save');
 
     // SSE headers
     res.writeHead(200, {

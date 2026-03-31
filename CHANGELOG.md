@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.0 (2026-04-01)
+
+### New Feature: AEO Blog Draft Generator
+- `seo-intel blog-draft <project>` — generate AEO-optimised blog post drafts from Intelligence Ledger data
+- Gathers keyword gaps, long-tails, citability insights, entities, and top citable pages
+- Builds structured prompt with 10 AEO signal rules for maximum AI citability
+- Pre-scores generated draft against AEO signals before publishing
+- Options: `--topic`, `--lang en|fi`, `--model gemini|claude|gpt|deepseek`, `--save`
+- Pro feature gated via Lemon Squeezy license
+
+### Dashboard
+- New "Create" section in export sidebar with interactive draft generator
+- "Create a Draft" dropdown: select type (Blog Post / Documentation), topic, language, then generate
+- "AI Citability Audit" button added to export sidebar — run AEO from dashboard
+- Both `aeo` and `blog-draft` commands now available via dashboard terminal
+
+### Server
+- Added `aeo` and `blog-draft` to terminal command whitelist
+- Forward `--topic`, `--lang`, `--model`, `--save` params from dashboard to CLI
+
 ## 1.2.6 (2026-03-31)
 
 ### Critical Fix

@@ -4002,6 +4002,130 @@ program
     }
   });
 
+// ── AEO BLOG DRAFT GENERATOR ─────────────────────────────────────────────
+
+let _blogDraftModule;
+async function getBlogDraftModule() {
+  if (!_blogDraftModule) _blogDraftModule = await import('./analyses/blog-draft/index.js');
+  return _blogDraftModule;
+}
+let _prescorerModule;
+async function getPrescorerModule() {
+  if (!_prescorerModule) _prescorerModule = await import('./analyses/blog-draft/prescorer.js');
+  return _prescorerModule;
+}
+
+program
+  .command('blog-draft <project>')
+  .description('Generate an AEO-optimised blog post draft from Intelligence Ledger data')
+  .option('--topic <keyword>', 'Focus the post on a specific topic')
+  .option('--lang <code>', 'Language: en or fi', 'en')
+  .option('--model <name>', 'Model to use for generation (gemini, claude, gpt, deepseek)', 'gemini')
+  .option('--save', 'Save the generated draft to reports/')
+  .action(async (project, opts) => {
+    if (!requirePro('blog-draft')) return;
+    const db = getDb();
+    const config = loadConfig(project);
+
+    printAttackHeader('✍️  AEO Blog Draft Generator', project);
+
+    const { gatherBlogDraftContext, buildBlogDraftPrompt } = await getBlogDraftModule();
+    const { prescore } = await getPrescorerModule();
+
+    // ── Gather intelligence ──
+    console.log(chalk.gray('  Gathering intelligence from Ledger...'));
+    const context = gatherBlogDraftContext(db, project, opts.topic || null);
+
+    const stats = {
+      keywordGaps: context.keywordGaps.length,
+      longTails: context.longTails.length,
+      citabilityGaps: context.citabilityGaps.length,
+      kwInventor: context.kwInventor.length,
+      contentGaps: context.contentGaps.length,
+      entities: context.entityRows.length,
+      topCitable: context.topCitablePages.length,
+    };
+
+    console.log(chalk.gray(`    Keyword gaps: ${stats.keywordGaps}  Long-tails: ${stats.longTails}  Citability gaps: ${stats.citabilityGaps}`));
+    console.log(chalk.gray(`    Keyword inventor: ${stats.kwInventor}  Content gaps: ${stats.contentGaps}  Entities: ${stats.entities}`));
+
+    if (stats.keywordGaps + stats.longTails + stats.kwInventor === 0) {
+      console.log(chalk.yellow('\n  ⚠️  No intelligence data found in the Ledger.'));
+      console.log(chalk.gray('   Run: seo-intel analyze ' + project + '  and  seo-intel keywords ' + project + '\n'));
+      return;
+    }
+
+    // ── Build prompt ──
+    console.log(chalk.gray('\n  Building AEO-optimised prompt...'));
+    const prompt = buildBlogDraftPrompt(context, {
+      config,
+      lang: opts.lang,
+      topic: opts.topic || null,
+    });
+    console.log(chalk.gray(`    Prompt size: ${(prompt.length / 1024).toFixed(1)}KB`));
+
+    // ── Generate ──
+    console.log(chalk.cyan(`\n  🚀 Generating draft via ${opts.model}...\n`));
+    const draft = await callAnalysisModel(prompt, opts.model);
+
+    if (!draft) {
+      console.log(chalk.red('\n  ✗ Generation failed — no output from model.\n'));
+      return;
+    }
+
+    // ── Pre-score ──
+    console.log(chalk.gray('  Pre-scoring draft against AEO signals...'));
+    const scoreResult = prescore(draft);
+    const adjustedScore = Math.min(100, scoreResult.score + 10); // +10 for freshness on publish
+
+    const scoreFmt = (s) => {
+      if (s >= 75) return chalk.bold.green(s + '/100');
+      if (s >= 55) return chalk.bold.yellow(s + '/100');
+      if (s >= 35) return chalk.hex('#ff8c00')(s + '/100');
+      return chalk.bold.red(s + '/100');
+    };
+
+    console.log('');
+    console.log(chalk.bold('  📊 Pre-Score Results'));
+    console.log('');
+    console.log(`    AEO Score (raw):       ${scoreFmt(scoreResult.score)}`);
+    console.log(`    AEO Score (published):  ${scoreFmt(adjustedScore)}  ${chalk.gray('(+10 freshness on publish)')}`);
+    console.log(`    Word count:            ${scoreResult.wordCount}`);
+    console.log(`    Headings:              ${scoreResult.headingCount}`);
+    console.log(`    Tier:                  ${scoreResult.tier}`);
+    console.log('');
+
+    if (scoreResult.breakdown) {
+      console.log(chalk.bold('  🔍 Signal Breakdown'));
+      console.log('');
+      for (const [signal, value] of Object.entries(scoreResult.breakdown)) {
+        const bar = '█'.repeat(Math.round(value / 5)) + chalk.gray('░'.repeat(20 - Math.round(value / 5)));
+        console.log(`    ${signal.replace(/_/g, ' ').padEnd(22)} ${bar} ${value}/100`);
+      }
+      console.log('');
+    }
+
+    // ── Output ──
+    if (opts.save) {
+      const slug = opts.topic
+        ? opts.topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50)
+        : 'auto';
+      const filename = `${project}-blog-draft-${slug}-${Date.now()}.md`;
+      const outPath = join(__dirname, 'reports', filename);
+      writeFileSync(outPath, draft, 'utf8');
+      console.log(chalk.bold.green(`  ✅ Draft saved: ${outPath}`));
+      console.log('');
+    } else {
+      console.log(chalk.bold('  📝 Generated Draft'));
+      console.log(chalk.dim('─'.repeat(62)));
+      console.log(draft);
+      console.log(chalk.dim('─'.repeat(62)));
+      console.log('');
+      console.log(chalk.gray('  Tip: add --save to write the draft to reports/'));
+      console.log('');
+    }
+  });
+
 // ── GUIDE (Coach-style chapter map) ──────────────────────────────────────
 program
   .command('guide')

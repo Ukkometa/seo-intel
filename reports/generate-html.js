@@ -1488,6 +1488,71 @@ function buildHtmlTemplate(data, opts = {}) {
     .export-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
     .export-btn i { margin-right: 5px; font-size: 0.6rem; }
     .export-btn.active { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(232,213,163,0.06); }
+    .draft-dropdown { position: relative; }
+    .draft-trigger { display: flex; align-items: center; width: 100%; }
+    .draft-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0; right: 0;
+      background: #1a1a1a;
+      border: 1px solid var(--accent-gold);
+      border-radius: var(--radius);
+      padding: 10px;
+      z-index: 50;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .draft-menu.open { display: block; }
+    .draft-menu-section {
+      font-size: 0.58rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 5px;
+      font-family: var(--font-body);
+    }
+    .draft-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      font-size: 0.65rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-radius: 4px;
+      font-family: var(--font-body);
+    }
+    .draft-option:hover { background: rgba(232,213,163,0.06); color: var(--text-primary); }
+    .draft-option input[type="radio"] { accent-color: var(--accent-gold); width: 12px; height: 12px; }
+    .draft-option i { font-size: 0.6rem; width: 14px; text-align: center; }
+    .draft-topic-input {
+      width: 100%;
+      background: #111;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 6px 8px;
+      color: var(--text-primary);
+      font-size: 0.65rem;
+      font-family: 'SF Mono', monospace;
+      outline: none;
+      box-sizing: border-box;
+    }
+    .draft-topic-input:focus { border-color: var(--accent-gold); }
+    .draft-generate-btn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px;
+      background: var(--accent-gold);
+      color: var(--text-dark);
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.68rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font-body);
+      transition: opacity 0.15s;
+    }
+    .draft-generate-btn:hover { opacity: 0.9; }
     .export-viewer {
       flex: 1;
       padding: 12px;
@@ -2024,6 +2089,28 @@ function buildHtmlTemplate(data, opts = {}) {
         <button class="export-btn" data-export-cmd="export-actions" data-export-project="${project}" data-export-scope="competitive"><i class="fa-solid fa-users"></i> Competitive Gaps</button>
         <button class="export-btn" data-export-cmd="suggest-usecases" data-export-project="${project}"><i class="fa-solid fa-lightbulb"></i> Suggest What to Build</button>
       </div>
+      <div class="export-sidebar-header" style="margin-top:12px;">
+        <i class="fa-solid fa-pen-fancy"></i> Create
+      </div>
+      <div class="export-sidebar-btns">
+        <div class="draft-dropdown" id="draftDropdown${suffix}">
+          <button class="export-btn draft-trigger" id="draftTrigger${suffix}"><i class="fa-solid fa-file-pen"></i> Create a Draft <i class="fa-solid fa-chevron-down" style="font-size:0.55rem;margin-left:auto;opacity:0.5;"></i></button>
+          <div class="draft-menu" id="draftMenu${suffix}">
+            <div class="draft-menu-section">Type</div>
+            <label class="draft-option"><input type="radio" name="draftType${suffix}" value="blog" checked /> <i class="fa-solid fa-blog"></i> Blog Post</label>
+            <label class="draft-option"><input type="radio" name="draftType${suffix}" value="docs" disabled /> <i class="fa-solid fa-book"></i> Documentation <span style="font-size:0.55rem;opacity:0.4;margin-left:4px;">soon</span></label>
+            <div class="draft-menu-section" style="margin-top:8px;">Topic <span style="font-size:0.55rem;opacity:0.4;">(optional)</span></div>
+            <input type="text" id="draftTopic${suffix}" class="draft-topic-input" placeholder="e.g. solana rpc, site speed..." />
+            <div class="draft-menu-section" style="margin-top:8px;">Language</div>
+            <div style="display:flex;gap:6px;">
+              <label class="draft-option" style="flex:1;"><input type="radio" name="draftLang${suffix}" value="en" checked /> EN</label>
+              <label class="draft-option" style="flex:1;"><input type="radio" name="draftLang${suffix}" value="fi" /> FI</label>
+            </div>
+            <button class="draft-generate-btn" id="draftGenerate${suffix}" data-project="${project}"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Draft</button>
+          </div>
+        </div>
+        <button class="export-btn" data-export-cmd="aeo" data-export-project="${project}"><i class="fa-solid fa-robot"></i> AI Citability Audit</button>
+      </div>
       <div id="exportViewer${suffix}" class="export-viewer">
         <div style="color:#444;padding:20px 0;text-align:center;">
           <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
@@ -2244,6 +2331,102 @@ function buildHtmlTemplate(data, opts = {}) {
         };
       });
     });
+
+    // Draft dropdown
+    var draftTrigger = document.getElementById('draftTrigger' + suffix);
+    var draftMenu = document.getElementById('draftMenu' + suffix);
+    var draftGenerate = document.getElementById('draftGenerate' + suffix);
+    if (draftTrigger && draftMenu) {
+      draftTrigger.addEventListener('click', function(e) {
+        e.stopPropagation();
+        draftMenu.classList.toggle('open');
+      });
+      document.addEventListener('click', function(e) {
+        if (!draftMenu.contains(e.target) && e.target !== draftTrigger) {
+          draftMenu.classList.remove('open');
+        }
+      });
+    }
+    if (draftGenerate) {
+      draftGenerate.addEventListener('click', function() {
+        if (running) return;
+        var proj = draftGenerate.getAttribute('data-project');
+        var typeEl = document.querySelector('input[name="draftType' + suffix + '"]:checked');
+        var langEl = document.querySelector('input[name="draftLang' + suffix + '"]:checked');
+        var topicEl = document.getElementById('draftTopic' + suffix);
+        var draftType = typeEl ? typeEl.value : 'blog';
+        var lang = langEl ? langEl.value : 'en';
+        var topic = topicEl ? topicEl.value.trim() : '';
+
+        if (draftType !== 'blog') return; // docs not yet supported
+
+        draftMenu.classList.remove('open');
+
+        // Run blog-draft via terminal SSE
+        var extra = { lang: lang };
+        if (topic) extra.topic = topic;
+
+        var params = new URLSearchParams({ command: 'blog-draft' });
+        params.set('project', proj);
+        params.set('lang', lang);
+        params.set('save', '1');
+        if (topic) params.set('topic', topic);
+
+        if (!isServed) {
+          var cmd = 'seo-intel blog-draft ' + proj + (topic ? ' --topic "' + topic + '"' : '') + ' --lang ' + lang + ' --save';
+          if (exportViewer) {
+            exportViewer.innerHTML = '<div style="color:var(--color-danger);padding:12px;">Not connected. Run in terminal:<br/><code style="color:var(--accent-gold);">' + cmd + '</code></div>';
+          }
+          return;
+        }
+
+        if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;"><i class="fa-solid fa-wand-magic-sparkles fa-spin" style="margin-right:6px;color:var(--accent-gold);"></i>Generating AEO draft...</div>';
+
+        var mdContent = '';
+        var es = new EventSource('/api/terminal?' + params.toString());
+        running = true;
+        status.textContent = 'generating draft...';
+        status.style.color = 'var(--color-warning)';
+
+        es.onmessage = function(e) {
+          try {
+            var msg = JSON.parse(e.data);
+            if (msg.type === 'stdout') mdContent += msg.data + '\\n';
+            else if (msg.type === 'stderr') appendLine(msg.data, 'stderr');
+            else if (msg.type === 'exit') {
+              running = false;
+              var code = msg.data?.code ?? msg.data;
+              status.textContent = code === 0 ? 'draft saved' : 'failed';
+              status.style.color = code === 0 ? 'var(--color-success)' : 'var(--color-danger)';
+              es.close();
+              if (exportViewer && mdContent.trim()) {
+                var bt = String.fromCharCode(96);
+                var codeRe = new RegExp(bt + '([^' + bt + ']+)' + bt, 'g');
+                var html = mdContent
+                  .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                  .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                  .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                  .replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')
+                  .replace(/^- (.*$)/gm, '<li>$1</li>')
+                  .replace(codeRe, '<code>$1</code>')
+                  .replace(/\\n/g, '<br/>');
+                exportViewer.innerHTML = html;
+                exportViewer.scrollTop = 0;
+              } else if (exportViewer) {
+                exportViewer.innerHTML = '<div style="color:var(--text-muted);">Draft generated — check reports/ folder.</div>';
+              }
+            }
+          } catch (_) {}
+        };
+        es.onerror = function() {
+          running = false;
+          status.textContent = 'error';
+          status.style.color = 'var(--color-danger)';
+          es.close();
+          if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--color-danger);">Connection failed.</div>';
+        };
+      });
+    }
 
     // Input enter
     input.addEventListener('keydown', function(e) {

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.5 (2026-03-31)
+
+### Skill / OpenClaw
+- SKILL.md updated for v1.2 — added AEO, Keywords, Intelligence Ledger, all analysis commands
+- Added AEO workflow section with citability signals and AI query intent docs
+- Added DB query examples for citability + keyword cross-analysis
+- Fixed hardcoded DB path to relative `./seo-intel.db`
+- Removed stale froggo references from description
+
+### Fixes
+- Fix wizard upgrade URLs — all now point to `ukkometa.fi/en/seo-intel/` (was missing `/en/`)
+
 ## 1.2.4 (2026-03-31)
 
 ### Fixes

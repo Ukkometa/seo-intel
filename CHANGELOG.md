@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.4 (2026-03-31)
+
+### Fixes
+- Fix favicon serving — explicit `Content-Type: image/png` header prevents browser showing cached favicon from crawled sites
+- Favicon link tag now cache-busts on dashboard regeneration
+
 ## 1.2.3 (2026-03-28)
 
 ### Dashboard

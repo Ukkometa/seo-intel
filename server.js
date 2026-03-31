@@ -678,7 +678,11 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && (path === '/favicon.ico' || path === '/favicon.png')) {
     const faviconPath = join(__dirname, 'seo-intel.png');
     if (existsSync(faviconPath)) {
-      serveFile(res, faviconPath);
+      res.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=3600',
+      });
+      res.end(readFileSync(faviconPath));
     } else {
       res.writeHead(204); res.end();
     }

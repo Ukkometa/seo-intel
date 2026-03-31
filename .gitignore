@@ -8,10 +8,7 @@ config/risunouto.json
 carbium
 carbium/
 
-# ─── Proprietary layer (not on npm, not on GitHub) ───
-analysis/
-analyses/
-extractor/
+# ─── Archive (local only) ───
 archive/
 
 # ─── IDE / tool configs ───

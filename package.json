@@ -1,6 +1,6 @@
 {
   "name": "seo-intel",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "Local Ahrefs-style SEO competitor intelligence. Crawl → SQLite → cloud analysis.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -45,6 +45,9 @@
     "crawler/",
     "db/db.js",
     "db/schema.sql",
+    "analyses/",
+    "analysis/",
+    "extractor/",
     "exports/",
     "reports/generate-html.js",
     "reports/generate-site-graph.js",

@@ -3,7 +3,6 @@ config/carbium.json
 config/risunouto.json
 config/ukkometa.json
 gsc/
-analysis/
 reports/*.html
 reports/*.csv
 reports/*.json

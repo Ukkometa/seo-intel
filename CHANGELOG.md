@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.6 (2026-03-31)
+
+### Critical Fix
+- **Ship analysis, extraction, and AEO modules in npm package** — these were gitignored as "proprietary" from the Froggo era but are required for `extract`, `analyze`, `aeo`, `templates`, and dashboard generation
+- npm users can now run the full pipeline without missing module errors
+- Files added to git: `analyses/aeo/`, `analyses/templates/`, `analysis/`, `extractor/`
+- Removed stale "NOT shipped in free npm package" comment from cli.js
+- Deleted local `froggo-package/` directory
+
 ## 1.2.5 (2026-03-31)
 
 ### Skill / OpenClaw

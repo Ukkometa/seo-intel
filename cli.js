@@ -22,7 +22,6 @@ import chalk from 'chalk';
 
 import { crawlDomain } from './crawler/index.js';
 // Paid modules — loaded lazily inside gated commands only.
-// analysis/ and extractor/ are NOT shipped in the free npm package.
 let _extractPage, _buildAnalysisPrompt;
 async function getExtractPage() {
   if (!_extractPage) _extractPage = (await import('./extractor/qwen.js')).extractPage;

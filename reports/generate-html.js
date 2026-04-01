@@ -1553,6 +1553,43 @@ function buildHtmlTemplate(data, opts = {}) {
       transition: opacity 0.15s;
     }
     .draft-generate-btn:hover { opacity: 0.9; }
+    .export-expand-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      z-index: 10;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      width: 24px; height: 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.55rem;
+      transition: all 0.15s;
+    }
+    .export-expand-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+    .export-viewer-expanded {
+      position: fixed !important;
+      top: 5vh; left: 5vw; right: 5vw; bottom: 5vh;
+      max-height: none !important;
+      z-index: 9999;
+      background: #111;
+      border: 1px solid var(--accent-gold);
+      border-radius: var(--radius);
+      padding: 24px;
+      overflow-y: auto;
+      box-shadow: 0 0 80px rgba(0,0,0,0.8);
+    }
+    .export-viewer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 9998;
+      cursor: pointer;
+    }
     .export-viewer {
       flex: 1;
       padding: 12px;
@@ -2082,6 +2119,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <div class="export-sidebar">
       <div class="export-sidebar-header">
         <i class="fa-solid fa-file-export"></i> Exports
+        <span style="margin-left:auto;font-size:.55rem;color:var(--text-muted);font-weight:400;letter-spacing:0;">→ reports/</span>
       </div>
       ${pro ? `
       <div class="export-sidebar-btns">
@@ -2111,10 +2149,16 @@ function buildHtmlTemplate(data, opts = {}) {
         </div>
         <button class="export-btn" data-export-cmd="aeo" data-export-project="${project}"><i class="fa-solid fa-robot"></i> AI Citability Audit</button>
       </div>
-      <div id="exportViewer${suffix}" class="export-viewer">
-        <div style="color:#444;padding:20px 0;text-align:center;">
-          <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
-          Click an export to generate an<br/>implementation-ready action brief.
+      <div style="position:relative;">
+        <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
+          <i class="fa-solid fa-check" style="margin-right:4px;"></i><span></span>
+        </div>
+        <button id="exportExpand${suffix}" class="export-expand-btn" title="Expand viewer"><i class="fa-solid fa-expand"></i></button>
+        <div id="exportViewer${suffix}" class="export-viewer">
+          <div style="color:#444;padding:20px 0;text-align:center;">
+            <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
+            Click an export to generate an<br/>implementation-ready action brief.
+          </div>
         </div>
       </div>
       ` : `
@@ -2319,6 +2363,14 @@ function buildHtmlTemplate(data, opts = {}) {
                 exportViewer.innerHTML = html || '<div style="color:var(--text-muted);">No output.</div>';
                 exportViewer.scrollTop = 0;
               }
+              // Show save status
+              var saveEl = document.getElementById('exportSaveStatus' + suffix);
+              if (saveEl && code === 0) {
+                var slugName = cmd === 'suggest-usecases' ? 'suggestions' : (scope || 'all');
+                var dateStr = new Date().toISOString().slice(0, 10);
+                saveEl.style.display = 'block';
+                saveEl.querySelector('span').textContent = 'Saved → reports/' + proj + '-' + slugName + '-' + dateStr + '.md';
+              }
             }
           } catch (_) {}
         };
@@ -2425,6 +2477,33 @@ function buildHtmlTemplate(data, opts = {}) {
           es.close();
           if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--color-danger);">Connection failed.</div>';
         };
+      });
+    }
+
+    // Expand viewer button
+    var expandBtn = document.getElementById('exportExpand' + suffix);
+    if (expandBtn && exportViewer) {
+      expandBtn.addEventListener('click', function() {
+        if (exportViewer.classList.contains('export-viewer-expanded')) {
+          // Collapse
+          exportViewer.classList.remove('export-viewer-expanded');
+          expandBtn.innerHTML = '<i class="fa-solid fa-expand"></i>';
+          var bd = document.getElementById('exportBackdrop' + suffix);
+          if (bd) bd.remove();
+        } else {
+          // Expand
+          exportViewer.classList.add('export-viewer-expanded');
+          expandBtn.innerHTML = '<i class="fa-solid fa-compress"></i>';
+          var bd = document.createElement('div');
+          bd.id = 'exportBackdrop' + suffix;
+          bd.className = 'export-viewer-backdrop';
+          document.body.appendChild(bd);
+          bd.addEventListener('click', function() {
+            exportViewer.classList.remove('export-viewer-expanded');
+            expandBtn.innerHTML = '<i class="fa-solid fa-expand"></i>';
+            bd.remove();
+          });
+        }
       });
     }
 

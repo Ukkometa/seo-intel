@@ -614,6 +614,17 @@ async function handleRequest(req, res) {
     if (params.get('model')) args.push('--model', params.get('model'));
     if (params.has('save')) args.push('--save');
 
+    // Auto-save exports from dashboard to reports/
+    const EXPORT_CMDS = ['export-actions', 'suggest-usecases', 'competitive-actions'];
+    if (EXPORT_CMDS.includes(command) && project) {
+      const scope = params.get('scope') || 'all';
+      const ts = new Date().toISOString().slice(0, 10);
+      const slug = command === 'suggest-usecases' ? 'suggestions' : scope;
+      const outFile = join(__dirname, 'reports', `${project}-${slug}-${ts}.md`);
+      args.push('--output', outFile);
+      args.push('--format', 'brief');
+    }
+
     // SSE headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',

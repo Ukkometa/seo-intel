@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.1 (2026-04-02)
+
+### Fixes
+- **AI Citability Audit** now renders output in dashboard export viewer (was showing "No output")
+- AEO command accepts `--format markdown|json|brief` for structured output
+- Dashboard export viewer captures stderr — command errors are now visible instead of silent
+
+### CI
+- Added job-level timeout (15 min) — prevents 6-hour runaway jobs
+- Cross-platform path handling — Windows CI no longer fails on backslash paths
+- Playwright auto-installed for mock crawl test
+- Step-level timeouts on crawl, setup wizard, and server tests
+
 ## 1.3.0 (2026-04-01)
 
 ### New Feature: AEO Blog Draft Generator

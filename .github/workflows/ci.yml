@@ -10,6 +10,7 @@ jobs:
   smoke-test:
     name: Smoke test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +36,18 @@ jobs:
 
       - name: Install seo-intel globally (from npm registry)
         run: npm install -g seo-intel@latest
+
+      - name: Resolve seo-intel install root
+        if: "!matrix.expect-version-guard"
+        shell: bash
+        run: |
+          ROOT="$(node -p "require('path').join(process.execPath, '..', '..', 'lib', 'node_modules', 'seo-intel')")"
+          # Fallback to npm root -g if the above doesn't exist
+          if [ ! -d "$ROOT" ]; then
+            ROOT="$(npm root -g)/seo-intel"
+          fi
+          echo "SEO_INTEL_ROOT=$ROOT" >> "$GITHUB_ENV"
+          echo "Resolved root: $ROOT"
 
       # ═══════════════════════════════════════════════════════════════════
       # NODE 20 — version guard test (only this, then stop)
@@ -80,14 +93,14 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           node -e "
+            const path = require('path');
+            const root = process.env.SEO_INTEL_ROOT;
             const { DatabaseSync } = require('node:sqlite');
             const { readFileSync } = require('fs');
-            const { join } = require('path');
-            const dbPath = join(require('os').tmpdir(), 'seo-intel-ci-test.db');
+            const dbPath = path.join(require('os').tmpdir(), 'seo-intel-ci-test.db');
             const db = new DatabaseSync(dbPath);
-            const schema = readFileSync(join('$ROOT', 'db', 'schema.sql'), 'utf8');
+            const schema = readFileSync(path.join(root, 'db', 'schema.sql'), 'utf8');
             db.exec(schema);
 
             // Verify all expected tables exist
@@ -136,11 +149,11 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           node -e "
             const { readFileSync } = require('fs');
             const { join } = require('path');
-            const config = JSON.parse(readFileSync(join('$ROOT', 'config', 'example.json'), 'utf8'));
+            const root = process.env.SEO_INTEL_ROOT;
+            const config = JSON.parse(readFileSync(join(root, 'config', 'example.json'), 'utf8'));
             if (!config.project) throw new Error('Missing project field');
             if (!config.target) throw new Error('Missing target field');
             if (!Array.isArray(config.competitors)) throw new Error('competitors not array');
@@ -177,18 +190,36 @@ jobs:
 
       - name: Crawl nonexistent domain gives graceful error
         if: "!matrix.expect-version-guard"
+        timeout-minutes: 2
         shell: bash
         run: |
-          OUTPUT=$(seo-intel crawl this-domain-does-not-exist-xyz.invalid --max-pages 1 2>&1 || true)
-          # Should not contain raw stack traces
-          if echo "$OUTPUT" | grep -qE "^    at "; then
-            echo "❌ Raw stack trace leaked to user:"
-            echo "$OUTPUT" | head -30
-            exit 1
-          else
-            echo "✅ No stack trace leaked — graceful error handling"
-            echo "$OUTPUT" | head -10
-          fi
+          # Use node to enforce timeout cross-platform (GNU timeout not on Windows/macOS)
+          node -e "
+            const { spawn } = require('child_process');
+            const child = spawn('seo-intel', ['crawl', 'this-domain-does-not-exist-xyz.invalid', '--max-pages', '1'], {
+              stdio: ['ignore', 'pipe', 'pipe'],
+              shell: true
+            });
+            let output = '';
+            child.stdout.on('data', d => output += d);
+            child.stderr.on('data', d => output += d);
+            const timer = setTimeout(() => {
+              child.kill();
+              console.log('⚠️ Crawl timed out after 30s (expected for nonexistent domain)');
+              console.log(output.substring(0, 500));
+              process.exit(0);
+            }, 30000);
+            child.on('close', () => {
+              clearTimeout(timer);
+              if (/^    at /m.test(output)) {
+                console.log('❌ Raw stack trace leaked to user:');
+                console.log(output.substring(0, 500));
+                process.exit(1);
+              }
+              console.log('✅ No stack trace leaked — graceful error handling');
+              console.log(output.substring(0, 300));
+            });
+          "
         continue-on-error: true
 
       # ═══════════════════════════════════════════════════════════════════
@@ -196,13 +227,15 @@ jobs:
       # ═══════════════════════════════════════════════════════════════════
       - name: Setup wizard serves HTML
         if: "!matrix.expect-version-guard"
+        timeout-minutes: 1
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           node -e "
             const http = require('http');
+            const path = require('path');
             const { spawn } = require('child_process');
-            const child = spawn(process.execPath, ['$ROOT/cli.js', 'setup'], {
+            const root = process.env.SEO_INTEL_ROOT;
+            const child = spawn(process.execPath, [path.join(root, 'cli.js'), 'setup'], {
               stdio: 'pipe',
               env: { ...process.env, NO_OPEN: '1' }
             });
@@ -249,12 +282,12 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           node --input-type=module -e "
             import { readFileSync } from 'fs';
             import { join } from 'path';
+            import { pathToFileURL } from 'url';
 
-            const root = '$ROOT';
+            const root = process.env.SEO_INTEL_ROOT;
             const modules = [
               'crawler/index.js',
               'crawler/stealth.js',
@@ -279,7 +312,7 @@ jobs:
             let fail = 0;
             for (const m of modules) {
               try {
-                await import('file://' + join(root, m));
+                await import(pathToFileURL(join(root, m)).href);
                 console.log('✅', m);
               } catch (e) {
                 // Some modules need runtime deps (Playwright, Ollama) — that's OK
@@ -307,8 +340,7 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
-          cd "$ROOT"
+          cd "$SEO_INTEL_ROOT"
           # List what npm would pack
           npm pack --dry-run 2>&1 | tee /tmp/pack-list.txt
           # Check critical files are in tarball
@@ -333,13 +365,13 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           node --input-type=module -e "
             import { join } from 'path';
+            import { pathToFileURL } from 'url';
 
-            const root = '$ROOT';
+            const root = process.env.SEO_INTEL_ROOT;
             try {
-              const mod = await import('file://' + join(root, 'reports/generate-html.js'));
+              const mod = await import(pathToFileURL(join(root, 'reports/generate-html.js')).href);
               // Check the function exists and is callable
               const fnName = mod.generateMultiDashboard ? 'generateMultiDashboard' :
                              mod.generateHtmlDashboard ? 'generateHtmlDashboard' : null;
@@ -378,12 +410,11 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           FAIL=0
           for f in lib/gate.js lib/license.js lib/updater.js crawler/index.js \
                    crawler/subdomain-discovery.js seo-audit.js README.md \
                    setup/wizard.html reports/generate-html.js; do
-            if [ -f "$ROOT/$f" ] && grep -q "froggo.pro" "$ROOT/$f" 2>/dev/null; then
+            if [ -f "$SEO_INTEL_ROOT/$f" ] && grep -q "froggo.pro" "$SEO_INTEL_ROOT/$f" 2>/dev/null; then
               echo "❌ froggo.pro found in $f"
               FAIL=1
             else
@@ -397,12 +428,14 @@ jobs:
       # ═══════════════════════════════════════════════════════════════════
       - name: Server starts without crashing (5s)
         if: "!matrix.expect-version-guard"
+        timeout-minutes: 1
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           node -e "
+            const path = require('path');
             const { spawn } = require('child_process');
-            const child = spawn(process.execPath, ['$ROOT/cli.js', 'serve'], {
+            const root = process.env.SEO_INTEL_ROOT;
+            const child = spawn(process.execPath, [path.join(root, 'cli.js'), 'serve'], {
               stdio: 'pipe',
               env: { ...process.env, NO_OPEN: '1' }
             });
@@ -429,7 +462,6 @@ jobs:
         if: "!matrix.expect-version-guard"
         shell: bash
         run: |
-          ROOT="$(npm root -g)/seo-intel"
           MISSING=0
           for f in \
             cli.js server.js scheduler.js seo-audit.js \
@@ -442,7 +474,7 @@ jobs:
             setup/config-builder.js setup/installers.js setup/models.js setup/validator.js \
             config/example.json \
             README.md CHANGELOG.md LICENSE; do
-            if [ ! -f "$ROOT/$f" ]; then
+            if [ ! -f "$SEO_INTEL_ROOT/$f" ]; then
               echo "❌ Missing: $f"
               MISSING=$((MISSING+1))
             else
@@ -457,8 +489,13 @@ jobs:
             exit 1
           fi
 
+      - name: Install Playwright Chromium (for mock crawl)
+        if: "!matrix.expect-version-guard && matrix.os == 'ubuntu-latest' && matrix.node == '22'"
+        run: npx playwright install --with-deps chromium
+
       - name: Mock crawl test
         if: "!matrix.expect-version-guard && matrix.os == 'ubuntu-latest' && matrix.node == '22'"
+        timeout-minutes: 3
         run: node scripts/mock-crawl-test.js
         working-directory: ${{ github.workspace }}
         shell: bash

@@ -2342,6 +2342,7 @@ function buildHtmlTemplate(data, opts = {}) {
           try {
             const msg = JSON.parse(e.data);
             if (msg.type === 'stdout') mdContent += msg.data + '\\n';
+            else if (msg.type === 'stderr') mdContent += msg.data + '\\n';
             else if (msg.type === 'exit') {
               running = false;
               status.textContent = 'done';

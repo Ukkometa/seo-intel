@@ -3869,24 +3869,30 @@ program
   .alias('citability')
   .description('AI Citability Audit — score every page for how well AI assistants can cite it')
   .option('--target-only', 'Only score target domain (skip competitors)')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
   .option('--save', 'Save report to reports/')
   .action(async (project, opts) => {
     if (!requirePro('aeo')) return;
     const db = getDb();
     const config = loadConfig(project);
+    const isBrief = opts.format !== 'json';
 
-    printAttackHeader('🤖 AEO — AI Citability Audit', project);
+    if (!isBrief) {
+      // JSON mode — skip header
+    } else {
+      printAttackHeader('🤖 AEO — AI Citability Audit', project);
+    }
 
     const { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } = await import('./analyses/aeo/index.js');
 
     const results = runAeoAnalysis(db, project, {
       includeCompetitors: !opts.targetOnly,
-      log: (msg) => console.log(chalk.gray(msg)),
+      log: (msg) => isBrief ? console.log(chalk.gray(msg)) : null,
     });
 
     if (!results.target.length && !results.competitors.size) {
-      console.log(chalk.yellow('\n  ⚠️  No pages with body_text found.'));
-      console.log(chalk.gray('   Run: seo-intel crawl ' + project + '  (crawl stores body text since v1.1.6)\n'));
+      console.log(isBrief ? chalk.yellow('\n  ⚠️  No pages with body_text found.') : 'No pages with body_text found.');
+      console.log(isBrief ? chalk.gray('   Run: seo-intel crawl ' + project + '  (crawl stores body text since v1.1.6)\n') : 'Run: seo-intel crawl ' + project);
       return;
     }
 
@@ -3895,88 +3901,149 @@ program
     upsertCitabilityInsights(db, project, results.target);
 
     const { summary } = results;
-
-    // ── Summary ──
-    console.log('');
-    console.log(chalk.bold('  📊 Citability Summary'));
-    console.log('');
-
-    const scoreFmt = (s) => {
-      if (s >= 75) return chalk.bold.green(s + '/100');
-      if (s >= 55) return chalk.bold.yellow(s + '/100');
-      if (s >= 35) return chalk.hex('#ff8c00')(s + '/100');
-      return chalk.bold.red(s + '/100');
-    };
-
-    console.log(`    Target average:     ${scoreFmt(summary.avgTargetScore)}`);
-    if (summary.competitorPages > 0) {
-      console.log(`    Competitor average:  ${scoreFmt(summary.avgCompetitorScore)}`);
-      const delta = summary.scoreDelta;
-      const deltaStr = delta > 0 ? chalk.green(`+${delta}`) : delta < 0 ? chalk.red(`${delta}`) : chalk.gray('0');
-      console.log(`    Delta:              ${deltaStr}`);
-    }
-    console.log('');
-
-    // ── Tier breakdown ──
     const { tierCounts } = summary;
-    console.log(`    ${chalk.green('●')} Excellent (75+):  ${tierCounts.excellent}`);
-    console.log(`    ${chalk.yellow('●')} Good (55-74):     ${tierCounts.good}`);
-    console.log(`    ${chalk.hex('#ff8c00')('●')} Needs work (35-54): ${tierCounts.needs_work}`);
-    console.log(`    ${chalk.red('●')} Poor (<35):        ${tierCounts.poor}`);
-    console.log('');
-
-    // ── Weakest signals ──
-    if (summary.weakestSignals.length) {
-      console.log(chalk.bold('  🔍 Weakest Signals (target average)'));
-      console.log('');
-      for (const s of summary.weakestSignals) {
-        const bar = '█'.repeat(Math.round(s.avg / 5)) + chalk.gray('░'.repeat(20 - Math.round(s.avg / 5)));
-        console.log(`    ${s.signal.padEnd(20)} ${bar} ${s.avg}/100`);
-      }
-      console.log('');
-    }
-
-    // ── Worst pages (actionable) ──
     const worst = results.target.filter(r => r.score < 55).slice(0, 10);
-    if (worst.length) {
-      console.log(chalk.bold.red('  ⚡ Pages Needing Work'));
-      console.log('');
-      for (const p of worst) {
-        const path = p.url.replace(/https?:\/\/[^/]+/, '') || '/';
-        const weakest = Object.entries(p.breakdown)
-          .sort(([, a], [, b]) => a - b)
-          .slice(0, 2)
-          .map(([k]) => k.replace(/_/g, ' '));
-        console.log(`    ${scoreFmt(p.score)}  ${chalk.bold(path.slice(0, 50))}`);
-        console.log(chalk.gray(`           Weak: ${weakest.join(', ')}`));
-      }
-      console.log('');
-    }
-
-    // ── Best pages ──
     const best = results.target.filter(r => r.score >= 55).slice(-5).reverse();
-    if (best.length) {
-      console.log(chalk.bold.green('  ✨ Top Citable Pages'));
+
+    // ── Markdown output (used by dashboard export viewer) ──
+    if (opts.format === 'markdown') {
+
+      console.log('# AEO — AI Citability Audit\n');
+      console.log(`## Summary\n`);
+      console.log(`- **Target average:** ${summary.avgTargetScore}/100`);
+      if (summary.competitorPages > 0) {
+        console.log(`- **Competitor average:** ${summary.avgCompetitorScore}/100`);
+        const delta = summary.scoreDelta;
+        console.log(`- **Delta:** ${delta > 0 ? '+' : ''}${delta}`);
+      }
+      console.log(`- **Pages scored:** ${results.target.length}\n`);
+
+      console.log(`## Tier Breakdown\n`);
+      console.log(`- Excellent (75+): ${tierCounts.excellent}`);
+      console.log(`- Good (55-74): ${tierCounts.good}`);
+      console.log(`- Needs work (35-54): ${tierCounts.needs_work}`);
+      console.log(`- Poor (<35): ${tierCounts.poor}\n`);
+
+      if (summary.weakestSignals.length) {
+        console.log(`## Weakest Signals\n`);
+        for (const s of summary.weakestSignals) {
+          const pct = Math.round(s.avg);
+          const bar = '█'.repeat(Math.round(pct / 5)) + '░'.repeat(20 - Math.round(pct / 5));
+          console.log(`- **${s.signal}** ${bar} ${pct}/100`);
+        }
+        console.log('');
+      }
+
+      if (worst.length) {
+        console.log(`## Pages Needing Work\n`);
+        for (const p of worst) {
+          const path = p.url.replace(/https?:\/\/[^/]+/, '') || '/';
+          const weakest = Object.entries(p.breakdown)
+            .sort(([, a], [, b]) => a - b)
+            .slice(0, 2)
+            .map(([k]) => k.replace(/_/g, ' '));
+          console.log(`- **${path.slice(0, 60)}** — ${p.score}/100 (weak: ${weakest.join(', ')})`);
+        }
+        console.log('');
+      }
+
+      if (best.length) {
+        console.log(`## Top Citable Pages\n`);
+        for (const p of best) {
+          const path = p.url.replace(/https?:\/\/[^/]+/, '') || '/';
+          console.log(`- **${path.slice(0, 60)}** — ${p.score}/100 (${p.aiIntents.join(', ')})`);
+        }
+        console.log('');
+      }
+
+      console.log(`## Actions\n`);
+      if (tierCounts.poor > 0) {
+        console.log(`1. Fix ${tierCounts.poor} poor-scoring pages — add structured headings, Q&A format, entity depth`);
+      }
+      if (summary.weakestSignals.length && summary.weakestSignals[0].avg < 40) {
+        console.log(`2. Site-wide weakness: "${summary.weakestSignals[0].signal}" — systematically improve across all pages`);
+      }
+      if (summary.scoreDelta < 0) {
+        console.log(`3. Competitors are ${Math.abs(summary.scoreDelta)} points ahead — prioritise top-traffic pages first`);
+      }
       console.log('');
-      for (const p of best) {
-        const path = p.url.replace(/https?:\/\/[^/]+/, '') || '/';
-        console.log(`    ${scoreFmt(p.score)}  ${chalk.bold(path.slice(0, 50))}  ${chalk.gray(p.aiIntents.join(', '))}`);
+    } else if (opts.format === 'json') {
+      // ── JSON output ──
+      console.log(JSON.stringify({ summary, target: results.target, competitors: [...results.competitors.entries()] }, null, 2));
+    } else {
+      // ── Rich CLI output (default brief format) ──
+      const scoreFmt = (s) => {
+        if (s >= 75) return chalk.bold.green(s + '/100');
+        if (s >= 55) return chalk.bold.yellow(s + '/100');
+        if (s >= 35) return chalk.hex('#ff8c00')(s + '/100');
+        return chalk.bold.red(s + '/100');
+      };
+
+      console.log('');
+      console.log(chalk.bold('  📊 Citability Summary'));
+      console.log('');
+      console.log(`    Target average:     ${scoreFmt(summary.avgTargetScore)}`);
+      if (summary.competitorPages > 0) {
+        console.log(`    Competitor average:  ${scoreFmt(summary.avgCompetitorScore)}`);
+        const delta = summary.scoreDelta;
+        const deltaStr = delta > 0 ? chalk.green(`+${delta}`) : delta < 0 ? chalk.red(`${delta}`) : chalk.gray('0');
+        console.log(`    Delta:              ${deltaStr}`);
+      }
+      console.log('');
+
+      console.log(`    ${chalk.green('●')} Excellent (75+):  ${tierCounts.excellent}`);
+      console.log(`    ${chalk.yellow('●')} Good (55-74):     ${tierCounts.good}`);
+      console.log(`    ${chalk.hex('#ff8c00')('●')} Needs work (35-54): ${tierCounts.needs_work}`);
+      console.log(`    ${chalk.red('●')} Poor (<35):        ${tierCounts.poor}`);
+      console.log('');
+
+      if (summary.weakestSignals.length) {
+        console.log(chalk.bold('  🔍 Weakest Signals (target average)'));
+        console.log('');
+        for (const s of summary.weakestSignals) {
+          const bar = '█'.repeat(Math.round(s.avg / 5)) + chalk.gray('░'.repeat(20 - Math.round(s.avg / 5)));
+          console.log(`    ${s.signal.padEnd(20)} ${bar} ${s.avg}/100`);
+        }
+        console.log('');
+      }
+
+      if (worst.length) {
+        console.log(chalk.bold.red('  ⚡ Pages Needing Work'));
+        console.log('');
+        for (const p of worst) {
+          const path = p.url.replace(/https?:\/\/[^/]+/, '') || '/';
+          const weakest = Object.entries(p.breakdown)
+            .sort(([, a], [, b]) => a - b)
+            .slice(0, 2)
+            .map(([k]) => k.replace(/_/g, ' '));
+          console.log(`    ${scoreFmt(p.score)}  ${chalk.bold(path.slice(0, 50))}`);
+          console.log(chalk.gray(`           Weak: ${weakest.join(', ')}`));
+        }
+        console.log('');
+      }
+
+      if (best.length) {
+        console.log(chalk.bold.green('  ✨ Top Citable Pages'));
+        console.log('');
+        for (const p of best) {
+          const path = p.url.replace(/https?:\/\/[^/]+/, '') || '/';
+          console.log(`    ${scoreFmt(p.score)}  ${chalk.bold(path.slice(0, 50))}  ${chalk.gray(p.aiIntents.join(', '))}`);
+        }
+        console.log('');
+      }
+
+      console.log(chalk.bold.green('  💡 Actions:'));
+      if (tierCounts.poor > 0) {
+        console.log(chalk.green(`     1. Fix ${tierCounts.poor} poor-scoring pages — add structured headings, Q&A format, entity depth`));
+      }
+      if (summary.weakestSignals.length && summary.weakestSignals[0].avg < 40) {
+        console.log(chalk.green(`     2. Site-wide weakness: "${summary.weakestSignals[0].signal}" — systematically improve across all pages`));
+      }
+      if (summary.scoreDelta < 0) {
+        console.log(chalk.green(`     3. Competitors are ${Math.abs(summary.scoreDelta)} points ahead — prioritise top-traffic pages first`));
       }
       console.log('');
     }
-
-    // ── Actions ──
-    console.log(chalk.bold.green('  💡 Actions:'));
-    if (tierCounts.poor > 0) {
-      console.log(chalk.green(`     1. Fix ${tierCounts.poor} poor-scoring pages — add structured headings, Q&A format, entity depth`));
-    }
-    if (summary.weakestSignals.length && summary.weakestSignals[0].avg < 40) {
-      console.log(chalk.green(`     2. Site-wide weakness: "${summary.weakestSignals[0].signal}" — systematically improve across all pages`));
-    }
-    if (summary.scoreDelta < 0) {
-      console.log(chalk.green(`     3. Competitors are ${Math.abs(summary.scoreDelta)} points ahead — prioritise top-traffic pages first`));
-    }
-    console.log('');
 
     // ── Regenerate dashboard ──
     try {

@@ -22,6 +22,22 @@
   "bin": {
     "seo-intel": "cli.js"
   },
+  "exports": {
+    ".": "./cli.js",
+    "./froggo": "./froggo.js",
+    "./aeo": "./analyses/aeo/index.js",
+    "./aeo/scorer": "./analyses/aeo/scorer.js",
+    "./gap-intel": "./analyses/gap-intel/index.js",
+    "./blog-draft": "./analyses/blog-draft/index.js",
+    "./crawler": "./crawler/index.js",
+    "./db": "./db/db.js",
+    "./exports/technical": "./exports/technical.js",
+    "./exports/competitive": "./exports/competitive.js",
+    "./exports/suggestive": "./exports/suggestive.js",
+    "./exports/queries": "./exports/queries.js",
+    "./templates": "./analyses/templates/index.js",
+    "./dashboard": "./reports/generate-html.js"
+  },
   "engines": {
     "node": ">=22.5.0"
   },

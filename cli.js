@@ -2183,6 +2183,7 @@ program
   .description('Find competitor pages that are important but thin (Shallow Champion attack)')
   .option('--max-words <n>', 'Max word count threshold', '700')
   .option('--max-depth <n>', 'Max click depth', '2')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action((project, opts) => {
     if (!requirePro('shallow')) return;
     const db = getDb();
@@ -2214,6 +2215,11 @@ program
       byDomain[r.domain].push(r);
     }
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'shallow', project, timestamp: new Date().toISOString(), data: { targets: rows.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, clickDepth: r.click_depth })), byDomain: Object.fromEntries(Object.entries(byDomain).map(([k,v]) => [k, v.map(r => ({ url: r.url, wordCount: r.word_count, clickDepth: r.click_depth }))])), totalTargets: rows.length } }));
+      return;
+    }
+
     for (const [domain, pages] of Object.entries(byDomain)) {
       console.log(chalk.bold.yellow(`  ${domain}`));
       for (const p of pages) {
@@ -2234,6 +2240,7 @@ program
   .command('decay <project>')
   .description('Find competitor pages decaying due to staleness (Content Decay Arbitrage)')
   .option('--months <n>', 'Months since last update to flag as stale', '18')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action((project, opts) => {
     if (!requirePro('decay')) return;
     const db = getDb();
@@ -2269,6 +2276,11 @@ program
       LIMIT 20
     `).all(project).filter(r => isContentPage(r.url));
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'decay', project, timestamp: new Date().toISOString(), data: { confirmedStale: staleKnown.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, modifiedDate: r.modified_date, clickDepth: r.click_depth })), unknownFreshness: staleUnknown.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, clickDepth: r.click_depth })), monthsThreshold: monthsAgo } }));
+      return;
+    }
+
     if (!staleKnown.length && !staleUnknown.length) {
       console.log(chalk.yellow('No decay targets found. More crawl data or date metadata needed.'));
       return;
@@ -2301,6 +2313,7 @@ program
   .description('Pull competitor heading structures for AI gap analysis')
   .option('--domain <domain>', 'Audit a specific competitor domain')
   .option('--depth <n>', 'Max click depth to include', '2')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action(async (project, opts) => {
     if (!requirePro('headings-audit')) return;
     const db = getDb();
@@ -2326,6 +2339,7 @@ program
       return;
     }
 
+    const jsonResults = [];
     let report = `# Heading Architecture Audit — ${project.toUpperCase()}\nGenerated: ${new Date().toISOString()}\n\n`;
 
     for (const page of pages.slice(0, 30)) {
@@ -2336,20 +2350,29 @@ program
 
       if (!headings.length) continue;
 
-      const structure = headings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
-      console.log(chalk.bold(`\n${page.domain} · ${page.url.replace(/https?:\/\/[^/]+/, '') || '/'}`));
-      console.log(chalk.gray(`  depth ${page.click_depth} · ${page.word_count} words`));
-      headings.filter(h => h.level <= 3).forEach(h => {
-        const indent = '  '.repeat(h.level - 1);
-        const color = h.level === 1 ? chalk.bold.white : h.level === 2 ? chalk.yellow : chalk.gray;
-        console.log(`  ${indent}${color('H' + h.level + ':')} ${h.text}`);
-      });
+      jsonResults.push({ url: page.url, domain: page.domain, wordCount: page.word_count, clickDepth: page.click_depth, headings: headings.map(h => ({ level: h.level, text: h.text })) });
 
-      report += `## ${page.domain} — ${page.url}\n`;
-      report += `*click depth: ${page.click_depth} · words: ${page.word_count}*\n\n`;
-      report += '```\n' + structure + '\n```\n\n';
-      report += `**Gemini prompt:**\n`;
-      report += `> Analyze this heading structure from ${page.domain}. What H2/H3 sub-topics are logically missing? What would a user expect to find that isn't covered? Be specific.\n\n---\n\n`;
+      if (opts.format !== 'json') {
+        const structure = headings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
+        console.log(chalk.bold(`\n${page.domain} · ${page.url.replace(/https?:\/\/[^/]+/, '') || '/'}`));
+        console.log(chalk.gray(`  depth ${page.click_depth} · ${page.word_count} words`));
+        headings.filter(h => h.level <= 3).forEach(h => {
+          const indent = '  '.repeat(h.level - 1);
+          const color = h.level === 1 ? chalk.bold.white : h.level === 2 ? chalk.yellow : chalk.gray;
+          console.log(`  ${indent}${color('H' + h.level + ':')} ${h.text}`);
+        });
+
+        report += `## ${page.domain} — ${page.url}\n`;
+        report += `*click depth: ${page.click_depth} · words: ${page.word_count}*\n\n`;
+        report += '```\n' + structure + '\n```\n\n';
+        report += `**Gemini prompt:**\n`;
+        report += `> Analyze this heading structure from ${page.domain}. What H2/H3 sub-topics are logically missing? What would a user expect to find that isn't covered? Be specific.\n\n---\n\n`;
+      }
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'headings-audit', project, timestamp: new Date().toISOString(), data: { pages: jsonResults, totalPages: jsonResults.length } }));
+      return;
     }
 
     const outPath = join(__dirname, `reports/${project}-headings-audit-${Date.now()}.md`);
@@ -2363,7 +2386,8 @@ program
 program
   .command('orphans <project>')
   .description('Find orphaned entities — mentioned everywhere but no dedicated page (needs Qwen extraction)')
-  .action((project) => {
+  .option('--format <type>', 'Output format: json or brief', 'brief')
+  .action((project, opts) => {
     if (!requirePro('orphans')) return;
     const db = getDb();
 
@@ -2425,6 +2449,11 @@ program
 
     orphans.sort((a, b) => b.domainCount - a.domainCount);
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'orphans', project, timestamp: new Date().toISOString(), data: { orphans: orphans.map(o => ({ entity: o.entity, domains: o.domains, domainCount: o.domainCount, suggestedUrl: '/solutions/' + o.entity.replace(/\s+/g, '-').toLowerCase() })), totalOrphans: orphans.length } }));
+      return;
+    }
+
     if (!orphans.length) {
       if (entityMap.size === 0) {
         console.log(chalk.yellow('⚠️  Entity extraction data exists but no entities were extracted.'));
@@ -2452,6 +2481,7 @@ program
   .description('Entity coverage map — semantic gap at the entity level (concepts competitors mention, you don\'t)')
   .option('--min-mentions <n>', 'Minimum competitor mentions to show', '2')
   .option('--save', 'Save entity map to reports/')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action((project, opts) => {
     if (!requirePro('entities')) return;
     const db = getDb();
@@ -2518,6 +2548,11 @@ program
 
     gaps.sort((a, b) => b.compCount - a.compCount);
     shared.sort((a, b) => b.compCount - a.compCount);
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'entities', project, timestamp: new Date().toISOString(), data: { gaps: gaps.map(g => ({ entity: g.entity, competitorCount: g.compCount, domains: g.domains })), shared: shared.map(s => ({ entity: s.entity, competitorCount: s.compCount, targetDomains: s.targetDomains, competitorDomains: s.compDomains })), unique: yourOnly.map(y => ({ entity: y.entity, targetDomains: y.targetDomains })), summary: { totalEntities: entityMap.size, gapCount: gaps.length, sharedCount: shared.length, uniqueCount: yourOnly.length } } }));
+      return;
+    }
 
     let mdOutput = `# Entity Coverage Map — ${config.target.domain}\nGenerated: ${new Date().toISOString().slice(0, 10)}\n\n`;
 
@@ -2613,6 +2648,7 @@ program
   .command('schemas <project>')
   .description('Deep structured data competitive analysis — ratings, pricing, rich results gaps')
   .option('--save', 'Save report to reports/')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action((project, opts) => {
     const db = getDb();
 
@@ -2779,6 +2815,11 @@ program
       actions.push('Add BreadcrumbList schema — improves SERP display and navigation signals');
     }
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'schemas', project, timestamp: new Date().toISOString(), data: { coverageMatrix: Object.fromEntries([...byDomain.entries()].map(([dom, schemas]) => [dom, schemas.map(s => ({ type: s.schema_type, url: s.url, name: s.name, rating: s.rating, ratingCount: s.rating_count, price: s.price, currency: s.currency }))])), gaps: schemaGaps, exclusives: yourExclusives, ratings: withRatings.map(r => ({ domain: r.domain, url: r.url, name: r.name, rating: r.rating, ratingCount: r.rating_count })), pricing: withPricing.map(r => ({ domain: r.domain, url: r.url, name: r.name, price: r.price, currency: r.currency })), actions, summary: { totalSchemas: rows.length, uniqueTypes: allTypes.length, domainsWithSchemas: byDomain.size, gapCount: schemaGaps.length } } }));
+      return;
+    }
+
     if (actions.length > 0) {
       for (let i = 0; i < actions.length; i++) {
         console.log(`  ${chalk.cyan(`${i + 1}.`)} ${actions[i]}`);
@@ -2917,7 +2958,8 @@ program
 program
   .command('friction <project>')
   .description('Find competitor pages with intent/CTA mismatch — high friction targets (needs Qwen extraction)')
-  .action((project) => {
+  .option('--format <type>', 'Output format: json or brief', 'brief')
+  .action((project, opts) => {
     if (!requirePro('friction')) return;
     const db = getDb();
 
@@ -2950,6 +2992,11 @@ program
       return isHighFriction && isInfoOrCommercial;
     });
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'friction', project, timestamp: new Date().toISOString(), data: { targets: targets.map(t => ({ url: t.url, domain: t.domain, searchIntent: t.search_intent, ctaPrimary: t.cta_primary, pricingTier: t.pricing_tier, wordCount: t.word_count })), totalAnalyzed: rows.length, totalHighFriction: targets.length } }));
+      return;
+    }
+
     if (!targets.length) {
       console.log(chalk.green('No high-friction mismatches found in current extraction data.'));
       console.log(chalk.gray(`  (${rows.length} pages analyzed)\n`));
@@ -2974,6 +3021,7 @@ program
   .description('Weekly SEO Intel Brief — what changed, new gaps, wins, actions')
   .option('--days <n>', 'Lookback window in days', '7')
   .option('--save', 'Save brief to reports/')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action((project, opts) => {
     if (!requirePro('brief')) return;
     const db = getDb();
@@ -3204,6 +3252,11 @@ program
       actions.push('Review dashboard for technical SEO fixes');
     }
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'brief', project, timestamp: new Date().toISOString(), data: { competitorMoves: compMoves.map(m => ({ domain: m.domain, newPages: m.newPages.map(p => ({ url: p.url, wordCount: p.word_count })), changedPages: m.changedPages.map(p => ({ url: p.url, wordCount: p.word_count })) })), keywordGaps: sortedGaps, schemaGaps: [...compSchema.entries()].map(([schema, domains]) => ({ schema, domains: [...domains] })), actions, period: { days, cutoff: cutoffISO, weekOf }, targetNewPages: targetNew } }));
+      return;
+    }
+
     for (const action of actions.slice(0, 5)) {
       console.log(`    ${chalk.bold.green(`${actionNum}.`)} ${action}`);
       mdOutput += `${actionNum}. ${action}\n`;
@@ -3230,6 +3283,7 @@ program
   .command('velocity <project>')
   .description('Content velocity — how fast each domain publishes (publishing rate + new page detection)')
   .option('--days <n>', 'Lookback window in days', '30')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action((project, opts) => {
     if (!requirePro('velocity')) return;
     const db = getDb();
@@ -3302,6 +3356,11 @@ program
       console.log(`  ${t.domain.padEnd(30)} ${roleColor(t.role.padEnd(12))} ${String(t.total_pages).padEnd(7)} ${chalk.cyan(String(newCount).padEnd(6))} ${rateColor(String(ratePerWeek + '/wk').padEnd(8))} ${String(pubCount).padEnd(6)}`);
     }
 
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'velocity', project, timestamp: new Date().toISOString(), data: { velocities, recentlyPublished: publishedRecently.map(p => ({ url: p.url, domain: p.domain, role: p.role, publishedDate: p.published_date, wordCount: p.word_count })), newPages: newPages.map(p => ({ url: p.url, domain: p.domain, role: p.role, firstSeen: p.first_seen_at, wordCount: p.word_count })), period: { days, cutoff: new Date(cutoff).toISOString() } } }));
+      return;
+    }
+
     // ── Velocity leader ──
     const competitors = velocities.filter(v => v.role === 'competitor');
     const target = velocities.find(v => v.role === 'target');
@@ -3371,6 +3430,7 @@ program
   .option('--max-pages <n>', 'Max pages to check per domain', '10')
   .option('--threshold <n>', 'Word count difference threshold to flag', '50')
   .option('--save', 'Save report to reports/')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action(async (project, opts) => {
     if (!requirePro('js-delta')) return;
     const config = loadConfig(project);
@@ -3500,6 +3560,11 @@ program
     // ── Summary ──
     const hiddenContent = results.filter(r => r.hidden);
     const totalChecked = results.length;
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'js-delta', project, timestamp: new Date().toISOString(), data: { results: results.map(r => ({ url: r.url, domain: r.domain, role: r.role, rawWords: r.rawWords, renderedWords: r.renderedWords, delta: r.delta, pctDelta: r.pctDelta, hasHiddenContent: r.hidden })), summary: { totalChecked: results.length, hiddenContentPages: hiddenContent.length, threshold } } }));
+      return;
+    }
 
     console.log(chalk.bold(`  Summary: ${totalChecked} pages checked\n`));
     console.log(`    ${chalk.green('✓')} ${results.filter(r => !r.hidden && r.delta >= -threshold).length} pages render correctly (raw ≈ rendered)`);

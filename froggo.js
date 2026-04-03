@@ -66,7 +66,7 @@ export function isContentPage(url) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export { runAeoAnalysis as aeo } from './analyses/aeo/index.js';
-export { scorePageCitability } from './analyses/aeo/scorer.js';
+export { scorePage as scorePageCitability } from './analyses/aeo/scorer.js';
 export { runGapIntel as gapIntel } from './analyses/gap-intel/index.js';
 export { gatherBlogDraftContext as blogDraftContext } from './analyses/blog-draft/index.js';
 export { buildBlogDraftPrompt as blogDraftPrompt } from './analyses/blog-draft/index.js';
@@ -137,6 +137,8 @@ export const capabilities = [
     requires: ['ollama'],
     inputs: { project: 'string', options: { model: 'string' } },
     outputs: { keywords: 'array', entities: 'array', intent: 'string', cta: 'string' },
+    modelHint: 'light-local',
+    modelNote: 'Use gemma4:e2b (fast) or gemma4:e4b (balanced). Extraction is structured data work — heavy models waste resources.',
     phase: 'extract',
     tier: 'free',
     dependsOn: ['crawl'],
@@ -159,6 +161,8 @@ export const capabilities = [
     requires: ['ollama'],
     inputs: { project: 'string', options: { vs: 'string[]', type: 'string', limit: 'number', raw: 'boolean' } },
     outputs: { gaps: 'array<TopicGap>', matrix: 'object', report: 'string' },
+    modelHint: 'light-local',
+    modelNote: 'gemma4:e4b handles topic clustering well. Cloud models add minimal value here.',
     phase: 'analyze',
     tier: 'pro',
     dependsOn: ['crawl', 'extract'],
@@ -313,6 +317,8 @@ export const capabilities = [
     requires: ['cloud-llm'],
     inputs: { project: 'string', options: { topic: 'string', lang: 'string', model: 'string' } },
     outputs: { draft: 'string', context: 'object' },
+    modelHint: 'cloud-medium',
+    modelNote: 'Sonnet or equivalent — needs creative + strategic reasoning for quality drafts.',
     phase: 'create',
     tier: 'pro',
     dependsOn: ['crawl', 'extract', 'aeo'],
@@ -666,6 +672,125 @@ export async function run(command, project, opts = {}) {
       case 'insights': {
         const insights = getActiveInsights(db, project);
         return wrap({ insights, totalActive: insights.length });
+      }
+
+      // ── Headings Audit ──
+
+      case 'headings-audit': {
+        const maxDepth = parseInt(opts.depth) || 2;
+        const domainFilter = opts.domain ? 'AND d.domain = ?' : '';
+        const params = opts.domain ? [project, maxDepth, opts.domain] : [project, maxDepth];
+
+        const pages = db.prepare(`
+          SELECT p.id, p.url, p.word_count, p.click_depth, d.domain
+          FROM pages p JOIN domains d ON d.id = p.domain_id
+          WHERE d.project = ? AND d.role = 'competitor'
+            AND p.click_depth <= ? AND p.word_count > 200 ${domainFilter}
+            AND p.is_indexable = 1
+          ORDER BY d.domain, p.click_depth ASC
+        `).all(...params).filter(r => isContentPage(r.url));
+
+        const results = [];
+        for (const page of pages.slice(0, 30)) {
+          const headings = db.prepare('SELECT level, text FROM headings WHERE page_id = ? ORDER BY rowid ASC').all(page.id);
+          if (!headings.length) continue;
+          results.push({ url: page.url, domain: page.domain, wordCount: page.word_count, clickDepth: page.click_depth, headings: headings.map(h => ({ level: h.level, text: h.text })) });
+        }
+        return wrap({ pages: results, totalPages: results.length });
+      }
+
+      // ── JS Rendering Delta ──
+
+      case 'js-delta': {
+        // This requires Playwright — return instructions if called from agent
+        return fail('js-delta requires Playwright browser automation. Use the CLI: seo-intel js-delta ' + project + ' --format json');
+      }
+
+      // ── Templates ──
+
+      case 'templates': {
+        const { runTemplatesAnalysis } = await import('./analyses/templates/index.js');
+        const report = await runTemplatesAnalysis(project, {
+          log: opts.log || (() => {}),
+          minGroupSize: opts.minGroupSize || 10,
+          sampleSize: opts.sampleSize || 20,
+        });
+        return wrap(report);
+      }
+
+      // ── Crawl ──
+
+      case 'crawl': {
+        const { crawlDomain } = await import('./crawler/index.js');
+        const config_ = loadConfig(project);
+        if (!config_) return fail(`Project "${project}" not configured`);
+
+        const targetUrl = config_.target.url || `https://${config_.target.domain}`;
+        const maxPages = opts.maxPages || 200;
+        let pagesFound = 0;
+        const pageSummary = [];
+
+        for await (const page of crawlDomain(targetUrl, {
+          maxPages,
+          stealth: opts.stealth || false,
+          ...opts,
+        })) {
+          pagesFound++;
+          pageSummary.push({ url: page.url, status: page.statusCode, depth: page.depth, wordCount: page.wordCount || 0 });
+          if (opts.onPage) opts.onPage(page);
+        }
+
+        return wrap({ pagesFound, pages: pageSummary.slice(0, 50), targetUrl });
+      }
+
+      // ── Extract ──
+
+      case 'extract': {
+        const { extractPage, pingOllamaHost } = await import('./extractor/qwen.js');
+        const ollamaHost = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+        const model = opts.model || process.env.OLLAMA_MODEL || 'gemma4:e4b';
+
+        // Preflight check
+        const ping = await pingOllamaHost(ollamaHost, model).catch(() => null);
+        if (!ping) return fail(`Ollama not reachable at ${ollamaHost} or model "${model}" not available`);
+
+        // Get pages needing extraction
+        const pages = db.prepare(`
+          SELECT p.id, p.url, p.title, p.meta_desc, p.body_text, p.published_date, p.modified_date
+          FROM pages p JOIN domains d ON d.id = p.domain_id
+          LEFT JOIN extractions e ON e.page_id = p.id
+          WHERE d.project = ? AND p.status_code = 200 AND p.body_text IS NOT NULL AND p.body_text != ''
+            AND e.id IS NULL
+          ORDER BY p.click_depth ASC
+          LIMIT ?
+        `).all(project, opts.limit || 500);
+
+        if (!pages.length) return wrap({ extracted: 0, message: 'All pages already extracted' });
+
+        let extracted = 0, failed = 0;
+        for (const page of pages) {
+          try {
+            const headings = db.prepare('SELECT level, text FROM headings WHERE page_id = ?').all(page.id);
+            const schemas = db.prepare('SELECT schema_type FROM page_schemas WHERE page_id = ?').all(page.id);
+
+            await extractPage({
+              url: page.url,
+              title: page.title,
+              metaDesc: page.meta_desc,
+              headings: headings.map(h => ({ level: h.level, text: h.text })),
+              bodyText: page.body_text,
+              schemaTypes: schemas.map(s => s.schema_type),
+              publishedDate: page.published_date,
+              modifiedDate: page.modified_date,
+            });
+            extracted++;
+            if (opts.onExtract) opts.onExtract({ url: page.url, index: extracted });
+          } catch {
+            failed++;
+          }
+        }
+
+        return wrap({ extracted, failed, totalPending: pages.length });
       }
 
       // ── Status ──

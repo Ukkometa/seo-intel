@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.1 (2026-04-03)
+
+### Fixes
+- **CLI JSON output** — all 11 commands now produce clean JSON with zero chalk/ANSI leakage
+- **Brief `--format json`** — full rich data (keyword gaps, schema gaps, actions) instead of lean subset
+- **Templates `--format json`** — suppressed chalk header and log output in JSON mode
+- **JS-Delta `--format json`** — suppressed per-page progress chalk in JSON mode
+
+### Agent Integration
+- Model selection hints (`modelHint`, `modelNote`) on extract, gap-intel, blog-draft capabilities
+- AGENT_GUIDE.md — added Model Selection Guidance table (light-local vs cloud-medium per phase)
+- GitHub Releases now auto-created on tag push via CI
+
 ## 1.4.0 (2026-04-03)
 
 ### New Feature: Gap Intelligence
@@ -16,6 +29,19 @@
 - Two analysis tiers: 26b (recommended 11GB+ VRAM), 31b (16GB+ VRAM)
 - Qwen models remain fully supported as alternatives
 - Setup wizard, model recommendations, and VRAM tiers updated for Gemma 4
+
+### Agent-Ready JSON Output
+- All 11 analysis commands support `--format json` for clean, parseable output
+- JSON output is chalk-free — no ANSI escape codes mixed into structured data
+- Commands: shallow, decay, headings-audit, orphans, entities, schemas, friction, brief, velocity, templates, js-delta
+
+### Programmatic API (`seo-intel/froggo`)
+- Unified agent runner: `run(command, project, opts)` returns `{ ok, command, project, timestamp, data }`
+- 18 capabilities with machine-readable manifest (inputs, outputs, dependencies, tier)
+- Pipeline dependency graph for orchestration
+- Model selection hints per capability (light-local vs cloud-medium)
+- Deep imports: `seo-intel/aeo`, `seo-intel/crawler`, `seo-intel/db`, etc.
+- Agent Guide (`AGENT_GUIDE.md`) with orchestration patterns and model guidance
 
 ### Server
 - Added `gap-intel` to terminal command whitelist

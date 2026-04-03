@@ -2000,11 +2000,15 @@ program
   .option('--skip-crawl', 'Skip sample crawl (pattern analysis + GSC only)')
   .option('--skip-gsc', 'Skip GSC overlay phase')
   .option('--skip-competitors', 'Skip competitor sitemap census')
+  .option('--format <type>', 'Output format: json or brief', 'brief')
   .action(async (project, opts) => {
     if (!requirePro('templates')) return;
 
-    console.log(chalk.bold.cyan(`\n🔍 SEO Intel — Template Analysis`));
-    console.log(chalk.dim(`  Project: ${project}`));
+    const isJson = opts.format === 'json';
+    if (!isJson) {
+      console.log(chalk.bold.cyan(`\n🔍 SEO Intel — Template Analysis`));
+      console.log(chalk.dim(`  Project: ${project}`));
+    }
 
     try {
       const { runTemplatesAnalysis } = await import('./analyses/templates/index.js');
@@ -2014,8 +2018,13 @@ program
         skipCrawl: !!opts.skipCrawl,
         skipGsc: !!opts.skipGsc,
         skipCompetitors: !!opts.skipCompetitors,
-        log: (msg) => console.log(chalk.gray(msg)),
+        log: isJson ? () => {} : (msg) => console.log(chalk.gray(msg)),
       });
+
+      if (isJson) {
+        console.log(JSON.stringify({ command: 'templates', project, timestamp: new Date().toISOString(), data: report }));
+        return;
+      }
 
       if (report.groups.length === 0) {
         console.log(chalk.yellow(`\n  No template patterns detected.\n`));
@@ -2190,8 +2199,6 @@ program
     const maxWords = parseInt(opts.maxWords);
     const maxDepth = parseInt(opts.maxDepth);
 
-    printAttackHeader('⚡ Shallow Champion Attack', project);
-
     const rows = db.prepare(`
       SELECT p.url, p.click_depth, p.word_count, d.domain
       FROM pages p
@@ -2201,13 +2208,6 @@ program
         AND p.is_indexable = 1
       ORDER BY p.click_depth ASC, p.word_count ASC
     `).all(project, maxDepth, maxWords).filter(r => isContentPage(r.url));
-
-    if (!rows.length) {
-      console.log(chalk.yellow('No shallow champions found with current thresholds.'));
-      return;
-    }
-
-    console.log(chalk.gray(`Found ${rows.length} shallow champion targets (depth ≤${maxDepth}, words ≤${maxWords}):\n`));
 
     const byDomain = {};
     for (const r of rows) {
@@ -2219,6 +2219,15 @@ program
       console.log(JSON.stringify({ command: 'shallow', project, timestamp: new Date().toISOString(), data: { targets: rows.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, clickDepth: r.click_depth })), byDomain: Object.fromEntries(Object.entries(byDomain).map(([k,v]) => [k, v.map(r => ({ url: r.url, wordCount: r.word_count, clickDepth: r.click_depth }))])), totalTargets: rows.length } }));
       return;
     }
+
+    printAttackHeader('⚡ Shallow Champion Attack', project);
+
+    if (!rows.length) {
+      console.log(chalk.yellow('No shallow champions found with current thresholds.'));
+      return;
+    }
+
+    console.log(chalk.gray(`Found ${rows.length} shallow champion targets (depth ≤${maxDepth}, words ≤${maxWords}):\n`));
 
     for (const [domain, pages] of Object.entries(byDomain)) {
       console.log(chalk.bold.yellow(`  ${domain}`));
@@ -2249,8 +2258,6 @@ program
     cutoffDate.setMonth(cutoffDate.getMonth() - monthsAgo);
     const cutoff = cutoffDate.toISOString().split('T')[0];
 
-    printAttackHeader('📉 Content Decay Arbitrage', project);
-
     // Pages with known stale modified_date
     const staleKnown = db.prepare(`
       SELECT p.url, p.click_depth, p.word_count, p.modified_date, p.published_date, d.domain
@@ -2280,6 +2287,8 @@ program
       console.log(JSON.stringify({ command: 'decay', project, timestamp: new Date().toISOString(), data: { confirmedStale: staleKnown.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, modifiedDate: r.modified_date, clickDepth: r.click_depth })), unknownFreshness: staleUnknown.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, clickDepth: r.click_depth })), monthsThreshold: monthsAgo } }));
       return;
     }
+
+    printAttackHeader('📉 Content Decay Arbitrage', project);
 
     if (!staleKnown.length && !staleUnknown.length) {
       console.log(chalk.yellow('No decay targets found. More crawl data or date metadata needed.'));
@@ -2319,8 +2328,6 @@ program
     const db = getDb();
     const maxDepth = parseInt(opts.depth);
 
-    printAttackHeader('🏗️  Heading Architecture Audit', project);
-
     const domainFilter = opts.domain ? 'AND d.domain = ?' : '';
     const params = opts.domain ? [project, maxDepth, opts.domain] : [project, maxDepth];
 
@@ -2334,12 +2341,30 @@ program
       ORDER BY d.domain, p.click_depth ASC, p.word_count DESC
     `).all(...params).filter(r => isContentPage(r.url));
 
+    const jsonResults = [];
+    for (const page of pages.slice(0, 30)) {
+      const headings = db.prepare(`
+        SELECT level, text FROM headings WHERE page_id = ?
+        ORDER BY rowid ASC
+      `).all(page.id);
+
+      if (!headings.length) continue;
+
+      jsonResults.push({ url: page.url, domain: page.domain, wordCount: page.word_count, clickDepth: page.click_depth, headings: headings.map(h => ({ level: h.level, text: h.text })) });
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'headings-audit', project, timestamp: new Date().toISOString(), data: { pages: jsonResults, totalPages: jsonResults.length } }));
+      return;
+    }
+
+    printAttackHeader('🏗️  Heading Architecture Audit', project);
+
     if (!pages.length) {
       console.log(chalk.yellow('No pages found matching criteria.'));
       return;
     }
 
-    const jsonResults = [];
     let report = `# Heading Architecture Audit — ${project.toUpperCase()}\nGenerated: ${new Date().toISOString()}\n\n`;
 
     for (const page of pages.slice(0, 30)) {
@@ -2350,29 +2375,20 @@ program
 
       if (!headings.length) continue;
 
-      jsonResults.push({ url: page.url, domain: page.domain, wordCount: page.word_count, clickDepth: page.click_depth, headings: headings.map(h => ({ level: h.level, text: h.text })) });
+      const structure = headings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
+      console.log(chalk.bold(`\n${page.domain} · ${page.url.replace(/https?:\/\/[^/]+/, '') || '/'}`));
+      console.log(chalk.gray(`  depth ${page.click_depth} · ${page.word_count} words`));
+      headings.filter(h => h.level <= 3).forEach(h => {
+        const indent = '  '.repeat(h.level - 1);
+        const color = h.level === 1 ? chalk.bold.white : h.level === 2 ? chalk.yellow : chalk.gray;
+        console.log(`  ${indent}${color('H' + h.level + ':')} ${h.text}`);
+      });
 
-      if (opts.format !== 'json') {
-        const structure = headings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
-        console.log(chalk.bold(`\n${page.domain} · ${page.url.replace(/https?:\/\/[^/]+/, '') || '/'}`));
-        console.log(chalk.gray(`  depth ${page.click_depth} · ${page.word_count} words`));
-        headings.filter(h => h.level <= 3).forEach(h => {
-          const indent = '  '.repeat(h.level - 1);
-          const color = h.level === 1 ? chalk.bold.white : h.level === 2 ? chalk.yellow : chalk.gray;
-          console.log(`  ${indent}${color('H' + h.level + ':')} ${h.text}`);
-        });
-
-        report += `## ${page.domain} — ${page.url}\n`;
-        report += `*click depth: ${page.click_depth} · words: ${page.word_count}*\n\n`;
-        report += '```\n' + structure + '\n```\n\n';
-        report += `**Gemini prompt:**\n`;
-        report += `> Analyze this heading structure from ${page.domain}. What H2/H3 sub-topics are logically missing? What would a user expect to find that isn't covered? Be specific.\n\n---\n\n`;
-      }
-    }
-
-    if (opts.format === 'json') {
-      console.log(JSON.stringify({ command: 'headings-audit', project, timestamp: new Date().toISOString(), data: { pages: jsonResults, totalPages: jsonResults.length } }));
-      return;
+      report += `## ${page.domain} — ${page.url}\n`;
+      report += `*click depth: ${page.click_depth} · words: ${page.word_count}*\n\n`;
+      report += '```\n' + structure + '\n```\n\n';
+      report += `**Gemini prompt:**\n`;
+      report += `> Analyze this heading structure from ${page.domain}. What H2/H3 sub-topics are logically missing? What would a user expect to find that isn't covered? Be specific.\n\n---\n\n`;
     }
 
     const outPath = join(__dirname, `reports/${project}-headings-audit-${Date.now()}.md`);
@@ -2391,8 +2407,6 @@ program
     if (!requirePro('orphans')) return;
     const db = getDb();
 
-    printAttackHeader('👻 Orphan Entity Attack', project);
-
     // Check if we have any extraction data with primary_entities
     const extractionCount = db.prepare(`
       SELECT COUNT(*) as c FROM extractions e
@@ -2401,14 +2415,8 @@ program
       WHERE d.project = ? AND e.primary_entities IS NOT NULL AND e.primary_entities != '[]' AND e.primary_entities != ''
     `).get(project);
 
-    if (!extractionCount || extractionCount.c === 0) {
-      console.log(chalk.yellow('⚠️  No entity extraction data found.'));
-      console.log(chalk.gray('   Run: node cli.js extract ' + project + '  (requires Ollama + Qwen)\n'));
-      return;
-    }
-
     // Get all entities from competitor pages
-    const extractions = db.prepare(`
+    const extractions = (!extractionCount || extractionCount.c === 0) ? [] : db.prepare(`
       SELECT e.primary_entities, p.url, d.domain
       FROM extractions e
       JOIN pages p ON p.id = e.page_id
@@ -2430,7 +2438,7 @@ program
     }
 
     // Get all competitor URLs to check for dedicated pages
-    const allUrls = db.prepare(`
+    const allUrls = (!extractionCount || extractionCount.c === 0) ? [] : db.prepare(`
       SELECT p.url FROM pages p
       JOIN domains d ON d.id = p.domain_id
       WHERE d.project = ? AND d.role = 'competitor'
@@ -2451,6 +2459,14 @@ program
 
     if (opts.format === 'json') {
       console.log(JSON.stringify({ command: 'orphans', project, timestamp: new Date().toISOString(), data: { orphans: orphans.map(o => ({ entity: o.entity, domains: o.domains, domainCount: o.domainCount, suggestedUrl: '/solutions/' + o.entity.replace(/\s+/g, '-').toLowerCase() })), totalOrphans: orphans.length } }));
+      return;
+    }
+
+    printAttackHeader('👻 Orphan Entity Attack', project);
+
+    if (!extractionCount || extractionCount.c === 0) {
+      console.log(chalk.yellow('⚠️  No entity extraction data found.'));
+      console.log(chalk.gray('   Run: node cli.js extract ' + project + '  (requires Ollama + Qwen)\n'));
       return;
     }
 
@@ -2488,8 +2504,6 @@ program
     const config = loadConfig(project);
     const minMentions = parseInt(opts.minMentions) || 2;
 
-    printAttackHeader('🧬 Entity Coverage Map', project);
-
     // ── Gather all entities from all domains ──
     const allExtractions = db.prepare(`
       SELECT e.primary_entities, d.domain, d.role, p.url
@@ -2499,12 +2513,6 @@ program
       WHERE d.project = ?
         AND e.primary_entities IS NOT NULL AND e.primary_entities != '[]' AND e.primary_entities != ''
     `).all(project);
-
-    if (!allExtractions.length) {
-      console.log(chalk.yellow('⚠️  No entity extraction data found.'));
-      console.log(chalk.gray('   Run: node cli.js extract ' + project + '  (requires Ollama + Qwen)\n'));
-      return;
-    }
 
     // Build entity → { targetMentions, competitorMentions, domains, pages }
     const entityMap = new Map();
@@ -2551,6 +2559,14 @@ program
 
     if (opts.format === 'json') {
       console.log(JSON.stringify({ command: 'entities', project, timestamp: new Date().toISOString(), data: { gaps: gaps.map(g => ({ entity: g.entity, competitorCount: g.compCount, domains: g.domains })), shared: shared.map(s => ({ entity: s.entity, competitorCount: s.compCount, targetDomains: s.targetDomains, competitorDomains: s.compDomains })), unique: yourOnly.map(y => ({ entity: y.entity, targetDomains: y.targetDomains })), summary: { totalEntities: entityMap.size, gapCount: gaps.length, sharedCount: shared.length, uniqueCount: yourOnly.length } } }));
+      return;
+    }
+
+    printAttackHeader('🧬 Entity Coverage Map', project);
+
+    if (!allExtractions.length) {
+      console.log(chalk.yellow('⚠️  No entity extraction data found.'));
+      console.log(chalk.gray('   Run: node cli.js extract ' + project + '  (requires Ollama + Qwen)\n'));
       return;
     }
 
@@ -2652,15 +2668,7 @@ program
   .action((project, opts) => {
     const db = getDb();
 
-    printAttackHeader('🔬 Schema Intelligence Report', project);
-
     const rows = getSchemasByProject(db, project);
-
-    if (rows.length === 0) {
-      console.log(chalk.yellow('  No structured data found. Run a crawl first — schemas are parsed from JSON-LD during crawl.'));
-      console.log(chalk.dim('  Tip: node cli.js crawl ' + project + '\n'));
-      return;
-    }
 
     // Load config to identify target domain
     const configPath = `./config/${project}.json`;
@@ -2677,16 +2685,63 @@ program
       byDomain.get(row.domain).push(row);
     }
 
-    // ── Schema type coverage matrix ──
-    console.log(chalk.bold('\n  SCHEMA TYPE COVERAGE'));
-    console.log(chalk.dim('  Which structured data types each domain uses\n'));
-
     const allTypes = [...new Set(rows.map(r => r.schema_type))].sort();
     const domainList = [...byDomain.keys()].sort((a, b) => {
       if (a === targetDomain) return -1;
       if (b === targetDomain) return 1;
       return a.localeCompare(b);
     });
+
+    const withRatings = rows.filter(r => r.rating !== null);
+    const withPricing = rows.filter(r => r.price !== null);
+
+    // ── Gap analysis — what competitors have that you don't ──
+    const targetTypes = new Set((byDomain.get(targetDomain) || []).map(s => s.schema_type));
+    const compTypes = new Set(rows.filter(r => r.domain !== targetDomain).map(r => r.schema_type));
+    const schemaGaps = [...compTypes].filter(t => !targetTypes.has(t));
+    const yourExclusives = [...targetTypes].filter(t => !compTypes.has(t));
+
+    // ── Actionable recommendations ──
+    const actions = [];
+    if (schemaGaps.length > 0) {
+      const highValue = schemaGaps.filter(t => ['Product', 'SoftwareApplication', 'FAQPage', 'HowTo', 'Review', 'AggregateRating'].includes(t));
+      if (highValue.length > 0) {
+        actions.push(`Add high-value schema types: ${highValue.join(', ')}`);
+      }
+      const remaining = schemaGaps.filter(t => !highValue.includes(t));
+      if (remaining.length > 0) {
+        actions.push(`Consider adding: ${remaining.join(', ')}`);
+      }
+    }
+    if (withRatings.length > 0 && !rows.some(r => r.domain === targetDomain && r.rating !== null)) {
+      actions.push('Add aggregateRating schema for star-rich snippets (highest SERP CTR impact)');
+    }
+    if (withPricing.length > 0 && !rows.some(r => r.domain === targetDomain && r.price !== null)) {
+      actions.push('Add pricing schema (Product/Offer) for price-rich results');
+    }
+    if (!targetTypes.has('FAQPage') && compTypes.has('FAQPage')) {
+      actions.push('Add FAQPage schema — expands your SERP real estate with accordion snippets');
+    }
+    if (!targetTypes.has('BreadcrumbList') && compTypes.has('BreadcrumbList')) {
+      actions.push('Add BreadcrumbList schema — improves SERP display and navigation signals');
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify({ command: 'schemas', project, timestamp: new Date().toISOString(), data: { coverageMatrix: Object.fromEntries([...byDomain.entries()].map(([dom, schemas]) => [dom, schemas.map(s => ({ type: s.schema_type, url: s.url, name: s.name, rating: s.rating, ratingCount: s.rating_count, price: s.price, currency: s.currency }))])), gaps: schemaGaps, exclusives: yourExclusives, ratings: withRatings.map(r => ({ domain: r.domain, url: r.url, name: r.name, rating: r.rating, ratingCount: r.rating_count })), pricing: withPricing.map(r => ({ domain: r.domain, url: r.url, name: r.name, price: r.price, currency: r.currency })), actions, summary: { totalSchemas: rows.length, uniqueTypes: allTypes.length, domainsWithSchemas: byDomain.size, gapCount: schemaGaps.length } } }));
+      return;
+    }
+
+    printAttackHeader('🔬 Schema Intelligence Report', project);
+
+    if (rows.length === 0) {
+      console.log(chalk.yellow('  No structured data found. Run a crawl first — schemas are parsed from JSON-LD during crawl.'));
+      console.log(chalk.dim('  Tip: node cli.js crawl ' + project + '\n'));
+      return;
+    }
+
+    // ── Schema type coverage matrix ──
+    console.log(chalk.bold('\n  SCHEMA TYPE COVERAGE'));
+    console.log(chalk.dim('  Which structured data types each domain uses\n'));
 
     // Header
     const typeColWidth = 22;
@@ -2716,7 +2771,6 @@ program
     }
 
     // ── Rating intel — who has review stars? ──
-    const withRatings = rows.filter(r => r.rating !== null);
     if (withRatings.length > 0) {
       console.log(chalk.bold('\n\n  RATING INTELLIGENCE'));
       console.log(chalk.dim('  Competitors with aggregateRating — rich star snippets in SERPs\n'));
@@ -2742,7 +2796,6 @@ program
     }
 
     // ── Pricing intel ──
-    const withPricing = rows.filter(r => r.price !== null);
     if (withPricing.length > 0) {
       console.log(chalk.bold('\n\n  PRICING SCHEMA'));
       console.log(chalk.dim('  Structured pricing data (enables price rich results)\n'));
@@ -2761,12 +2814,6 @@ program
         console.log(chalk.red(`\n  ⚠ GAP: ${compPricing.length} competitor page(s) have pricing schema — you have NONE`));
       }
     }
-
-    // ── Gap analysis — what competitors have that you don't ──
-    const targetTypes = new Set((byDomain.get(targetDomain) || []).map(s => s.schema_type));
-    const compTypes = new Set(rows.filter(r => r.domain !== targetDomain).map(r => r.schema_type));
-    const schemaGaps = [...compTypes].filter(t => !targetTypes.has(t));
-    const yourExclusives = [...targetTypes].filter(t => !compTypes.has(t));
 
     if (schemaGaps.length > 0 || yourExclusives.length > 0) {
       console.log(chalk.bold('\n\n  COMPETITIVE GAPS'));
@@ -2788,37 +2835,7 @@ program
       }
     }
 
-    // ── Actionable recommendations ──
     console.log(chalk.bold('\n\n  ACTIONS'));
-
-    const actions = [];
-    if (schemaGaps.length > 0) {
-      const highValue = schemaGaps.filter(t => ['Product', 'SoftwareApplication', 'FAQPage', 'HowTo', 'Review', 'AggregateRating'].includes(t));
-      if (highValue.length > 0) {
-        actions.push(`Add high-value schema types: ${highValue.join(', ')}`);
-      }
-      const remaining = schemaGaps.filter(t => !highValue.includes(t));
-      if (remaining.length > 0) {
-        actions.push(`Consider adding: ${remaining.join(', ')}`);
-      }
-    }
-    if (withRatings.length > 0 && !rows.some(r => r.domain === targetDomain && r.rating !== null)) {
-      actions.push('Add aggregateRating schema for star-rich snippets (highest SERP CTR impact)');
-    }
-    if (withPricing.length > 0 && !rows.some(r => r.domain === targetDomain && r.price !== null)) {
-      actions.push('Add pricing schema (Product/Offer) for price-rich results');
-    }
-    if (!targetTypes.has('FAQPage') && compTypes.has('FAQPage')) {
-      actions.push('Add FAQPage schema — expands your SERP real estate with accordion snippets');
-    }
-    if (!targetTypes.has('BreadcrumbList') && compTypes.has('BreadcrumbList')) {
-      actions.push('Add BreadcrumbList schema — improves SERP display and navigation signals');
-    }
-
-    if (opts.format === 'json') {
-      console.log(JSON.stringify({ command: 'schemas', project, timestamp: new Date().toISOString(), data: { coverageMatrix: Object.fromEntries([...byDomain.entries()].map(([dom, schemas]) => [dom, schemas.map(s => ({ type: s.schema_type, url: s.url, name: s.name, rating: s.rating, ratingCount: s.rating_count, price: s.price, currency: s.currency }))])), gaps: schemaGaps, exclusives: yourExclusives, ratings: withRatings.map(r => ({ domain: r.domain, url: r.url, name: r.name, rating: r.rating, ratingCount: r.rating_count })), pricing: withPricing.map(r => ({ domain: r.domain, url: r.url, name: r.name, price: r.price, currency: r.currency })), actions, summary: { totalSchemas: rows.length, uniqueTypes: allTypes.length, domainsWithSchemas: byDomain.size, gapCount: schemaGaps.length } } }));
-      return;
-    }
 
     if (actions.length > 0) {
       for (let i = 0; i < actions.length; i++) {
@@ -2963,8 +2980,6 @@ program
     if (!requirePro('friction')) return;
     const db = getDb();
 
-    printAttackHeader('🎯 Intent & Friction Hijacking', project);
-
     const rows = db.prepare(`
       SELECT e.search_intent, e.cta_primary, e.pricing_tier, p.url, p.word_count, d.domain
       FROM extractions e
@@ -2975,12 +2990,6 @@ program
         AND e.cta_primary IS NOT NULL AND e.cta_primary != ''
       ORDER BY d.domain, p.click_depth ASC
     `).all(project).filter(r => isContentPage(r.url));
-
-    if (!rows.length) {
-      console.log(chalk.yellow('⚠️  No intent/CTA extraction data found.'));
-      console.log(chalk.gray('   Run: node cli.js extract ' + project + '  (requires Ollama + Qwen)\n'));
-      return;
-    }
 
     // High friction patterns
     const highFrictionCTAs = ['enterprise', 'sales', 'contact', 'book a demo', 'request', 'talk to'];
@@ -2994,6 +3003,14 @@ program
 
     if (opts.format === 'json') {
       console.log(JSON.stringify({ command: 'friction', project, timestamp: new Date().toISOString(), data: { targets: targets.map(t => ({ url: t.url, domain: t.domain, searchIntent: t.search_intent, ctaPrimary: t.cta_primary, pricingTier: t.pricing_tier, wordCount: t.word_count })), totalAnalyzed: rows.length, totalHighFriction: targets.length } }));
+      return;
+    }
+
+    printAttackHeader('🎯 Intent & Friction Hijacking', project);
+
+    if (!rows.length) {
+      console.log(chalk.yellow('⚠️  No intent/CTA extraction data found.'));
+      console.log(chalk.gray('   Run: node cli.js extract ' + project + '  (requires Ollama + Qwen)\n'));
       return;
     }
 
@@ -3030,6 +3047,75 @@ program
     const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
     const cutoffISO = new Date(cutoff).toISOString().slice(0, 10);
     const weekOf = new Date().toISOString().slice(0, 10);
+
+    // ── JSON fast path: compute all data, no chalk ──
+    if (opts.format === 'json') {
+      const compDomains = config.competitors.map(c => c.domain);
+      const targetDomainJ = config.target.domain;
+      const competitorMoves = [];
+
+      // Competitor moves
+      const targetKeywordsJ = new Set(
+        db.prepare(`SELECT DISTINCT LOWER(k.keyword) as kw FROM keywords k JOIN pages p ON p.id = k.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? AND (d.role = 'target' OR d.role = 'owned')`).all(project).map(r => r.kw)
+      );
+      const gapKeywordsJ = new Map();
+      const targetSchemaJ = new Set();
+      try {
+        const ts = db.prepare(`SELECT DISTINCT e.schema_types FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? AND (d.role = 'target' OR d.role = 'owned') AND e.schema_types IS NOT NULL AND e.schema_types != '[]'`).all(project);
+        for (const row of ts) { try { for (const t of JSON.parse(row.schema_types)) targetSchemaJ.add(t); } catch {} }
+      } catch {}
+      const compSchemaJ = new Map();
+
+      for (const comp of compDomains) {
+        const newPages = db.prepare(`SELECT p.url, p.word_count FROM pages p JOIN domains d ON d.id = p.domain_id WHERE d.domain = ? AND d.project = ? AND p.first_seen_at > ? AND p.is_indexable = 1`).all(comp, project, cutoff).filter(r => isContentPage(r.url));
+        const changedPages = db.prepare(`SELECT p.url, p.word_count FROM pages p JOIN domains d ON d.id = p.domain_id WHERE d.domain = ? AND d.project = ? AND p.crawled_at > ? AND p.first_seen_at < ? AND p.is_indexable = 1`).all(comp, project, cutoff, cutoff).filter(r => isContentPage(r.url));
+        competitorMoves.push({ domain: comp, newPages: newPages.map(p => ({ url: p.url, wordCount: p.word_count })), changedPages: changedPages.map(p => ({ url: p.url, wordCount: p.word_count })) });
+
+        // Keyword gaps from new pages
+        for (const np of newPages.slice(0, 10)) {
+          const pageRow = db.prepare('SELECT id FROM pages WHERE url = ?').get(np.url);
+          if (!pageRow) continue;
+          const kws = db.prepare('SELECT keyword FROM keywords WHERE page_id = ?').all(pageRow.id);
+          for (const kw of kws) {
+            const key = kw.keyword.toLowerCase().trim();
+            if (key.length < 3 || targetKeywordsJ.has(key)) continue;
+            if (!gapKeywordsJ.has(key)) gapKeywordsJ.set(key, new Set());
+            gapKeywordsJ.get(key).add(comp);
+          }
+        }
+
+        // Schema gaps from new pages
+        for (const np of newPages.slice(0, 10)) {
+          const pageRow = db.prepare('SELECT id FROM pages WHERE url = ?').get(np.url);
+          if (!pageRow) continue;
+          const ext = db.prepare('SELECT schema_types FROM extractions WHERE page_id = ?').get(pageRow.id);
+          if (!ext?.schema_types) continue;
+          try {
+            for (const st of JSON.parse(ext.schema_types)) {
+              if (!targetSchemaJ.has(st)) {
+                if (!compSchemaJ.has(st)) compSchemaJ.set(st, new Set());
+                compSchemaJ.get(st).add(comp);
+              }
+            }
+          } catch {}
+        }
+      }
+
+      const sortedGapsJ = [...gapKeywordsJ.entries()]
+        .map(([kw, domains]) => ({ keyword: kw, domains: [...domains], count: domains.size }))
+        .sort((a, b) => b.count - a.count).slice(0, 10);
+
+      const actionsJ = [];
+      if (sortedGapsJ.length > 0) actionsJ.push(`Write content covering "${sortedGapsJ[0].keyword}" — ${sortedGapsJ[0].count} competitor(s) rank for it`);
+      if (compSchemaJ.size > 0) { const [schema, doms] = [...compSchemaJ.entries()][0]; actionsJ.push(`Add ${schema} schema markup to relevant pages (${[...doms][0]} already has it)`); }
+      const targetNewJ = db.prepare(`SELECT COUNT(*) as c FROM pages p JOIN domains d ON d.id = p.domain_id WHERE d.domain = ? AND d.project = ? AND p.first_seen_at > ?`).get(targetDomainJ, project, cutoff)?.c || 0;
+      const compVelocitiesJ = competitorMoves.map(m => ({ domain: m.domain, rate: m.newPages.length })).sort((a, b) => b.rate - a.rate);
+      if (compVelocitiesJ.length > 0 && compVelocitiesJ[0].rate > targetNewJ) actionsJ.push(`Increase publishing rate — ${compVelocitiesJ[0].domain} published ${compVelocitiesJ[0].rate} pages vs your ${targetNewJ}`);
+      if (actionsJ.length === 0) { actionsJ.push('Re-crawl competitors to detect new content'); actionsJ.push('Review dashboard for technical SEO fixes'); }
+
+      console.log(JSON.stringify({ command: 'brief', project, timestamp: new Date().toISOString(), data: { competitorMoves, keywordGaps: sortedGapsJ, schemaGaps: [...compSchemaJ.entries()].map(([schema, domains]) => ({ schema, domains: [...domains] })), actions: actionsJ, period: { days, cutoff: cutoffISO, weekOf }, targetNewPages: targetNewJ } }));
+      return;
+    }
 
     const hr = '─'.repeat(60);
     const header = `📊 Weekly SEO Intel Brief — ${config.target.domain}\n   Week of ${weekOf} (last ${days} days)`;
@@ -3252,11 +3338,6 @@ program
       actions.push('Review dashboard for technical SEO fixes');
     }
 
-    if (opts.format === 'json') {
-      console.log(JSON.stringify({ command: 'brief', project, timestamp: new Date().toISOString(), data: { competitorMoves: compMoves.map(m => ({ domain: m.domain, newPages: m.newPages.map(p => ({ url: p.url, wordCount: p.word_count })), changedPages: m.changedPages.map(p => ({ url: p.url, wordCount: p.word_count })) })), keywordGaps: sortedGaps, schemaGaps: [...compSchema.entries()].map(([schema, domains]) => ({ schema, domains: [...domains] })), actions, period: { days, cutoff: cutoffISO, weekOf }, targetNewPages: targetNew } }));
-      return;
-    }
-
     for (const action of actions.slice(0, 5)) {
       console.log(`    ${chalk.bold.green(`${actionNum}.`)} ${action}`);
       mdOutput += `${actionNum}. ${action}\n`;
@@ -3290,8 +3371,6 @@ program
     const days = parseInt(opts.days) || 30;
     const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
 
-    printAttackHeader('📈 Content Velocity Tracker', project);
-
     // ── 1. Pages discovered recently (first_seen_at within window) ──
     const newPages = db.prepare(`
       SELECT d.domain, d.role, p.url, p.first_seen_at, p.published_date, p.word_count, p.click_depth
@@ -3323,11 +3402,6 @@ program
       GROUP BY d.domain ORDER BY d.role, d.domain
     `).all(project);
 
-    // ── Velocity summary per domain ──
-    console.log(chalk.bold('  Domain Velocity Summary') + chalk.gray(` (last ${days} days)\n`));
-    console.log(chalk.gray('  Domain                         Role         Total   New    Rate/wk  Published'));
-    console.log(chalk.gray('  ' + '─'.repeat(85)));
-
     const domainNewMap = {};
     for (const np of newPages) {
       if (!domainNewMap[np.domain]) domainNewMap[np.domain] = [];
@@ -3347,18 +3421,27 @@ program
       const pubCount = (domainPubMap[t.domain] || []).length;
       const weeksInWindow = days / 7;
       const ratePerWeek = weeksInWindow > 0 ? (Math.max(newCount, pubCount) / weeksInWindow).toFixed(1) : '—';
-
       velocities.push({ domain: t.domain, role: t.role, total: t.total_pages, newCount, pubCount, ratePerWeek: parseFloat(ratePerWeek) || 0 });
-
-      const roleColor = t.role === 'target' ? chalk.green : t.role === 'owned' ? chalk.blue : chalk.yellow;
-      const rateColor = parseFloat(ratePerWeek) > 2 ? chalk.green : parseFloat(ratePerWeek) > 0 ? chalk.yellow : chalk.gray;
-
-      console.log(`  ${t.domain.padEnd(30)} ${roleColor(t.role.padEnd(12))} ${String(t.total_pages).padEnd(7)} ${chalk.cyan(String(newCount).padEnd(6))} ${rateColor(String(ratePerWeek + '/wk').padEnd(8))} ${String(pubCount).padEnd(6)}`);
     }
 
     if (opts.format === 'json') {
       console.log(JSON.stringify({ command: 'velocity', project, timestamp: new Date().toISOString(), data: { velocities, recentlyPublished: publishedRecently.map(p => ({ url: p.url, domain: p.domain, role: p.role, publishedDate: p.published_date, wordCount: p.word_count })), newPages: newPages.map(p => ({ url: p.url, domain: p.domain, role: p.role, firstSeen: p.first_seen_at, wordCount: p.word_count })), period: { days, cutoff: new Date(cutoff).toISOString() } } }));
       return;
+    }
+
+    printAttackHeader('📈 Content Velocity Tracker', project);
+
+    // ── Velocity summary per domain ──
+    console.log(chalk.bold('  Domain Velocity Summary') + chalk.gray(` (last ${days} days)\n`));
+    console.log(chalk.gray('  Domain                         Role         Total   New    Rate/wk  Published'));
+    console.log(chalk.gray('  ' + '─'.repeat(85)));
+
+    for (const t of totals) {
+      const v = velocities.find(v => v.domain === t.domain);
+      const roleColor = t.role === 'target' ? chalk.green : t.role === 'owned' ? chalk.blue : chalk.yellow;
+      const rateColor = v.ratePerWeek > 2 ? chalk.green : v.ratePerWeek > 0 ? chalk.yellow : chalk.gray;
+
+      console.log(`  ${t.domain.padEnd(30)} ${roleColor(t.role.padEnd(12))} ${String(t.total_pages).padEnd(7)} ${chalk.cyan(String(v.newCount).padEnd(6))} ${rateColor(String(v.ratePerWeek + '/wk').padEnd(8))} ${String(v.pubCount).padEnd(6)}`);
     }
 
     // ── Velocity leader ──
@@ -3437,9 +3520,12 @@ program
     const db = getDb();
     const maxPerDomain = parseInt(opts.maxPages) || 10;
     const threshold = parseInt(opts.threshold) || 50;
+    const isJsonFmt = opts.format === 'json';
 
-    printAttackHeader('🔬 JS Rendering Delta', project);
-    console.log(chalk.gray('  Comparing raw HTML (no JS) vs Playwright render (full JS)\n'));
+    if (!isJsonFmt) {
+      printAttackHeader('🔬 JS Rendering Delta', project);
+      console.log(chalk.gray('  Comparing raw HTML (no JS) vs Playwright render (full JS)\n'));
+    }
 
     // Get pages to check — focus on high-value pages (low depth, indexable)
     const domainFilter = opts.domain ? 'AND d.domain = ?' : '';
@@ -3496,11 +3582,13 @@ program
 
         if (!pages.length) continue;
 
-        const roleColor = dom.role === 'target' ? chalk.green : dom.role === 'owned' ? chalk.blue : chalk.yellow;
-        console.log(roleColor(chalk.bold(`  ${dom.domain}`) + chalk.gray(` (${pages.length} pages)`)));
+        if (!isJsonFmt) {
+          const roleColor = dom.role === 'target' ? chalk.green : dom.role === 'owned' ? chalk.blue : chalk.yellow;
+          console.log(roleColor(chalk.bold(`  ${dom.domain}`) + chalk.gray(` (${pages.length} pages)`)));
+        }
 
         for (const pg of pages) {
-          process.stdout.write(chalk.gray(`    ${pg.url.replace(/https?:\/\/[^/]+/, '').slice(0, 55).padEnd(55)} `));
+          if (!isJsonFmt) process.stdout.write(chalk.gray(`    ${pg.url.replace(/https?:\/\/[^/]+/, '').slice(0, 55).padEnd(55)} `));
 
           try {
             // 1. Raw HTML fetch (no JS)
@@ -3534,24 +3622,26 @@ program
               };
               results.push(result);
 
-              if (delta > threshold) {
-                process.stdout.write(chalk.red(`⚠️  raw:${rawWords} → rendered:${renderedWords} (+${delta} words, +${pctDelta}%)\n`));
-              } else if (delta < -threshold) {
-                process.stdout.write(chalk.yellow(`📉 raw:${rawWords} → rendered:${renderedWords} (${delta} words)\n`));
-              } else {
-                process.stdout.write(chalk.green(`✓ raw:${rawWords} ≈ rendered:${renderedWords}\n`));
+              if (!isJsonFmt) {
+                if (delta > threshold) {
+                  process.stdout.write(chalk.red(`⚠️  raw:${rawWords} → rendered:${renderedWords} (+${delta} words, +${pctDelta}%)\n`));
+                } else if (delta < -threshold) {
+                  process.stdout.write(chalk.yellow(`📉 raw:${rawWords} → rendered:${renderedWords} (${delta} words)\n`));
+                } else {
+                  process.stdout.write(chalk.green(`✓ raw:${rawWords} ≈ rendered:${renderedWords}\n`));
+                }
               }
             } finally {
               await page.close().catch(() => {});
             }
           } catch (err) {
-            process.stdout.write(chalk.red(`✗ ${err.message.slice(0, 40)}\n`));
+            if (!isJsonFmt) process.stdout.write(chalk.red(`✗ ${err.message.slice(0, 40)}\n`));
           }
 
           // Be respectful
           await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500));
         }
-        console.log('');
+        if (!isJsonFmt) console.log('');
       }
     } finally {
       await browser.close().catch(() => {});

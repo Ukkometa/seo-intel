@@ -37,6 +37,20 @@ Phase 5: CREATE     blog-draft, gap-intel
 - `schemas` only needs crawl data
 - Most analysis commands are independent — can run in parallel after dependencies met
 
+## Model Selection Guidance
+
+Use the right model tier for each phase — don't over-allocate:
+
+| Phase | Task type | Recommended model | Why |
+|-------|-----------|-------------------|-----|
+| Extract | Structured data extraction | Light local: `gemma4:e2b` or `gemma4:e4b` | Pattern matching, not reasoning |
+| Analyze (local) | AEO, schemas, decay, shallow | No model needed | Pure heuristics on crawl data |
+| Analyze (LLM) | gap-intel, entities, friction | Light local: `gemma4:e4b` | Topic clustering, not deep reasoning |
+| Synthesize | Strategic analysis, action plans | Cloud: Opus, Sonnet, GPT-4 | Needs real reasoning |
+| Create | Blog drafts, content briefs | Cloud: Sonnet or equivalent | Creative + strategic |
+
+**Principle:** Extraction is structured data work — use the lightest model that produces clean output. Reserve heavy models for synthesis and strategic reasoning.
+
 ## Command Reference
 
 ### Collect Phase
@@ -52,6 +66,7 @@ Extract SEO signals from crawled pages using local LLM.
 - Requires: Ollama running with gemma4:e4b (or configured model)
 - Options: `{ model: 'gemma4:e4b' }`
 - Note: Processes all un-extracted pages. Can take 5-60 minutes.
+- **Model guidance:** Use the lightest model that produces acceptable extraction quality. `gemma4:e2b` (6.7 GB) is sufficient for most extraction tasks and runs at ~47 t/s. `gemma4:e4b` (8.9 GB) is the balanced default. For cloud-based extraction, use the lightest available model — extraction is structured data work, not reasoning. Reserve heavier models (Opus, Sonnet, GPT-4) for analysis and gap synthesis.
 
 ### Analyze Phase
 

@@ -188,7 +188,7 @@ AVAILABLE COMMANDS (run these from ${ROOT}):
 TO INSTALL THINGS:
 - npm install (in ${ROOT}) → install Node dependencies
 - npx playwright install chromium → install browser
-- ollama pull qwen3.5:9b → install extraction model
+- ollama pull gemma4:e4b → install extraction model
 
 TO CONFIGURE:
 - Edit ${ROOT}/.env for API keys and settings
@@ -201,9 +201,10 @@ ANALYSIS MODELS (user needs at least one API key):
 - DeepSeek: Budget option (~$0.02-0.08) → DEEPSEEK_API_KEY
 
 EXTRACTION MODELS (local, free):
-- qwen3.5:9b (recommended, needs 6GB+ VRAM)
-- qwen3.5:4b (budget, needs 3GB+ VRAM)
-- qwen3.5:27b (quality, needs 16GB+ VRAM)`;
+- gemma4:e4b (recommended, MoE, needs 6GB+ VRAM)
+- gemma4:e2b (budget, MoE, needs 4GB+ VRAM)
+- gemma4:26b (quality, MoE, needs 12GB+ VRAM)
+- qwen3.5:9b (alternative, needs 5GB+ VRAM)`;
 
 // ── Agent-Driven Setup Flow ────────────────────────────────────────────────
 

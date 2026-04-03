@@ -157,14 +157,15 @@ SEO Intel uses Ollama for local AI extraction. Edit `.env`:
 
 ```bash
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3.5:9b        # recommended (needs 6GB+ VRAM)
+OLLAMA_MODEL=gemma4:e4b         # recommended (MoE, needs 6GB+ VRAM)
 OLLAMA_CTX=16384
 ```
 
 Model recommendations by VRAM:
-- **3-4 GB** → `qwen3.5:4b`
-- **6-8 GB** → `qwen3.5:9b` (recommended)
-- **16+ GB** → `qwen3.5:27b`
+- **4-5 GB** → `gemma4:e2b` (MoE edge model)
+- **6-10 GB** → `gemma4:e4b` (recommended)
+- **12+ GB** → `gemma4:26b` (MoE, frontier quality)
+- Also supported: `qwen3.5:4b`, `qwen3.5:9b`, `qwen3.5:27b`
 
 ### Analysis (cloud, user's API key)
 

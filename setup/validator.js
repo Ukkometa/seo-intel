@@ -21,7 +21,7 @@ const ROOT = join(__dirname, '..');
  * Test Ollama host + model by sending a tiny prompt.
  *
  * @param {string} host - e.g. 'http://localhost:11434'
- * @param {string} model - e.g. 'qwen3.5:9b'
+ * @param {string} model - e.g. 'gemma4:e4b'
  * @returns {{ success: boolean, latencyMs: number, response?: string, error?: string }}
  */
 export async function testOllamaConnectivity(host, model) {

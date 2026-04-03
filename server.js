@@ -596,7 +596,7 @@ async function handleRequest(req, res) {
     const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
       'suggest-usecases', 'html', 'status', 'brief', 'keywords', 'report', 'guide',
       'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export', 'templates',
-      'aeo', 'blog-draft'];
+      'aeo', 'blog-draft', 'gap-intel'];
 
     if (!command || !ALLOWED.includes(command)) {
       json(res, 400, { error: `Invalid command. Allowed: ${ALLOWED.join(', ')}` });
@@ -613,6 +613,11 @@ async function handleRequest(req, res) {
     if (params.get('lang')) args.push('--lang', params.get('lang'));
     if (params.get('model')) args.push('--model', params.get('model'));
     if (params.has('save')) args.push('--save');
+    if (params.get('vs')) args.push('--vs', params.get('vs'));
+    if (params.get('type')) args.push('--type', params.get('type'));
+    if (params.get('limit')) args.push('--limit', params.get('limit'));
+    if (params.has('raw')) args.push('--raw');
+    if (params.get('out')) args.push('--out', params.get('out'));
 
     // Auto-save exports from dashboard to reports/
     const EXPORT_CMDS = ['export-actions', 'suggest-usecases', 'competitive-actions'];

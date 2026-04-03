@@ -68,24 +68,24 @@ function defaultSiteUrl(domain) {
 
 function resolveExtractionRuntime(config) {
   const primaryUrl = config?.crawl?.ollamaHost || process.env.OLLAMA_URL || 'http://localhost:11434';
-  const primaryModel = config?.crawl?.extractionModel || process.env.OLLAMA_MODEL || 'qwen3:4b';
+  const primaryModel = config?.crawl?.extractionModel || process.env.OLLAMA_MODEL || 'gemma4:e4b';
   const fallbackUrl = process.env.OLLAMA_FALLBACK_URL || '';
   const fallbackModel = process.env.OLLAMA_FALLBACK_MODEL || primaryModel;
   const localhost = 'http://localhost:11434';
 
   const candidates = [
-    { host: String(primaryUrl).trim().replace(/\/+$/, ''), model: String(primaryModel).trim() || 'qwen3:4b' },
+    { host: String(primaryUrl).trim().replace(/\/+$/, ''), model: String(primaryModel).trim() || 'gemma4:e4b' },
   ];
 
   if (fallbackUrl) {
     candidates.push({
       host: String(fallbackUrl).trim().replace(/\/+$/, ''),
-      model: String(fallbackModel).trim() || String(primaryModel).trim() || 'qwen3:4b',
+      model: String(fallbackModel).trim() || String(primaryModel).trim() || 'gemma4:e4b',
     });
   }
 
   if (!candidates.some(candidate => candidate.host === localhost)) {
-    candidates.push({ host: localhost, model: String(primaryModel).trim() || 'qwen3:4b' });
+    candidates.push({ host: localhost, model: String(primaryModel).trim() || 'gemma4:e4b' });
   }
 
   const seen = new Set();
@@ -134,8 +134,8 @@ async function checkOllamaAvailability(config) {
 
   if (sawReachableHost) {
     const primary = candidates[0];
-    console.log(chalk.yellow(`  ⚠️  Ollama is reachable but model "${primary?.model || 'qwen3:4b'}" was not found on any live host`));
-    console.log(chalk.dim(`  Run: ollama pull ${primary?.model || 'qwen3:4b'}`));
+    console.log(chalk.yellow(`  ⚠️  Ollama is reachable but model "${primary?.model || 'gemma4:e4b'}" was not found on any live host`));
+    console.log(chalk.dim(`  Run: ollama pull ${primary?.model || 'gemma4:e4b'}`));
   }
 
   return false;
@@ -474,7 +474,7 @@ program
       if (!ollamaAvailable) {
         console.log(chalk.yellow('\n  ⚠️  No AI extraction available (Ollama unreachable, no API keys configured)'));
         console.log(chalk.white('  → Switching to ') + chalk.bold.green('crawl-only mode') + chalk.white(' — raw data will be collected without AI extraction'));
-        console.log(chalk.dim('  Tip: Install Ollama (ollama.com) + run `ollama pull qwen3:4b` to enable local AI extraction\n'));
+        console.log(chalk.dim('  Tip: Install Ollama (ollama.com) + run `ollama pull gemma4:e4b` to enable local AI extraction\n'));
         opts.extract = false;
       }
     }
@@ -4069,6 +4069,54 @@ program
     }
   });
 
+// ── GAP INTEL ────────────────────────────────────────────────────────────
+
+program
+  .command('gap-intel <project>')
+  .description('Topic/content gap analysis — find what competitors cover that you don\'t')
+  .option('--vs <domains>', 'Competitor domains to compare (comma-separated)')
+  .option('--type <type>', 'Page type filter: docs, blog, landing, all', 'all')
+  .option('--limit <n>', 'Max pages per domain', '100')
+  .option('--raw', 'Skip LLM prioritisation, output raw topic matrix only')
+  .option('--format <type>', 'Output format: markdown or json', 'markdown')
+  .option('--out <path>', 'Write report to file (default: stdout)')
+  .action(async (project, opts) => {
+    if (!requirePro('gap-intel')) return;
+    const db = getDb();
+    const config = loadConfig(project);
+
+    printAttackHeader('🔍 Gap Intel — Topic Gap Analysis', project);
+
+    const { runGapIntel } = await import('./analyses/gap-intel/index.js');
+
+    const vsDomains = opts.vs ? opts.vs.split(',').map(s => s.trim()) : [];
+
+    const report = await runGapIntel(db, project, config, {
+      vs: vsDomains,
+      type: opts.type,
+      limit: parseInt(opts.limit, 10) || 100,
+      raw: opts.raw || false,
+      log: (msg) => console.log(chalk.gray(msg)),
+    });
+
+    if (opts.format === 'markdown') {
+      console.log(report);
+    } else {
+      console.log(report);
+    }
+
+    if (opts.out) {
+      writeFileSync(opts.out, report, 'utf8');
+      console.log(chalk.green(`\n  ✅ Report saved: ${opts.out}\n`));
+    }
+
+    // Regenerate dashboard
+    try {
+      const configs = loadAllConfigs();
+      generateMultiDashboard(db, configs);
+    } catch {}
+  });
+
 // ── AEO BLOG DRAFT GENERATOR ─────────────────────────────────────────────
 
 let _blogDraftModule;
@@ -4266,7 +4314,7 @@ program
           'Optionally saves Gemini/OpenAI API key to .env',
           hasOllama && hasAnalysisKey ? chalk.green('  → You\'re fully set up!') :
           hasOllama ? chalk.yellow('  → Add an API key for analysis: edit .env') :
-          chalk.yellow('  → Install Ollama: https://ollama.com  then: ollama pull qwen3:4b'),
+          chalk.yellow('  → Install Ollama: https://ollama.com  then: ollama pull gemma4:e4b'),
         ].filter(Boolean),
       },
       {

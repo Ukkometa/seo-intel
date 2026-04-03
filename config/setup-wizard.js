@@ -265,7 +265,7 @@ async function run() {
   } else {
     warn('No Ollama available. Extraction will use degraded mode (regex only).');
     info('Install Ollama (https://ollama.com) and pull a model for better results.');
-    info('Recommended: ollama pull qwen3.5:9b');
+    info('Recommended: ollama pull gemma4:e4b');
   }
 
   // ── Analysis tier ──

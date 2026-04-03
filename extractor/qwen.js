@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 
 const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
-const DEFAULT_OLLAMA_MODEL = 'qwen3:4b';
+const DEFAULT_OLLAMA_MODEL = 'gemma4:e4b';
 const OLLAMA_CTX = parseInt(process.env.OLLAMA_CTX || '8192', 10);
 const OLLAMA_TIMEOUT_MS = parseInt(process.env.OLLAMA_TIMEOUT_MS || '60000', 10); // BUG-008: was 5000ms, too short for slow machines
 const OLLAMA_PREFLIGHT_TIMEOUT_MS = parseInt(process.env.OLLAMA_PREFLIGHT_TIMEOUT_MS || '2500', 10);

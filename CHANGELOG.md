@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.0 (2026-04-03)
+
+### New Feature: Gap Intelligence
+- `seo-intel gap-intel <project>` — topic/content gap analysis against competitors
+- Extracts topics from your pages and competitor pages via Ollama
+- Fuzzy set comparison identifies coverage gaps with substring matching
+- LLM-powered prioritisation ranks gaps by traffic potential and difficulty
+- Options: `--vs <domains>`, `--type docs|blog|landing|all`, `--limit <n>`, `--raw`, `--format`, `--out`
+- Available from dashboard terminal and CLI (Pro feature)
+
+### New Default: Gemma 4 Models
+- **Gemma 4 e4b** is now the default extraction model (was Qwen 3 4B)
+- Four extraction tiers: e2b (budget, 46 t/s), e4b (balanced, 23 t/s), 26b (quality), 31b (power)
+- Two analysis tiers: 26b (recommended 11GB+ VRAM), 31b (16GB+ VRAM)
+- Qwen models remain fully supported as alternatives
+- Setup wizard, model recommendations, and VRAM tiers updated for Gemma 4
+
+### Server
+- Added `gap-intel` to terminal command whitelist
+- Forward `--vs`, `--type`, `--limit`, `--raw`, `--out` params from dashboard to CLI
+
 ## 1.3.1 (2026-04-02)
 
 ### Fixes

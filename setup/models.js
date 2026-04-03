@@ -17,6 +17,56 @@
 //   Minimum viable: 4B parameters for reliable JSON output
 
 export const EXTRACTION_MODELS = [
+  // ── Gemma 4 (Google, MoE) — new recommended default ──
+  {
+    id: 'gemma4:e2b',
+    name: 'Gemma 4 E2B',
+    family: 'gemma4',
+    tier: 'budget',
+    vram: '~5 GB',
+    minVramMB: 4000,
+    speed: '~1.5s/page',
+    quality: 'good',
+    description: 'Google Gemma 4 edge model. MoE (5.1B total, 2.3B active) — fast inference with good JSON output. Great for laptops.',
+    recommended: false,
+  },
+  {
+    id: 'gemma4:e4b',
+    name: 'Gemma 4 E4B',
+    family: 'gemma4',
+    tier: 'balanced',
+    vram: '~7 GB',
+    minVramMB: 5500,
+    speed: '~2s/page',
+    quality: 'great',
+    description: 'Default recommendation. MoE (8B total, 4.5B active) — excellent extraction quality at edge-model speed. Best quality/speed ratio.',
+    recommended: true,
+  },
+  {
+    id: 'gemma4:26b',
+    name: 'Gemma 4 26B',
+    family: 'gemma4',
+    tier: 'quality',
+    vram: '~13 GB',
+    minVramMB: 11000,
+    speed: '~4s/page',
+    quality: 'excellent',
+    description: 'MoE (25.2B total, 3.8B active) — frontier quality at efficient compute. Needs RTX 3090+ or M-series with 16GB+.',
+    recommended: false,
+  },
+  {
+    id: 'gemma4:31b',
+    name: 'Gemma 4 31B (Dense)',
+    family: 'gemma4',
+    tier: 'power',
+    vram: '~20 GB',
+    minVramMB: 16000,
+    speed: '~7s/page',
+    quality: 'excellent',
+    description: 'Dense 30.7B model — maximum extraction quality. Needs RTX 3090/4090 or M2 Pro+ with 24GB+.',
+    recommended: false,
+  },
+  // ── Qwen 3.5 (Alibaba) ──
   {
     id: 'qwen3.5:4b',
     name: 'Qwen 3.5 4B',
@@ -26,7 +76,7 @@ export const EXTRACTION_MODELS = [
     minVramMB: 2500,
     speed: '~2s/page',
     quality: 'good',
-    description: 'Minimum recommended. Reliable JSON extraction, decent keyword detection. Great for laptops and older GPUs.',
+    description: 'Reliable JSON extraction, decent keyword detection. Great for laptops and older GPUs.',
     recommended: false,
   },
   {
@@ -38,8 +88,8 @@ export const EXTRACTION_MODELS = [
     minVramMB: 4500,
     speed: '~3s/page',
     quality: 'better',
-    description: 'Default recommendation. Better entity detection and intent classification. Works on most modern GPUs.',
-    recommended: true,
+    description: 'Good entity detection and intent classification. Works on most modern GPUs.',
+    recommended: false,
   },
   {
     id: 'qwen3.5:27b',
@@ -62,10 +112,10 @@ export const EXTRACTION_MODELS = [
     minVramMB: 18000,
     speed: '~8s/page',
     quality: 'excellent',
-    description: 'Near-cloud quality extraction. Needs RTX 3090/4090 or M2 Ultra. Overkill for most users.',
+    description: 'Near-cloud quality extraction. Needs RTX 3090/4090 or M2 Ultra.',
     recommended: false,
   },
-  // Alternative providers
+  // ── Alternative providers ──
   {
     id: 'nemotron-nano:4b',
     name: 'Nemotron 3 Nano 4B',
@@ -78,7 +128,7 @@ export const EXTRACTION_MODELS = [
     description: 'NVIDIA agentic model. Efficient extraction with tool-use training. Good alternative to Qwen 3.5 4B.',
     recommended: false,
   },
-  // Legacy / fallback models (already installed by many users)
+  // ── Legacy / fallback models (already installed by many users) ──
   {
     id: 'qwen3:4b',
     name: 'Qwen 3 4B (legacy)',
@@ -88,7 +138,7 @@ export const EXTRACTION_MODELS = [
     minVramMB: 2500,
     speed: '~2s/page',
     quality: 'good',
-    description: 'Previous generation. Works well but Qwen 3.5 is better if you can upgrade.',
+    description: 'Previous generation. Gemma 4 or Qwen 3.5 recommended for new installs.',
     recommended: false,
     legacy: true,
   },
@@ -101,7 +151,7 @@ export const EXTRACTION_MODELS = [
     minVramMB: 4500,
     speed: '~3s/page',
     quality: 'better',
-    description: 'Previous generation. Solid extraction. Qwen 3.5 recommended for new installs.',
+    description: 'Previous generation. Gemma 4 or Qwen 3.5 recommended for new installs.',
     recommended: false,
     legacy: true,
   },
@@ -117,6 +167,32 @@ export const EXTRACTION_MODELS = [
 //   Cloud models (Claude, GPT-5.4, Gemini) available via OpenClaw agent setup
 
 export const ANALYSIS_MODELS = [
+  {
+    id: 'gemma4:26b',
+    name: 'Gemma 4 26B (MoE)',
+    family: 'gemma4',
+    type: 'local',
+    vram: '~13 GB',
+    minVramMB: 11000,
+    context: '128K tokens',
+    costNote: 'Free (your GPU)',
+    quality: 'great',
+    recommended: true,
+    description: 'Google Gemma 4 MoE — 25.2B total, 3.8B active. Fast analysis with frontier quality. Best local value.',
+  },
+  {
+    id: 'gemma4:31b',
+    name: 'Gemma 4 31B (Dense)',
+    family: 'gemma4',
+    type: 'local',
+    vram: '~20 GB',
+    minVramMB: 16000,
+    context: '128K tokens',
+    costNote: 'Free (your GPU)',
+    quality: 'excellent',
+    recommended: false,
+    description: 'Google Gemma 4 dense model — maximum quality for local analysis. Needs RTX 3090+ or M2 Pro+ with 24GB.',
+  },
   {
     id: 'qwen3:14b',
     name: 'Qwen 3 14B',
@@ -140,8 +216,8 @@ export const ANALYSIS_MODELS = [
     context: '32K tokens',
     costNote: 'Free (your GPU)',
     quality: 'good',
-    recommended: true,
-    description: 'Sweet spot for local analysis. Strong reasoning with 27.8B params. Needs RTX 3090/4080+ or M-series with 24GB+.',
+    recommended: false,
+    description: 'Strong reasoning with 27.8B params. Needs RTX 3090/4080+ or M-series with 24GB+.',
   },
   {
     id: 'qwen3.5:35b',
@@ -228,12 +304,13 @@ export const ANALYSIS_MODELS = [
 // ── VRAM-Based Recommendations ──────────────────────────────────────────────
 
 const VRAM_TIERS = [
-  { maxMB: 2500,  extraction: null,          note: 'Not enough VRAM for local extraction. Use cloud or CPU mode (slow).' },
-  { maxMB: 4500,  extraction: 'qwen3.5:4b',  note: 'Budget tier — Qwen 3.5 4B fits your GPU.' },
-  { maxMB: 8000,  extraction: 'qwen3.5:9b',  note: 'Balanced tier — Qwen 3.5 9B recommended for best quality/speed.' },
-  { maxMB: 18000, extraction: 'qwen3.5:27b', note: 'Quality tier — Qwen 3.5 27B for nuanced extraction.' },
-  { maxMB: 48000, extraction: 'qwen3.5:35b', note: 'Power tier — Qwen 3.5 35B for near-cloud quality.' },
-  { maxMB: Infinity, extraction: 'qwen3.5:35b', note: 'Power tier — Qwen 3.5 35B recommended. Your GPU can handle anything.' },
+  { maxMB: 2500,  extraction: null,           note: 'Not enough VRAM for local extraction. Use cloud or CPU mode (slow).' },
+  { maxMB: 4500,  extraction: 'qwen3.5:4b',   note: 'Budget tier — Qwen 3.5 4B fits your GPU.' },
+  { maxMB: 6000,  extraction: 'gemma4:e2b',   note: 'Edge tier — Gemma 4 E2B (MoE, fast).' },
+  { maxMB: 12000, extraction: 'gemma4:e4b',   note: 'Balanced tier — Gemma 4 E4B recommended. MoE gives best quality/speed.' },
+  { maxMB: 18000, extraction: 'gemma4:26b',   note: 'Quality tier — Gemma 4 26B MoE for frontier extraction.' },
+  { maxMB: 48000, extraction: 'gemma4:31b',   note: 'Power tier — Gemma 4 31B Dense for maximum quality.' },
+  { maxMB: Infinity, extraction: 'gemma4:31b', note: 'Power tier — Gemma 4 31B Dense recommended. Your GPU can handle anything.' },
 ];
 
 /**
@@ -250,8 +327,9 @@ export function recommendExtractionModel(availableModels = [], vramMB = 0) {
 
   // Preferred model order (newest → legacy)
   const preferenceOrder = [
+    'gemma4:e4b', 'gemma4:26b', 'gemma4:e2b', 'gemma4:31b',
     'qwen3.5:9b', 'qwen3.5:27b', 'qwen3.5:4b', 'qwen3.5:35b',
-    'qwen3:8b', 'qwen3:4b', 'qwen3.5:0.6b',
+    'qwen3:8b', 'qwen3:4b',
   ];
 
   // Filter to models that fit VRAM
@@ -310,7 +388,7 @@ export function recommendExtractionModel(availableModels = [], vramMB = 0) {
  */
 export function recommendAnalysisModel(availableModels = [], vramMB = 0) {
   const preferenceOrder = [
-    'qwen3.5:27b', 'qwen3.5:35b', 'qwen3:14b', 'nemotron-3-super:120b',
+    'gemma4:26b', 'gemma4:31b', 'qwen3.5:27b', 'qwen3.5:35b', 'qwen3:14b', 'nemotron-3-super:120b',
   ];
 
   // Filter to models that fit VRAM
@@ -332,8 +410,9 @@ export function recommendAnalysisModel(availableModels = [], vramMB = 0) {
   // 2. VRAM-based recommendation
   let recId = 'qwen3:14b'; // default minimum
   if (vramMB >= 48000) recId = 'nemotron-3-super:120b';
-  else if (vramMB >= 18000) recId = 'qwen3.5:35b';
-  else if (vramMB >= 15000) recId = 'qwen3.5:27b';
+  else if (vramMB >= 16000) recId = 'gemma4:31b';
+  else if (vramMB >= 11000) recId = 'gemma4:26b';
+  else if (vramMB >= 8000) recId = 'qwen3:14b';
 
   const recModel = ANALYSIS_MODELS.find(m => m.id === recId);
   if (recModel) {

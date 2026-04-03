@@ -148,7 +148,7 @@ export function* createEnvFile(rootDir = ROOT) {
       '',
       '# Local Ollama for extraction',
       'OLLAMA_URL=http://localhost:11434',
-      'OLLAMA_MODEL=qwen3.5:9b',
+      'OLLAMA_MODEL=gemma4:e4b',
       'OLLAMA_CTX=8192',
       '',
       '# Crawler settings',

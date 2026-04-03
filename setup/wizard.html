@@ -1359,7 +1359,7 @@ Start by checking what's already installed.</div>
 Tasks:
 1. Verify Node.js 22.5+ (install via nvm if needed)
 2. Install Ollama (https://ollama.com) if not present
-3. Pull qwen3.5:9b or smaller if VRAM < 6GB
+3. Pull gemma4:e4b or smaller if VRAM < 6GB
 4. Create ./config/myproject.json — ask me for my target domain and up to 3 competitor domains
 5. Add GEMINI_API_KEY or ANTHROPIC_API_KEY to .env if I have one
 6. Run: seo-intel crawl myproject
@@ -1380,7 +1380,7 @@ It's installed via: npm install -g seo-intel
 Please help me:
 1. Check that Node.js 22.5+ is installed on my machine
 2. Install Ollama (ollama.com) if it's not there
-3. Download a Qwen AI model that fits my machine's RAM
+3. Download a Gemma 4 AI model that fits my machine's RAM
 4. Create a project config file pointing at my website and competitors
 5. Run the first crawl and show me the results
 
@@ -1403,15 +1403,15 @@ Ask me for my website URL before starting.</div>
           <button class="btn btn-sm agent-runtime-tab-min" data-runtime="openclaw" onclick="selectAgentRuntimeMin('openclaw', this)" style="font-size:0.62rem;"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:3px;"></i>OpenClaw</button>
         </div>
         <div id="minRuntime-claudecode" class="min-runtime-panel" style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>Set up seo-intel: check Node 22.5+, install Ollama, pull qwen3.5:9b, create config, run crawl.</div>
+          <div>Set up seo-intel: check Node 22.5+, install Ollama, pull gemma4:e4b, create config, run crawl.</div>
           <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
         </div>
         <div id="minRuntime-codex" class="min-runtime-panel" style="display:none; position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>Install seo-intel deps (Node 22.5+, Ollama, qwen3.5:9b), create project config, run: seo-intel crawl myproject. Use full disk access.</div>
+          <div>Install seo-intel deps (Node 22.5+, Ollama, gemma4:e4b), create project config, run: seo-intel crawl myproject. Use full disk access.</div>
           <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
         </div>
         <div id="minRuntime-perplexity" class="min-runtime-panel" style="display:none; position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>Help me set up SEO Intel local SEO tool: install Node.js 22.5+, Ollama, download a Qwen model, create config for my website. Ask for my URL.</div>
+          <div>Help me set up SEO Intel local SEO tool: install Node.js 22.5+, Ollama, download Gemma 4 model, create config for my website. Ask for my URL.</div>
           <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
         </div>
         <div id="minRuntime-openclaw" class="min-runtime-panel" style="display:none; position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">

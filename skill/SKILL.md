@@ -7,9 +7,10 @@ description: >
   agentic exports, suggestive SEO, and competitive action planning.
   Also use when asked to generate implementation briefs from SEO data, compare sites, audit AI citability,
   or suggest what pages/docs/features to build based on competitor intelligence.
+  Includes gap-intel for topic/content gap analysis between your site and competitors.
 ---
 
-# SEO Intel (v1.2)
+# SEO Intel (v1.4)
 
 Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
 
@@ -31,7 +32,7 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 | Stage | Command | Gate | Best engine |
 |---|---|---|---|
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
-| Extract | `seo-intel extract <project>` | Solo | Ollama/Qwen local |
+| Extract | `seo-intel extract <project>` | Solo | Ollama/Gemma 4 local |
 | Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
 | AEO | `seo-intel aeo <project>` | Solo | Pure local (no AI needed) |
 | Keywords | `seo-intel keywords <project>` | Solo | OpenClaw (Opus/Sonnet) |
@@ -48,6 +49,7 @@ seo-intel analyze <project>        # Strategic gap analysis → Intelligence Led
 seo-intel aeo <project>            # AI Citability Audit — score pages for AI citation
 seo-intel keywords <project>       # Keyword Inventor — traditional + AI/agent queries
 seo-intel brief <project>          # Generate content briefs for new pages
+seo-intel gap-intel <project>      # Topic/content gap analysis vs competitors (Solo)
 seo-intel html <project>           # Generate dashboard
 seo-intel serve                    # Web dashboard at localhost:3000
 seo-intel status                   # Data freshness + summary
@@ -74,7 +76,43 @@ seo-intel js-delta <project>       # JavaScript dependency change detection
 seo-intel shallow <project>        # Quick technical audit (no full crawl needed)
 seo-intel competitors <project>    # Manage competitor list
 seo-intel subdomains <domain>      # Subdomain discovery
+seo-intel gap-intel <project>      # Topic gap analysis vs competitor domains (Solo)
 ```
+
+## Gap Intel — Topic Coverage Gap Analysis (v1.4.0)
+
+Compares your crawled pages against competitor domains to surface topic gaps — content they cover that you don't, and depth gaps where they go deeper.
+
+```bash
+seo-intel gap-intel <project>                          # vs all crawled competitors
+seo-intel gap-intel <project> --vs helius,quicknode   # specific competitors
+seo-intel gap-intel <project> --type docs              # filter to doc pages only
+seo-intel gap-intel <project> --raw                   # skip LLM, raw topic matrix
+seo-intel gap-intel <project> --out ./gap-report.md   # write to file
+```
+
+**Output:** Prioritised gap report (High/Medium/Low buyer intent) with:
+- Topics competitors cover → you don't
+- Depth gaps (you have 1 page, they have 5)
+- Topics where you lead
+- Raw topic matrix per domain
+
+Use `--out ~/clawd/projects/carbium/docs-mirror/waiting-room/gap-intel-latest.md` to feed the docs pipeline automatically.
+
+Solo tier only.
+
+## Default Extraction Model
+
+**Gemma 4 e4b** is now the default extraction model (replaces Qwen 3 4B).
+
+| Model | Size | Speed | Tier |
+|-------|------|-------|------|
+| `gemma4:e2b` | 6.7 GB | ~47 t/s | Budget |
+| `gemma4:e4b` | 8.9 GB | ~23 t/s | **Balanced (default)** |
+| `gemma4:26b` | ~18 GB | — | Quality |
+| `gemma4:31b` | ~20 GB | — | Power |
+
+All Qwen models remain available. Change model via `seo-intel setup` or edit `config/<project>.json`.
 
 ## AEO — AI Citability Audit (v1.2.0)
 

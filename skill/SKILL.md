@@ -244,6 +244,34 @@ WHERE cs.project = 'myproject' AND cs.total_score < 35
 ORDER BY cs.total_score ASC;
 ```
 
+## Programmatic API (for platform integrations)
+
+All commands support `--format json` for structured output. For deep integration, use the programmatic API:
+
+```javascript
+import { run, capabilities, pipeline } from 'seo-intel/froggo';
+
+// Unified runner — one function, all commands
+const aeoResult = await run('aeo', 'myproject');
+const gaps = await run('gap-intel', 'myproject', { vs: ['competitor.com'] });
+const brief = await run('brief', 'myproject', { days: 7 });
+
+// Every result: { ok, command, project, timestamp, data }
+if (aeoResult.ok) {
+  console.log(aeoResult.data.summary.avgTargetScore);
+}
+
+// Capability introspection
+capabilities.forEach(c => console.log(c.id, c.phase, c.tier));
+
+// Dependency graph for orchestration
+pipeline.graph['entities']; // → ['extract']
+```
+
+Available: `aeo`, `gap-intel`, `shallow`, `decay`, `headings-audit`, `orphans`, `entities`, `schemas`, `friction`, `brief`, `velocity`, `js-delta`, `export-actions`, `competitive-actions`, `suggest-usecases`, `blog-draft`, `insights`, `status`
+
+See `AGENT_GUIDE.md` for full orchestration patterns.
+
 ## Cron Scheduling
 
 ```bash

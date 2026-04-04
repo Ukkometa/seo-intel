@@ -25,10 +25,24 @@ SEO Intel follows a strict dependency pipeline. Agents must respect this order:
 ```
 Phase 1: COLLECT    crawl → pages + structure stored in SQLite
 Phase 2: EXTRACT    extract → keywords, entities, intent, CTAs (requires Ollama)
-Phase 3: ANALYZE    aeo, shallow, decay, entities, schemas, friction, etc.
-Phase 4: REPORT     brief, velocity
-Phase 5: CREATE     blog-draft, gap-intel
+Phase 3: ANALYZE    analyze, aeo, shallow, decay, entities, schemas, friction, keywords, etc.
+Phase 4: REPORT     brief, velocity, html, serve
+Phase 5: CREATE     gap-intel, export-actions, competitive-actions, suggest-usecases, blog-draft
 ```
++
++### Practical interpretation layer
++
++Agents should map command outputs to work decisions like this:
++
++| Signal type | Main commands | What it means for downstream work |
++|---|---|---|
++| Structural truth | `crawl`, `schemas`, `headings-audit`, `orphans` | what exists, how it is shaped, and what is technically broken |
++| Semantic truth | `extract`, `entities`, `keywords`, `friction` | what the pages are actually about, who they serve, and where intent mismatches happen |
++| Competitive proof | `analyze`, `gap-intel`, `competitive-actions` | what competitors cover that the target lacks or covers weakly |
++| AI-answer fitness | `aeo` | whether pages are shaped to be cited by ChatGPT / Perplexity / Claude |
++| Implementation layer | `brief`, `export-actions`, `suggest-usecases` | what to build, fix, rewrite, expand, or publish next |
++
++For isolated docs/page-builder agents: do not stop at “competitor X has this topic.” Convert that into a page brief, doc section, comparison page, schema fix, rewrite plan, or action list.
 
 **Rules:**
 - `crawl` must run before ANY analysis
@@ -51,7 +65,55 @@ Use the right model tier for each phase — don't over-allocate:
 
 **Principle:** Extraction is structured data work — use the lightest model that produces clean output. Reserve heavy models for synthesis and strategic reasoning.
 
-## Command Reference
+## Full Command Surface
++
++Use this as the single-source command map when the agent environment is isolated and cannot infer missing commands from the repo.
++
++### Setup / Core
++
++- `run('setup')` or CLI `seo-intel setup` — first-time setup wizard
++- `run('status')` or CLI `seo-intel status` — project/system status
++- CLI `seo-intel guide` — interactive walkthrough
++- CLI `seo-intel serve` — open dashboard server
++- CLI `seo-intel html <project>` — generate dashboard HTML
++- CLI `seo-intel run <project>` — full pipeline run
++- CLI `seo-intel export <project>` — raw JSON/CSV export
++
++### Pipeline / Analysis
++
++- `crawl`
++- `extract`
++- `analyze`
++- `aeo`
++- `keywords`
++- `brief`
++- `gap-intel`
++- `schemas`
++- `headings-audit`
++- `orphans`
++- `entities`
++- `friction`
++- `velocity`
++- `decay`
++- `js-delta`
++- `shallow`
++- `templates`
++
++### Action / Execution Layer
++
++- `export-actions`
++- `competitive-actions`
++- `suggest-usecases`
++- `blog-draft`
++
++### Project / Scope Management
++
++- CLI `seo-intel competitors <project>`
++- CLI `seo-intel competitors <project> --add <domain>`
++- CLI `seo-intel competitors <project> --remove <domain>`
++- CLI `seo-intel subdomains <domain>`
++
++## Command Reference
 
 ### Collect Phase
 
@@ -175,6 +237,149 @@ const [gaps, orphans, entities] = await Promise.all([
   run('entities', project),
 ]);
 ```
++
++### Doc Creator / Page Builder Pattern
++```javascript
++await run('crawl', project);
++await run('extract', project);
++
++const [gaps, actions, usecases, aeo] = await Promise.all([
++  run('gap-intel', project),
++  run('competitive-actions', project),
++  run('suggest-usecases', project),
++  run('aeo', project),
++]);
++
++// Then convert overlapping themes into:
++// - new docs pages
++// - comparison pages
++// - integration pages
++// - rewrites for weak existing pages
++// - AEO/citability improvements on important pages
++```
++
++### Interpretation Rules for Isolated Agents
++
++- If `gap-intel` shows missing topic clusters → plan **net-new content**
++- If `competitive-actions` repeats the same area → raise priority
++- If `aeo` is weak on important existing pages → prefer **rewrite/reshape** over creating more pages
++- If `export-actions --scope technical` is noisy with structural issues → fix the site skeleton before sophisticated content work
++- If `suggest-usecases` proposes docs/integration/comparison assets that competitors already validate → treat that as commercially meaningful evidence, not speculation
+
+## Deploy Loop — Applying SEO Fixes via Wrangler
+
+SEO Intel produces findings. Wrangler deploys fixes. Agents can close the loop automatically.
+
+### Prerequisites
+
+```bash
+npm install -g wrangler
+wrangler login         # OAuth via browser, once only
+```
+
+The target site needs a `wrangler.toml` in its root:
+
+```toml
+name = "your-cloudflare-project-name"
+compatibility_date = "2024-01-01"
+assets = { directory = "." }
+```
+
+And a `.wranglerignore` to keep internal files off the public site:
+
+```
+.DS_Store
+.gitignore
+.claude/
+.wrangler/
+deploy.sh
+wrangler.toml
+*.local.json
+```
+
+### Deploy Command
+
+```bash
+cd /path/to/site && wrangler deploy
+```
+
+Wrangler diffs against the last deployment — only changed files are uploaded.
+
+---
+
+### Full Analyze → Fix → Deploy Pattern
+
+```javascript
+import { run } from 'seo-intel/froggo';
+import { execSync } from 'child_process';
+
+const project = 'myproject';
+const siteDir = '/path/to/site';
+
+// 1. Analyze
+const [aeo, schemas, gaps, actions] = await Promise.all([
+  run('aeo', project),
+  run('schemas', project),
+  run('gap-intel', project),
+  run('export-actions', project, { scope: 'technical', format: 'json' }),
+]);
+
+// 2. Agent applies fixes to site HTML/JSON files based on findings:
+//    - JSON-LD schema gaps → add/update <script type="application/ld+json">
+//    - Version numbers     → update softwareVersion, nav badges
+//    - AEO weak signals    → restructure headings, add Q&A blocks, add dateModified
+//    - Missing meta        → add og:title, og:description, twitter:card
+//    - llms.txt / skill.md → update to match current feature set
+
+// 3. Deploy
+execSync(`cd ${siteDir} && wrangler deploy`, { stdio: 'inherit' });
+
+// 4. Re-crawl to verify (optional — gives you a diff on next run)
+await run('crawl', project, { scope: 'new' });
+```
+
+---
+
+### What SEO Intel findings map to in static HTML
+
+| Finding source | What to fix in the HTML |
+|---|---|
+| `aeo` — low schema coverage | Add/update `<script type="application/ld+json">` blocks |
+| `aeo` — low answer density | Add direct-answer paragraphs after H2/H3 headings |
+| `aeo` — low Q&A proximity | Add FAQ sections with `<h3>` question + `<p>` answer pairs |
+| `aeo` — low freshness | Add `dateModified` to JSON-LD, add "Updated [date]" near content |
+| `schemas` — competitors have, you don't | Add the missing `@type` to JSON-LD |
+| `export-actions` — missing meta | Add `og:title`, `og:description`, `twitter:card`, `meta description` |
+| `export-actions` — missing hreflang | Add `<link rel="alternate" hreflang="...">` pairs |
+| `gap-intel` — topic gaps | Create new pages/sections, update `sitemap.xml` and `llms.txt` |
+| Version drift | Update `softwareVersion` in JSON-LD, nav badges, `llms.txt`, `skill.md` |
+
+---
+
+### Keeping llms.txt / skill.md in sync
+
+After any version bump or feature release, agents should also update:
+
+- `llms.txt` — top-level AI context for the site (version, feature summary, links)
+- `llms-ctx.txt` — full context file with detailed feature descriptions
+- `seo-intel/skill.md` — mirrors the clawhub SKILL.md (copy from `seo-intel/skill/SKILL.md`)
+
+Then redeploy:
+
+```bash
+cp /path/to/seo-intel/skill/SKILL.md /path/to/site/seo-intel/skill.md
+cd /path/to/site && wrangler deploy
+```
+
+---
+
+### Safety Rules for Deploy Agents
+
+- **Never deploy without diffing first** — read the file you're editing before writing it
+- **Never overwrite pricing or contact info** without explicit instruction
+- **Always update `softwareVersion` consistently** — JSON-LD, nav badge, llms.txt, llms-ctx.txt must all match
+- **Test schema changes** with `https://validator.schema.org` before deploying
+- **Deploy is instant and global** — Cloudflare propagates in seconds, no staging environment
 
 ## Error Handling
 

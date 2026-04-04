@@ -32,12 +32,29 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 | Stage | Command | Gate | Best engine |
 |---|---|---|---|
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
-| Extract | `seo-intel extract <project>` | Solo | Ollama/Gemma 4 local |
+| Extract | `seo-intel extract <project>` | Solo | Ollama / Gemma 4 or Qwen local |
 | Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
 | AEO | `seo-intel aeo <project>` | Solo | Pure local (no AI needed) |
 | Keywords | `seo-intel keywords <project>` | Solo | OpenClaw (Opus/Sonnet) |
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (full) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (limited) / Solo (full) | HTML |
+
+### Agent interpretation rule
+
+Do **not** treat SEO Intel as just a report generator. It is a decision layer.
+
+Agents using this skill should interpret outputs like this:
+- **crawl** = structural ground truth (pages, headings, links, schemas, domain roles)
+- **extract** = semantic layer (entities, intent, CTAs, page types, signals)
+- **analyze / gap-intel / keywords / competitive-actions** = what competitors prove is working or missing
+- **aeo** = whether pages are shaped for AI citation and answer engines
+- **export-actions / brief / suggest-usecases** = implementation-ready next steps
+
+When helping a docs writer, page builder, or implementation agent:
+1. identify what competitors cover that the target does not
+2. identify where the target exists but is weaker / shallower / less citable
+3. convert those gaps into concrete pages, docs, comparison pages, landing pages, schema fixes, or brief-driven updates
+4. prefer evidence-backed actions over vague “do more SEO” advice
 
 ## Core Commands
 
@@ -56,6 +73,68 @@ seo-intel status                   # Data freshness + summary
 seo-intel run                      # Full pipeline: crawl → extract → analyze → dashboard
 seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel export <project>         # Raw data export (JSON/CSV)
+```
+
+## Full Command Surface
+
+Use this section when an isolated agent needs the whole toolbox in one place.
+
+### Setup / Core Flow
+
+```bash
+seo-intel setup                    # First-time wizard — detects OpenClaw
+seo-intel guide                    # Interactive chapter-based walkthrough
+seo-intel status                   # Data freshness + system summary
+seo-intel serve                    # Web dashboard at localhost:3000
+seo-intel html <project>           # Generate dashboard HTML
+seo-intel run <project>            # Full pipeline: crawl → extract → analyze → dashboard
+seo-intel export <project>         # Raw data export (JSON/CSV)
+```
+
+### Pipeline Commands
+
+```bash
+seo-intel crawl <project>          # Crawl target + competitors
+seo-intel extract <project>        # Local AI extraction (Ollama)
+seo-intel analyze <project>        # Strategic competitive analysis
+seo-intel aeo <project>            # AI citability audit
+seo-intel keywords <project>       # Traditional + AI/agent keyword discovery
+seo-intel brief <project>          # Content brief generation
+seo-intel gap-intel <project>      # Topic/content gap analysis vs competitors
+```
+
+### Agentic / Implementation Commands
+
+```bash
+seo-intel export-actions <project>                     # Action export (technical by default / full in Solo)
+seo-intel export-actions <project> --scope technical   # Technical fixes from crawl data
+seo-intel export-actions <project> --scope all         # Combined action export
+seo-intel competitive-actions <project>                # Competitor-backed action list
+seo-intel suggest-usecases <project>                   # Suggest missing pages/docs/features
+```
+
+### Audit / Analysis Commands
+
+```bash
+seo-intel schemas <project>           # Schema coverage audit
+seo-intel headings-audit <project>    # H1-H6 structure analysis
+seo-intel orphans <project>           # Orphan page/entity detection
+seo-intel entities <project>          # Entity/topic mapping
+seo-intel friction <project>          # Intent/CTA friction detection
+seo-intel velocity <project>          # Content publishing velocity
+seo-intel decay <project>             # Content freshness / decay detection
+seo-intel js-delta <project>          # JS-rendered vs raw HTML changes
+seo-intel shallow <project>           # Thin/shallow content opportunity scan
+seo-intel templates <project>         # URL pattern / content type mapping
+```
+
+### Project Management Commands
+
+```bash
+seo-intel competitors <project>                    # List competitors
+seo-intel competitors <project> --add rival.com   # Add competitor
+seo-intel competitors <project> --remove rival.com# Remove competitor
+seo-intel subdomains <domain>                     # Discover subdomains
 ```
 
 ## Analysis & Audit Commands
@@ -178,6 +257,116 @@ seo-intel export-actions <project> --scope all --format json
 seo-intel export-actions <project> --scope all --format brief
 ```
 
+## How isolated writer / docs agents should use this skill
+
+If the agent is writing docs, landing pages, comparison pages, or implementation briefs in an isolated environment, use this order:
+
+1. **Establish reality**
+   - use `crawl`, `schemas`, `headings-audit`, `status`
+   - identify target vs competitor coverage
+2. **Understand meaning**
+   - use `extract`, `entities`, `keywords`, `gap-intel`
+   - determine what themes, intents, and problem clusters competitors cover
+3. **Prioritise action**
+   - use `competitive-actions`, `export-actions`, `suggest-usecases`, `brief`
+   - convert findings into pages/features/docs, not abstract insights
+4. **Shape for answer engines**
+   - use `aeo`
+   - improve citability, answer density, structured claims, schema, and entity authority
+
+### Interpretation heuristics for agents
+
+- If competitors have whole topic clusters the target lacks → create **net-new pages or docs**
+- If the target has the page but competitors go deeper → create **rewrite / expansion brief**
+- If trust/comparison/integration pages are missing → create **commercial-intent pages**
+- If schema / headings / orphan issues dominate → start with **technical actions**
+- If AEO scores are low on important pages → restructure for **AI-citable answers**
+- If `suggest-usecases` and `gap-intel` overlap on the same topic → treat that as a **high-confidence build target**
+
+## How to use SEO Intel reports for automation
+
+For automation, treat SEO Intel as the upstream decision layer, not a live database you rediscover every run.
+
+### Prefer stable report artifacts over raw discovery
+
+Automation should prefer:
+- fixed-path exports like `waiting-room/gap-intel-latest.md`
+- project-level aliases like `reports/<project>-latest-analysis.json`
+- short docs-facing briefs like `reports/<project>-docs-brief.md`
+
+Automation should avoid depending on:
+- ad hoc CLI discovery
+- guessing the newest timestamped file in multiple places
+- direct `seo-intel.db` queries unless the workflow is explicitly advanced/custom
+
+If timestamped files are all you have, read the newest `reports/<project>-analysis-*.json` and then normalize it into one stable handoff file for the downstream automation.
+
+### What to read from the reports
+
+The main report to automate against is the analysis export:
+
+```text
+reports/<project>-analysis-*.json
+```
+
+Useful keys:
+- `new_pages` = net-new page candidates
+- `content_gaps` = topics competitors cover that you do not, or where your coverage is materially weaker
+- `keyword_gaps` = missing demand clusters or landing/doc opportunities
+- `long_tails` = specific problem-led queries worth docs/blog coverage
+- `quick_wins` = existing pages that can be improved quickly
+- `technical_gaps` = crawl-backed fixes, usually for technical/site work rather than net-new content
+
+Other high-value exports:
+- `gap-intel` output = competitor-backed topic and depth gaps
+- `competitive-actions` output = prioritized strategic actions
+- `export-actions --scope technical` = technical fixes from crawl data
+- `aeo` output = weakest pages by AI citability, answer density, and claim structure
+- `suggest-usecases` output = inferred missing docs/pages/features based on competitor patterns
+
+### Recommended automation mapping
+
+Use the report fields like this:
+- `new_pages` → create-page queue
+- `content_gaps` → docs/product/content gap queue
+- `keyword_gaps` → landing page, glossary, comparison, or docs opportunity queue
+- `long_tails` → problem-led docs, recipes, or blog queue
+- `quick_wins` → rewrite queue for weak existing pages
+- `technical_gaps` → engineering/site-health queue
+
+For docs automations specifically:
+1. read the latest analysis JSON
+2. read the latest `gap-intel` markdown if present
+3. identify:
+   - topics competitors cover that you lack entirely
+   - existing pages with weak coverage or weak citability
+   - overlap between `suggest-usecases`, `content_gaps`, and `aeo`
+4. collapse that into one short docs brief with:
+   - top 3 new pages to create
+   - top 3 pages to rewrite
+   - why they matter
+   - competitor proof
+   - blockers / confidence notes
+5. let the downstream docs agent choose only from that brief, not from raw DB state
+
+### Suggested handoff pattern
+
+For recurring docs pipelines, create a stable file like:
+
+```text
+reports/<project>-docs-brief.md
+```
+
+Recommended sections:
+- `New Pages to Create`
+- `Content Gaps`
+- `Weak Existing Pages`
+- `Competitor Proof`
+- `Blockers`
+- `Best Next Pick`
+
+This is the simplest way to make downstream automation reliable. The SEO Intel job does the heavy analysis once; docs/product automations consume a short, fixed-format brief instead of rediscovering the entire workspace each run.
+
 ## OpenClaw Workflow (Recommended)
 
 When running inside OpenClaw, the full intelligence loop becomes conversational:
@@ -213,6 +402,110 @@ When running inside OpenClaw, the full intelligence loop becomes conversational:
 2. Review: traditional keywords, Perplexity-style questions, agent queries
 3. Cross with AEO scores to find high-value + low-citability gaps
 4. Generate briefs: `seo-intel brief <project>`
+
+## Deploy Loop — Applying Fixes via Wrangler
+
+SEO Intel tells you what's wrong and what to build. Wrangler deploys it. Agents can close the loop end-to-end.
+
+### Setup (once)
+
+```bash
+npm install -g wrangler
+wrangler login        # opens browser for Cloudflare OAuth
+```
+
+The site needs a `wrangler.toml` in its root:
+```toml
+name = "your-cloudflare-project-name"
+compatibility_date = "2024-01-01"
+assets = { directory = "." }
+```
+
+And a `.wranglerignore` to keep internal files off the public site:
+```
+.DS_Store
+.claude/
+.wrangler/
+deploy.sh
+wrangler.toml
+```
+
+### Deploy
+
+```bash
+cd /path/to/site && wrangler deploy
+```
+
+Only changed files are uploaded. Deploy is instant and global (Cloudflare edge, no staging).
+
+---
+
+### "SEO Intel found issues — fix and deploy"
+
+1. Run analysis to get findings
+   ```bash
+   seo-intel aeo <project> --format json
+   seo-intel export-actions <project> --scope technical --format json
+   seo-intel schemas <project> --format json
+   ```
+
+2. Apply fixes to static HTML based on findings:
+
+   | SEO Intel finding | What to fix in the HTML |
+   |---|---|
+   | Low schema coverage (AEO) | Add/update `<script type="application/ld+json">` blocks |
+   | Low answer density (AEO) | Add direct-answer paragraphs after H2/H3 headings |
+   | Low Q&A proximity (AEO) | Add FAQ sections: `<h3>` question + `<p>` answer |
+   | Low freshness signal (AEO) | Add `dateModified` to JSON-LD, add "Updated [date]" near content |
+   | Schema gap vs competitors | Add the missing `@type` to JSON-LD |
+   | Missing meta tags | Add `og:title`, `og:description`, `twitter:card`, `meta description` |
+   | Missing hreflang | Add `<link rel="alternate" hreflang="...">` pairs in `<head>` |
+   | Content/topic gap | Create new page, update `sitemap.xml` and `llms.txt` |
+   | Version drift | Update `softwareVersion` in JSON-LD, nav badge, `llms.txt`, `skill.md` |
+
+3. Deploy
+   ```bash
+   cd /path/to/site && wrangler deploy
+   ```
+
+4. Re-crawl to verify lift
+   ```bash
+   seo-intel crawl <project> --scope new
+   seo-intel aeo <project>
+   ```
+
+---
+
+### Keeping llms.txt / skill.md in sync after releases
+
+After any version bump or feature release, update and redeploy:
+
+```bash
+# Update skill.md from source
+cp /path/to/seo-intel/skill/SKILL.md /path/to/site/seo-intel/skill.md
+
+# Update version references in llms.txt and llms-ctx.txt
+# (sed or agent edit — bump version number, update feature list)
+
+# Deploy
+cd /path/to/site && wrangler deploy
+```
+
+Files that must stay in sync on every version bump:
+- `seo-intel/skill.md` — copy from `seo-intel/skill/SKILL.md`
+- `llms.txt` — version number + feature summary
+- `llms-ctx.txt` — full context, version number, feature descriptions
+- JSON-LD `softwareVersion` on product pages
+- Nav version badge in HTML
+
+---
+
+### Safety rules for deploy agents
+
+- **Always read a file before editing it** — never blind-write HTML
+- **Never change pricing or contact info** without explicit instruction
+- **Keep all version references consistent** — JSON-LD, badge, llms.txt must all match
+- **Deploy is live immediately** — no staging, no undo. Be deliberate.
 
 ## Direct DB Queries (Advanced)
 

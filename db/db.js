@@ -29,6 +29,51 @@ export function getDb(dbPath = './seo-intel.db') {
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
 
+  // Site Watch tables
+  try {
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS watch_snapshots (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        project        TEXT NOT NULL,
+        created_at     INTEGER NOT NULL,
+        total_pages    INTEGER NOT NULL DEFAULT 0,
+        health_score   INTEGER,
+        errors_count   INTEGER NOT NULL DEFAULT 0,
+        warnings_count INTEGER NOT NULL DEFAULT 0,
+        notices_count  INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_watch_snapshots_project ON watch_snapshots(project, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS watch_page_states (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_id  INTEGER NOT NULL REFERENCES watch_snapshots(id) ON DELETE CASCADE,
+        url          TEXT NOT NULL,
+        status_code  INTEGER,
+        title        TEXT,
+        h1           TEXT,
+        meta_desc    TEXT,
+        word_count   INTEGER,
+        is_indexable INTEGER DEFAULT 1,
+        content_hash TEXT,
+        UNIQUE(snapshot_id, url)
+      );
+      CREATE INDEX IF NOT EXISTS idx_watch_page_states_snapshot ON watch_page_states(snapshot_id);
+
+      CREATE TABLE IF NOT EXISTS watch_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_id  INTEGER NOT NULL REFERENCES watch_snapshots(id) ON DELETE CASCADE,
+        event_type   TEXT NOT NULL,
+        severity     TEXT NOT NULL,
+        url          TEXT NOT NULL,
+        old_value    TEXT,
+        new_value    TEXT,
+        details      TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_watch_events_snapshot ON watch_events(snapshot_id);
+      CREATE INDEX IF NOT EXISTS idx_watch_events_type ON watch_events(event_type);
+    `);
+  } catch { /* tables already exist */ }
+
   // Migrate existing analyses → insights (one-time)
   _migrateAnalysesToInsights(_db);
 
@@ -49,6 +94,7 @@ function _insightFingerprint(type, item) {
     case 'positioning':       raw = 'positioning'; break;
     case 'keyword_inventor':  raw = item.phrase || ''; break;
     case 'citability_gap':    raw = item.url || ''; break;
+    case 'site_watch':        raw = `${item.url || ''}::${item.event_type || ''}`; break;
     default:                  raw = JSON.stringify(item);
   }
   return raw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -201,6 +247,7 @@ export function getActiveInsights(db, project) {
     technical_gaps: grouped.technical_gap || [],
     positioning: grouped.positioning?.[0] || null,
     keyword_inventor: grouped.keyword_inventor || [],
+    site_watch: grouped.site_watch || [],
     generated_at: rows.length ? Math.max(...rows.map(r => r.last_seen)) : null,
   };
 }
@@ -547,4 +594,30 @@ export function getHeadingStructure(db, project) {
     WHERE d.project = ?
     ORDER BY d.domain, h.level
   `).all(project);
+}
+
+// ── Site Watch ────────────────────────────────────────────────────────────
+
+export function getLatestWatchSnapshot(db, project) {
+  return db.prepare(
+    'SELECT * FROM watch_snapshots WHERE project = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(project) || null;
+}
+
+export function getWatchPageStates(db, snapshotId) {
+  return db.prepare(
+    'SELECT * FROM watch_page_states WHERE snapshot_id = ?'
+  ).all(snapshotId);
+}
+
+export function getWatchEvents(db, snapshotId) {
+  return db.prepare(
+    'SELECT * FROM watch_events WHERE snapshot_id = ? ORDER BY CASE severity WHEN \'critical\' THEN 0 WHEN \'warning\' THEN 1 ELSE 2 END, event_type'
+  ).all(snapshotId);
+}
+
+export function getWatchHistory(db, project, limit = 10) {
+  return db.prepare(
+    'SELECT * FROM watch_snapshots WHERE project = ? ORDER BY created_at DESC LIMIT ?'
+  ).all(project, limit);
 }

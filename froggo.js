@@ -68,6 +68,7 @@ export function isContentPage(url) {
 export { runAeoAnalysis as aeo } from './analyses/aeo/index.js';
 export { scorePage as scorePageCitability } from './analyses/aeo/scorer.js';
 export { runGapIntel as gapIntel } from './analyses/gap-intel/index.js';
+export { runWatch as watch, getWatchData } from './analyses/watch/index.js';
 export { gatherBlogDraftContext as blogDraftContext } from './analyses/blog-draft/index.js';
 export { buildBlogDraftPrompt as blogDraftPrompt } from './analyses/blog-draft/index.js';
 export { runTemplatesAnalysis as templates } from './analyses/templates/index.js';
@@ -150,6 +151,17 @@ export const capabilities = [
     requires: [],
     inputs: { project: 'string', options: { format: 'json|brief' } },
     outputs: { scores: 'array<PageScore>', summary: 'object', insights: 'array' },
+    phase: 'analyze',
+    tier: 'free',
+    dependsOn: ['crawl'],
+  },
+  {
+    id: 'watch',
+    name: 'Site Health Watch',
+    description: 'Detect changes between crawl runs — new/removed pages, status changes, title/content changes, health score',
+    requires: [],
+    inputs: { project: 'string' },
+    outputs: { snapshot: 'object', events: 'array<WatchEvent>', healthScore: 'number', trend: 'number' },
     phase: 'analyze',
     tier: 'free',
     dependsOn: ['crawl'],
@@ -335,6 +347,7 @@ export const pipeline = {
     crawl: [],
     extract: ['crawl'],
     aeo: ['crawl'],
+    watch: ['crawl'],
     'gap-intel': ['crawl', 'extract'],
     shallow: ['crawl'],
     decay: ['crawl'],
@@ -391,6 +404,12 @@ export async function run(command, project, opts = {}) {
           ...opts,
           log: opts.log || (() => {}),
         });
+        return wrap(result);
+      }
+
+      case 'watch': {
+        const { runWatch } = await import('./analyses/watch/index.js');
+        const result = runWatch(db, project, { log: opts.log || (() => {}) });
         return wrap(result);
       }
 

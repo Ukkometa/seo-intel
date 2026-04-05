@@ -660,6 +660,25 @@ program
       console.log(chalk.dim(`  ⚠  Dashboard refresh skipped: ${dashErr.message}`));
     }
 
+    // Auto-run site watch after crawl
+    try {
+      const { runWatch } = await import('./analyses/watch/index.js');
+      const watchResult = runWatch(db, project, { log: () => {} });
+      if (watchResult.snapshot) {
+        if (watchResult.isBaseline) {
+          console.log(chalk.dim(`  👁  Site Watch: baseline snapshot saved (health: ${watchResult.healthScore}/100)`));
+        } else if (watchResult.events.length) {
+          const t = watchResult.trend;
+          const trendStr = t > 0 ? `▲ +${t}` : t < 0 ? `▼ ${t}` : '';
+          console.log(chalk.dim(`  👁  Site Watch: ${watchResult.events.length} changes detected (health: ${watchResult.healthScore}/100${trendStr ? ' ' + trendStr : ''})`));
+        } else {
+          console.log(chalk.dim(`  👁  Site Watch: no changes (health: ${watchResult.healthScore}/100)`));
+        }
+      }
+    } catch (e) {
+      console.log(chalk.dim(`  ⚠  Site Watch skipped: ${e.message}`));
+    }
+
     if (opts.extract === false && totalExtracted === 0) {
       console.log(chalk.bold.green(`\n✅ Crawl complete (${elapsed}s) — raw data collected.`));
       console.log(chalk.white('  Next steps:'));
@@ -4221,6 +4240,128 @@ program
       const outPath = join(__dirname, `reports/${project}-aeo-${Date.now()}.md`);
       writeFileSync(outPath, md, 'utf8');
       console.log(chalk.bold.green(`  ✅ Report saved: ${outPath}\n`));
+    }
+  });
+
+// ── SITE WATCH ──────────────────────────────────────────────────────────
+program
+  .command('watch <project>')
+  .description('Site health monitor — detect changes between crawl runs')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    const db = getDb();
+    const config = loadConfig(project);
+    if (!config) return;
+    const isJson = opts.format === 'json';
+
+    if (!isJson) {
+      printAttackHeader('Site Watch', project);
+    }
+
+    const { runWatch } = await import('./analyses/watch/index.js');
+
+    const result = runWatch(db, project, {
+      log: isJson ? () => {} : (msg) => console.log(chalk.gray(msg)),
+    });
+
+    if (!result.snapshot) {
+      if (isJson) console.log(JSON.stringify({ ok: false, error: 'No crawled pages found' }));
+      return;
+    }
+
+    if (isJson) {
+      console.log(JSON.stringify({
+        snapshot: result.snapshot,
+        events: result.events,
+        healthScore: result.healthScore,
+        previousHealthScore: result.previousHealthScore,
+        trend: result.trend,
+        isBaseline: result.isBaseline,
+      }, null, 2));
+    } else {
+      // ── Health Score ──
+      const score = result.healthScore;
+      const scoreFmt = score >= 80 ? chalk.bold.green(score + '/100')
+        : score >= 60 ? chalk.bold.yellow(score + '/100')
+        : chalk.bold.red(score + '/100');
+
+      console.log('');
+      console.log(`    Health Score:  ${scoreFmt}`);
+
+      if (result.previousHealthScore !== null) {
+        const t = result.trend;
+        const trendStr = t > 0 ? chalk.green(`▲ +${t}`)
+          : t < 0 ? chalk.red(`▼ ${t}`)
+          : chalk.gray('— unchanged');
+        console.log(`                  ${trendStr} (was ${result.previousHealthScore}/100)`);
+      }
+      console.log('');
+
+      if (result.isBaseline) {
+        console.log(chalk.bold.green(`    ✅ Baseline captured — ${result.snapshot.total_pages} pages`));
+        console.log(chalk.gray('    Run another crawl to see changes.\n'));
+      } else {
+        // ── Severity summary ──
+        const { errors_count: e, warnings_count: w, notices_count: n } = result.snapshot;
+        const prev = result.previousHealthScore !== null ? {
+          e: 0, w: 0, n: 0, // We'll compute deltas from events
+        } : null;
+
+        console.log(`    ${chalk.red('●')} Critical:  ${e}`);
+        console.log(`    ${chalk.yellow('●')} Warning:   ${w}`);
+        console.log(`    ${chalk.gray('●')} Notice:    ${n}`);
+        console.log('');
+
+        // ── Event list ──
+        if (result.events.length) {
+          console.log(chalk.bold('    What\'s New:'));
+          console.log('');
+
+          const shown = result.events.slice(0, 25);
+          for (const ev of shown) {
+            const icon = ev.severity === 'critical' ? chalk.red('●')
+              : ev.severity === 'warning' ? chalk.yellow('▲')
+              : chalk.gray('○');
+            const sev = ev.severity.toUpperCase().padEnd(8);
+            const path = ev.url.replace(/https?:\/\/[^/]+/, '') || '/';
+
+            let desc = '';
+            switch (ev.event_type) {
+              case 'page_added':          desc = `${path} — new page`; break;
+              case 'page_removed':        desc = `${path} — removed`; break;
+              case 'new_error':           desc = `${path} → ${ev.new_value} (was ${ev.old_value})`; break;
+              case 'status_changed':      desc = `${path} status ${ev.old_value} → ${ev.new_value}`; break;
+              case 'title_changed':       desc = `${path} title: "${(ev.old_value || '').slice(0, 30)}" → "${(ev.new_value || '').slice(0, 30)}"`; break;
+              case 'h1_changed':          desc = `${path} H1 changed`; break;
+              case 'meta_desc_changed':   desc = `${path} meta description changed`; break;
+              case 'word_count_changed':  desc = `${path} word count ${ev.old_value} → ${ev.new_value}`; break;
+              case 'indexability_changed': desc = `${path} became ${ev.new_value}`; break;
+              case 'content_changed':     desc = `${path} content updated`; break;
+              default:                    desc = `${path} — ${ev.event_type.replace(/_/g, ' ')}`;
+            }
+
+            console.log(`    ${icon} ${chalk.dim(sev)} ${desc}`);
+          }
+
+          if (result.events.length > 25) {
+            console.log(chalk.gray(`    ... and ${result.events.length - 25} more`));
+          }
+          console.log('');
+        } else {
+          console.log(chalk.green('    ✅ No changes detected since last crawl.\n'));
+        }
+      }
+    }
+
+    // ── Regenerate dashboard ──
+    if (!isJson) {
+      try {
+        const configs = loadAllConfigs();
+        generateMultiDashboard(db, configs);
+        console.log(chalk.green('  ✅ Dashboard updated with Site Watch card\n'));
+      } catch (e) {
+        console.log(chalk.gray(`  (Dashboard not updated: ${e.message})\n`));
+      }
     }
   });
 

@@ -596,7 +596,7 @@ async function handleRequest(req, res) {
     const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
       'suggest-usecases', 'html', 'status', 'brief', 'keywords', 'report', 'guide',
       'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export', 'templates',
-      'aeo', 'blog-draft', 'gap-intel'];
+      'aeo', 'blog-draft', 'gap-intel', 'watch'];
 
     if (!command || !ALLOWED.includes(command)) {
       json(res, 400, { error: `Invalid command. Allowed: ${ALLOWED.join(', ')}` });

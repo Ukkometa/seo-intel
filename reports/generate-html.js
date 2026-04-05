@@ -20,6 +20,7 @@ import { loadGscData } from './gsc-loader.js';
 import { isPro } from '../lib/license.js';
 import { getActiveInsights } from '../db/db.js';
 import { getCitabilityScores } from '../analyses/aeo/index.js';
+import { getWatchData } from '../analyses/watch/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -108,6 +109,10 @@ function gatherProjectData(db, project, config) {
   let citabilityData = null;
   try { citabilityData = getCitabilityScores(db, project); } catch { /* table may not exist yet */ }
 
+  // Site Watch data
+  let watchData = null;
+  try { watchData = getWatchData(db, project); } catch { /* tables may not exist yet */ }
+
   // Extraction status
   const extractionStatus = getExtractionStatus(db, project, config);
 
@@ -131,7 +136,7 @@ function gatherProjectData(db, project, config) {
     ctaLandscape, entityTopicMap, schemaBreakdown,
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
-    keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData,
+    keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData, watchData,
   };
 
   // Rollback the owned→target merge so the actual DB is unchanged
@@ -194,7 +199,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ctaLandscape, entityTopicMap, schemaBreakdown,
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
-    keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData,
+    keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData, watchData,
   } = data;
 
   const totalPages = domains.reduce((sum, d) => sum + d.page_count, 0);
@@ -1792,6 +1797,9 @@ function buildHtmlTemplate(data, opts = {}) {
         Crawled <strong>${totalPages}</strong> pages — no major structural issues detected.
       </div>`}
 
+      <!-- SITE WATCH -->
+      ${watchData?.current ? buildWatchCard(watchData, escapeHtml) : ''}
+
       <!-- PAGE INVENTORY -->
       <div class="card" style="margin-bottom:16px;">
         <h2><span class="icon"><i class="fa-solid fa-table-list"></i></span> Page Inventory — ${targetDomain}</h2>
@@ -2769,6 +2777,9 @@ function buildHtmlTemplate(data, opts = {}) {
       ${blocks}
     </div>`;
     })() : ''}
+
+    <!-- ═══ SITE WATCH ═══ -->
+    ${watchData?.current ? buildWatchCard(watchData, escapeHtml) : ''}
 
     <div class="section-divider">
       <div class="section-divider-line right"></div>
@@ -6869,4 +6880,141 @@ function getGscInsights(gscData, db, project) {
   } catch (e) { /* pages table may not exist */ }
 
   return insights.length ? insights : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SITE WATCH CARD
+// ═══════════════════════════════════════════════════════════════════════════
+
+function buildWatchCard(watchData, escapeHtml) {
+  const { current, previous, events, trend } = watchData;
+  const score = current.health_score ?? 0;
+  const scoreColor = score >= 80 ? 'var(--color-success)' : score >= 60 ? 'var(--color-warning)' : 'var(--color-danger)';
+  const trendArrow = trend > 0 ? `<span style="color:var(--color-success);">▲ +${trend}</span>`
+    : trend < 0 ? `<span style="color:var(--color-danger);">▼ ${trend}</span>`
+    : previous ? '<span style="color:var(--text-muted);">— unchanged</span>' : '';
+  const prevText = previous ? ` <span style="color:var(--text-muted);font-size:0.7rem;">(was ${previous.health_score}/100)</span>` : '';
+
+  const timestamp = new Date(current.created_at).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+
+  // Severity counts with deltas
+  const eCurr = current.errors_count || 0;
+  const wCurr = current.warnings_count || 0;
+  const nCurr = current.notices_count || 0;
+  const ePrev = previous?.errors_count || 0;
+  const wPrev = previous?.warnings_count || 0;
+  const nPrev = previous?.notices_count || 0;
+
+  function delta(curr, prev) {
+    if (!previous) return '';
+    const d = curr - prev;
+    if (d > 0) return `<span style="color:var(--color-danger);font-size:0.65rem;"> +${d}</span>`;
+    if (d < 0) return `<span style="color:var(--color-success);font-size:0.65rem;"> ${d}</span>`;
+    return '';
+  }
+
+  // Event type labels
+  const eventLabel = (type) => {
+    const labels = {
+      page_added: 'New page',
+      page_removed: 'Page removed',
+      new_error: 'New error',
+      status_changed: 'Status changed',
+      title_changed: 'Title changed',
+      h1_changed: 'H1 changed',
+      meta_desc_changed: 'Meta description changed',
+      word_count_changed: 'Word count changed',
+      indexability_changed: 'Indexability changed',
+      content_changed: 'Content updated',
+    };
+    return labels[type] || type.replace(/_/g, ' ');
+  };
+
+  const severityIcon = (s) => {
+    if (s === 'critical') return '<span style="color:var(--color-danger);">●</span>';
+    if (s === 'warning') return '<span style="color:var(--color-warning);">▲</span>';
+    return '<span style="color:var(--text-muted);">○</span>';
+  };
+
+  const shownEvents = events.slice(0, 20);
+
+  return `
+  <div class="card" style="margin-bottom:16px;">
+    <h2><span class="icon"><i class="fa-solid fa-eye"></i></span> Site Watch</h2>
+
+    <!-- Health Score + Summary -->
+    <div style="display:flex;align-items:center;gap:24px;margin-bottom:16px;">
+      <div style="text-align:center;">
+        <div style="font-size:2rem;font-weight:700;color:${scoreColor};line-height:1;">${score}</div>
+        <div style="font-size:0.65rem;color:var(--text-muted);">Health Score</div>
+      </div>
+      <div style="font-size:0.75rem;">
+        <div>${trendArrow}${prevText}</div>
+        <div style="color:var(--text-muted);font-size:0.65rem;margin-top:4px;">${current.total_pages} pages · ${timestamp}</div>
+      </div>
+      <div style="display:flex;gap:16px;margin-left:auto;font-size:0.75rem;">
+        <div style="text-align:center;">
+          <div style="font-size:1.1rem;font-weight:600;color:var(--color-danger);">${eCurr}</div>
+          <div style="font-size:0.6rem;color:var(--text-muted);">Critical${delta(eCurr, ePrev)}</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.1rem;font-weight:600;color:var(--color-warning);">${wCurr}</div>
+          <div style="font-size:0.6rem;color:var(--text-muted);">Warning${delta(wCurr, wPrev)}</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.1rem;font-weight:600;color:var(--text-secondary);">${nCurr}</div>
+          <div style="font-size:0.6rem;color:var(--text-muted);">Notice${delta(nCurr, nPrev)}</div>
+        </div>
+      </div>
+    </div>
+
+    ${shownEvents.length ? `
+    <!-- What's New -->
+    <div style="border-top:1px solid var(--border-card);padding-top:12px;">
+      <div style="font-size:0.72rem;font-weight:600;color:var(--text-primary);margin-bottom:8px;">What's New</div>
+      <div class="table-wrapper" style="max-height:320px;overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px;"></th>
+              <th>Type</th>
+              <th>URL</th>
+              <th>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${shownEvents.map(ev => {
+              const path = ev.url.replace(/^https?:\/\/[^/]+/, '') || '/';
+              let changeText = '';
+              if (ev.old_value && ev.new_value) {
+                changeText = `${escapeHtml((ev.old_value || '').slice(0, 40))} → ${escapeHtml((ev.new_value || '').slice(0, 40))}`;
+              } else if (ev.new_value) {
+                changeText = escapeHtml((ev.new_value || '').slice(0, 60));
+              } else if (ev.old_value) {
+                changeText = `was: ${escapeHtml((ev.old_value || '').slice(0, 60))}`;
+              }
+              return `<tr>
+                <td style="text-align:center;">${severityIcon(ev.severity)}</td>
+                <td style="font-size:0.7rem;white-space:nowrap;">${eventLabel(ev.event_type)}</td>
+                <td style="font-size:0.7rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(ev.url)}">${escapeHtml(path)}</td>
+                <td style="font-size:0.68rem;color:var(--text-secondary);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${changeText}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${events.length > 20 ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Showing 20 of ${events.length} changes. Run <code>seo-intel watch</code> for full report.</div>` : ''}
+    </div>
+    ` : previous ? `
+    <div style="border-top:1px solid var(--border-card);padding-top:12px;font-size:0.75rem;color:var(--color-success);">
+      <i class="fa-solid fa-check-circle" style="margin-right:6px;"></i> No changes detected since last crawl.
+    </div>
+    ` : `
+    <div style="border-top:1px solid var(--border-card);padding-top:12px;font-size:0.75rem;color:var(--text-muted);">
+      <i class="fa-solid fa-info-circle" style="margin-right:6px;"></i> Baseline captured. Run another crawl to see changes.
+    </div>
+    `}
+  </div>`;
 }

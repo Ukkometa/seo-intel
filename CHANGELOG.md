@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.2 (2026-04-05)
+
+### New Feature: Site Watch
+- `seo-intel watch <project>` — detect changes between crawl runs and track site health
+- Health Score (0-100) based on page errors, missing titles, missing H1s
+- Diff engine detects 10 event types: new/removed pages, status changes, title/H1/meta changes, word count shifts, indexability flips, content updates
+- Events classified by severity: critical, warning, notice — with trend arrows
+- Auto-runs after every crawl with a one-liner summary
+- Dashboard card: health score gauge, severity counts with deltas, "What's New" event table
+- Significant changes (critical/warning) feed into Intelligence Ledger as `site_watch` insights
+- Available via CLI, dashboard terminal, and froggo.js API
+- Free tier — no license required
+
 ## 1.4.1 (2026-04-03)
 
 ### Fixes

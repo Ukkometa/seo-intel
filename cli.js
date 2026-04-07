@@ -742,9 +742,9 @@ program
     console.log(chalk.yellow('Sending to Gemini...\n'));
 
     // Save prompt for debugging (markdown for Obsidian/agent compatibility)
-    const promptTs = Date.now();
+    const promptTs = new Date().toISOString().slice(0, 10);
     const promptPath = join(__dirname, `reports/${project}-prompt-${promptTs}.md`);
-    const promptFrontmatter = `---\nproject: ${project}\ngenerated: ${new Date(promptTs).toISOString()}\ntype: analysis-prompt\nmodel: gemini\n---\n\n`;
+    const promptFrontmatter = `---\nproject: ${project}\ngenerated: ${new Date().toISOString()}\ntype: analysis-prompt\nmodel: gemini\n---\n\n`;
     writeFileSync(promptPath, promptFrontmatter + prompt, 'utf8');
     console.log(chalk.gray(`Prompt saved: ${promptPath}`));
 
@@ -764,13 +764,13 @@ program
       analysis = JSON.parse(jsonMatch[0]);
     } catch {
       console.error(chalk.red('Could not parse JSON from response. Saving raw output.'));
-      const rawPath = join(__dirname, `reports/${project}-raw-${Date.now()}.md`);
+      const rawPath = join(__dirname, `reports/${project}-raw-${new Date().toISOString().slice(0, 10)}.md`);
       writeFileSync(rawPath, result, 'utf8');
       process.exit(1);
     }
 
     // Save structured analysis to file
-    const outPath = join(__dirname, `reports/${project}-analysis-${Date.now()}.json`);
+    const outPath = join(__dirname, `reports/${project}-analysis-${new Date().toISOString().slice(0, 10)}.json`);
     writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
 
     // Save to DB (so HTML dashboard picks it up)
@@ -930,7 +930,7 @@ Respond ONLY with a single valid JSON object matching this exact schema. No expl
       data = JSON.parse(jsonMatch[0]);
     } catch {
       console.error(chalk.red('Could not parse JSON from Gemini response.'));
-      const rawPath = join(__dirname, `reports/${project}-keywords-raw-${Date.now()}.md`);
+      const rawPath = join(__dirname, `reports/${project}-keywords-raw-${new Date().toISOString().slice(0, 10)}.md`);
       writeFileSync(rawPath, result, 'utf8');
       console.error(chalk.gray(`Raw output saved: ${rawPath}`));
       process.exit(1);
@@ -991,7 +991,7 @@ Respond ONLY with a single valid JSON object matching this exact schema. No expl
     }
 
     if (opts.save) {
-      const outPath = join(__dirname, `reports/${project}-keywords-${Date.now()}.json`);
+      const outPath = join(__dirname, `reports/${project}-keywords-${new Date().toISOString().slice(0, 10)}.json`);
       writeFileSync(outPath, JSON.stringify(data, null, 2), 'utf8');
       console.log(chalk.bold.green(`✅ Report saved: ${outPath}\n`));
 
@@ -1759,7 +1759,7 @@ async function runAnalysis(project, db) {
   try {
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     const analysis = JSON.parse(jsonMatch[0]);
-    const outPath = join(__dirname, `reports/${project}-analysis-${Date.now()}.json`);
+    const outPath = join(__dirname, `reports/${project}-analysis-${new Date().toISOString().slice(0, 10)}.json`);
     writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
 
     // Save to DB
@@ -2410,7 +2410,7 @@ program
       report += `> Analyze this heading structure from ${page.domain}. What H2/H3 sub-topics are logically missing? What would a user expect to find that isn't covered? Be specific.\n\n---\n\n`;
     }
 
-    const outPath = join(__dirname, `reports/${project}-headings-audit-${Date.now()}.md`);
+    const outPath = join(__dirname, `reports/${project}-headings-audit-${new Date().toISOString().slice(0, 10)}.md`);
     writeFileSync(outPath, report, 'utf8');
 
     console.log(chalk.bold.green(`\n✅ Full audit saved: ${outPath}`));
@@ -2672,7 +2672,7 @@ program
 
     // ── Save ──
     if (opts.save) {
-      const outPath = join(__dirname, `reports/${project}-entities-${Date.now()}.md`);
+      const outPath = join(__dirname, `reports/${project}-entities-${new Date().toISOString().slice(0, 10)}.md`);
       writeFileSync(outPath, mdOutput, 'utf8');
       console.log(chalk.bold.green(`  ✅ Entity map saved: ${outPath}\n`));
     }
@@ -3369,7 +3369,7 @@ program
 
     // ── Save ──
     if (opts.save) {
-      const outPath = join(__dirname, `reports/${project}-brief-${Date.now()}.md`);
+      const outPath = join(__dirname, `reports/${project}-brief-${new Date().toISOString().slice(0, 10)}.md`);
       writeFileSync(outPath, mdOutput, 'utf8');
       console.log(chalk.bold.green(`  ✅ Brief saved: ${outPath}\n`));
     }
@@ -3713,7 +3713,7 @@ program
     }
 
     if (opts.save) {
-      const outPath = join(__dirname, `reports/${project}-js-delta-${Date.now()}.md`);
+      const outPath = join(__dirname, `reports/${project}-js-delta-${new Date().toISOString().slice(0, 10)}.md`);
       writeFileSync(outPath, mdOutput, 'utf8');
       console.log(chalk.bold.green(`  ✅ Report saved: ${outPath}\n`));
     }
@@ -3859,7 +3859,7 @@ program
     }
 
     // Output
-    const timestamp = Date.now();
+    const timestamp = new Date().toISOString().slice(0, 10);
     const defaultPath = join(__dirname, `reports/${project}-export-${timestamp}.${format}`);
     const outPath = opts.output || defaultPath;
 
@@ -4237,7 +4237,7 @@ program
       for (const p of worst) {
         md += `- **${p.url}** — ${p.score}/100 (${p.tier})\n`;
       }
-      const outPath = join(__dirname, `reports/${project}-aeo-${Date.now()}.md`);
+      const outPath = join(__dirname, `reports/${project}-aeo-${new Date().toISOString().slice(0, 10)}.md`);
       writeFileSync(outPath, md, 'utf8');
       console.log(chalk.bold.green(`  ✅ Report saved: ${outPath}\n`));
     }
@@ -4521,7 +4521,7 @@ program
       const slug = opts.topic
         ? opts.topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50)
         : 'auto';
-      const filename = `${project}-blog-draft-${slug}-${Date.now()}.md`;
+      const filename = `${project}-blog-draft-${slug}-${new Date().toISOString().slice(0, 10)}.md`;
       const outPath = join(__dirname, 'reports', filename);
       writeFileSync(outPath, draft, 'utf8');
       console.log(chalk.bold.green(`  ✅ Draft saved: ${outPath}`));

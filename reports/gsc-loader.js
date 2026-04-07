@@ -1,7 +1,7 @@
 /**
  * Google Search Console CSV data loader
  * Reads GSC export folders from seo-intel/gsc/<project>*/
-import { readdirSync, readFileSync, existsSync } from 'fs';
+import { readdirSync, readFileSync, existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -87,8 +87,18 @@ export function loadGscData(project) {
   );
   if (!folders.length) return null;
 
-  // Use most recent folder (alphabetically last)
-  const folder = join(GSC_DIR, folders.sort().pop());
+  // Use most recently modified matching folder.
+  // This avoids stale picks like "carbium-2" winning over a freshly uploaded "carbium".
+  const selectedFolder = [...folders]
+    .map(name => {
+      const path = join(GSC_DIR, name);
+      let mtimeMs = 0;
+      try { mtimeMs = statSync(path).mtimeMs; } catch { /* ignore */ }
+      return { name, path, mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name))[0];
+
+  const folder = selectedFolder.path;
 
   function loadCSV(filename) {
     const filepath = join(folder, filename);
@@ -185,6 +195,6 @@ export function loadGscData(project) {
     countries,
     devices,
     summary: { totalClicks, totalImpressions, avgPosition, avgCtr, dateRange },
-    folder: folders.sort().pop(),
+    folder: selectedFolder.name,
   };
 }

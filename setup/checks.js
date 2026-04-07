@@ -328,8 +328,15 @@ export function checkGscData(project) {
 
     if (folders.length === 0) return { hasData: false, folders: allFolders, project };
 
-    // Check what CSV files exist in the latest folder
-    const latest = folders.sort().pop();
+    // Check what CSV files exist in the most recently modified matching folder
+    const latest = [...folders]
+      .map(name => {
+        const folderPath = join(gscDir, name);
+        let mtimeMs = 0;
+        try { mtimeMs = statSync(folderPath).mtimeMs; } catch { /* ignore */ }
+        return { name, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name))[0]?.name;
     const folderPath = join(gscDir, latest);
     const expectedFiles = ['Chart.csv', 'Queries.csv', 'Pages.csv', 'Countries.csv', 'Devices.csv'];
     const found = [];

@@ -24,13 +24,19 @@ import { getWatchData } from '../analyses/watch/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/**
- * Generate HTML dashboard from database
- * @param {import('node:sqlite').DatabaseSync} db - SQLite database
- * @param {string} project - Project name (e.g., 'mysite')
- * @param {object} config - Project config
- * @returns {string} Path to generated HTML file
- */
+/** Build per-card export dropdown HTML */
+function cardExportHtml(section, project) {
+  return `<div class="card-export" data-project="${project}" data-section="${section}">
+    <button class="card-export-btn" title="Export"><i class="fa-solid fa-download"></i></button>
+    <div class="card-export-dropdown">
+      <button data-fmt="md"><i class="fa-solid fa-file-lines"></i> Markdown</button>
+      <button data-fmt="json"><i class="fa-solid fa-code"></i> JSON</button>
+      <button data-fmt="csv"><i class="fa-solid fa-table"></i> CSV</button>
+      <button data-fmt="zip"><i class="fa-solid fa-file-zipper"></i> ZIP (all)</button>
+    </div>
+  </div>`;
+}
+
 /**
  * Gather all dashboard data for a single project
  */
@@ -419,6 +425,32 @@ function buildHtmlTemplate(data, opts = {}) {
     .card.full-width {
       grid-column: 1 / -1;
     }
+    .card { position: relative; }
+    .card-export {
+      position: absolute; top: 10px; right: 10px; z-index: 5;
+    }
+    .card-export-btn {
+      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+      color: var(--text-muted); cursor: pointer; border-radius: var(--radius);
+      width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; transition: all .15s;
+    }
+    .card-export-btn:hover { color: var(--accent-gold); border-color: var(--accent-gold); }
+    .card-export-dropdown {
+      display: none; position: absolute; right: 0; top: 32px;
+      background: var(--bg-card); border: 1px solid var(--border-card);
+      border-radius: var(--radius); min-width: 150px; padding: 4px 0;
+      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    }
+    .card-export.open .card-export-dropdown { display: block; }
+    .card-export-dropdown button {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      background: none; border: none; color: var(--text-secondary);
+      padding: 7px 14px; font-size: 0.72rem; cursor: pointer; text-align: left;
+      font-family: var(--font-body);
+    }
+    .card-export-dropdown button:hover { background: var(--bg-elevated); color: var(--text-primary); }
+    .card-export-dropdown button i { width: 14px; text-align: center; color: var(--text-muted); font-size: 0.65rem; }
 
     /* ─── Extraction Status Bar ─────────────────────────────────────────── */
     .extraction-status {
@@ -1798,7 +1830,7 @@ function buildHtmlTemplate(data, opts = {}) {
       </div>`}
 
       <!-- SITE WATCH -->
-      ${watchData?.current ? buildWatchCard(watchData, escapeHtml) : ''}
+      ${watchData?.current ? buildWatchCard(watchData, escapeHtml, project) : ''}
 
       <!-- PAGE INVENTORY -->
       <div class="card" style="margin-bottom:16px;">
@@ -2156,6 +2188,12 @@ function buildHtmlTemplate(data, opts = {}) {
           </div>
         </div>
         <button class="export-btn" data-export-cmd="aeo" data-export-project="${project}"><i class="fa-solid fa-robot"></i> AI Citability Audit</button>
+      </div>
+      <div class="export-sidebar-header" style="margin-top:12px;">
+        <i class="fa-solid fa-download"></i> Download
+      </div>
+      <div class="export-sidebar-btns">
+        <button class="export-btn download-all-btn" data-project="${project}"><i class="fa-solid fa-file-zipper"></i> Download All Reports (ZIP)</button>
       </div>
       <div style="position:relative;">
         <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
@@ -2516,6 +2554,49 @@ function buildHtmlTemplate(data, opts = {}) {
       });
     }
 
+    // ── Card export dropdowns (global — run once, capture phase) ──
+    if (!window._cardExportBound) {
+      window._cardExportBound = true;
+      document.addEventListener('click', function(e) {
+        var btn = e.target.closest('.card-export-btn');
+        var fmtBtn = e.target.closest('[data-fmt]');
+        if (btn) {
+          var wrap = btn.closest('.card-export');
+          if (wrap) {
+            e.stopImmediatePropagation();
+            var wasOpen = wrap.classList.contains('open');
+            document.querySelectorAll('.card-export.open').forEach(function(el) { el.classList.remove('open'); });
+            if (!wasOpen) wrap.classList.add('open');
+            return;
+          }
+        }
+        if (fmtBtn) {
+          var wrap2 = fmtBtn.closest('.card-export');
+          if (wrap2) {
+            e.stopImmediatePropagation();
+            wrap2.classList.remove('open');
+            var sec = wrap2.getAttribute('data-section');
+            var proj2 = wrap2.getAttribute('data-project');
+            var fmt = fmtBtn.getAttribute('data-fmt');
+            if (window.location.protocol.startsWith('http')) {
+              window.location = '/api/export/download?project=' + encodeURIComponent(proj2) + '&section=' + encodeURIComponent(sec) + '&format=' + encodeURIComponent(fmt);
+            }
+            return;
+          }
+        }
+        var dlBtn = e.target.closest('.download-all-btn');
+        if (dlBtn) {
+          var proj3 = dlBtn.getAttribute('data-project');
+          if (window.location.protocol.startsWith('http')) {
+            window.location = '/api/export/download?project=' + encodeURIComponent(proj3) + '&section=all&format=zip';
+          }
+          return;
+        }
+        // Outside click — close all open dropdowns
+        document.querySelectorAll('.card-export.open').forEach(function(el) { el.classList.remove('open'); });
+      }, true);
+    }
+
     // Input enter
     input.addEventListener('keydown', function(e) {
       if (e.key !== 'Enter') return;
@@ -2779,7 +2860,7 @@ function buildHtmlTemplate(data, opts = {}) {
     })() : ''}
 
     <!-- ═══ SITE WATCH ═══ -->
-    ${watchData?.current ? buildWatchCard(watchData, escapeHtml) : ''}
+    ${watchData?.current ? buildWatchCard(watchData, escapeHtml, project) : ''}
 
     <div class="section-divider">
       <div class="section-divider-line right"></div>
@@ -2835,6 +2916,7 @@ function buildHtmlTemplate(data, opts = {}) {
 
     <!-- ═══ HEADING DEPTH FLOW ═══ -->
     <div class="card full-width" id="heading-flow">
+      ${cardExportHtml('headings', project)}
       <h2><span class="icon"><i class="fa-solid fa-water"></i></span> Heading Depth Flow</h2>
       <canvas id="headingFlowCanvas${suffix}" width="1100" height="320"></canvas>
     </div>
@@ -2862,6 +2944,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ ENTITY TOPIC MAP ═══ -->
     ${pro && entityTopicMap.hasData ? `
     <div class="card full-width" id="entity-map">
+      ${cardExportHtml('insights', project)}
       <h2><span class="icon"><i class="fa-solid fa-map"></i></span> Entity Topic Map</h2>
       <div class="entity-map-grid">
         ${Object.entries(entityTopicMap.domainEntities).map(([domain, data]) => `
@@ -2886,6 +2969,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ KEYWORD BATTLEGROUND ═══ -->
     ${pro ? `
     <div class="card full-width" id="keyword-heatmap">
+      ${cardExportHtml('keywords', project)}
       <h2><span class="icon"><i class="fa-solid fa-shield-halved"></i></span> Keyword Battleground</h2>
       ${keywordHeatmap.keywords.length ? `
       <div class="table-wrapper">
@@ -2930,6 +3014,7 @@ function buildHtmlTemplate(data, opts = {}) {
 
     <!-- ═══ TECHNICAL SEO SCORECARD ═══ -->
     <div class="card full-width" id="technical-seo">
+      ${cardExportHtml('technical', project)}
       <h2><span class="icon"><i class="fa-solid fa-gear"></i></span> Technical SEO Scorecard</h2>
       <div class="scorecard-grid">
         ${technicalScores.map(ts => {
@@ -2998,6 +3083,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ TECHNICAL SEO GAPS ═══ -->
     ${pro && latestAnalysis?.technical_gaps?.length ? `
     <div class="card full-width" id="technical-gaps">
+      ${cardExportHtml('technical', project)}
       <h2><span class="icon"><i class="fa-solid fa-wrench"></i></span> Technical SEO Gaps</h2>
       <div class="analysis-table-wrap">
         <table class="analysis-table">
@@ -3026,6 +3112,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ QUICK WINS ═══ -->
     ${pro && latestAnalysis?.quick_wins?.length ? `
     <div class="card" id="quick-wins">
+      ${cardExportHtml('insights', project)}
       <h2><span class="icon"><i class="fa-solid fa-bolt"></i></span> Quick Wins</h2>
       <div class="analysis-table-wrap">
         <table class="analysis-table">
@@ -3048,6 +3135,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ NEW PAGES TO CREATE ═══ -->
     ${pro && latestAnalysis?.new_pages?.length ? `
     <div class="card" id="new-pages">
+      ${cardExportHtml('pages', project)}
       <h2><span class="icon"><i class="fa-solid fa-file-circle-plus"></i></span> New Pages to Create</h2>
       <div class="new-pages-grid" style="grid-template-columns: 1fr;">
         ${(latestAnalysis.new_pages).map(np => `
@@ -3100,6 +3188,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ CONTENT GAPS ═══ -->
     ${pro && latestAnalysis?.content_gaps?.length ? `
     <div class="card full-width" id="content-gaps">
+      ${cardExportHtml('insights', project)}
       <h2><span class="icon"><i class="fa-solid fa-magnifying-glass-minus"></i></span> Content Gaps</h2>
       <div class="insights-grid">
         ${(latestAnalysis.content_gaps).map(gap => `
@@ -3308,6 +3397,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ SCHEMA TYPE BREAKDOWN ═══ -->
     ${schemaBreakdown.hasData ? `
     <div class="card" id="schema-breakdown">
+      ${cardExportHtml('schemas', project)}
       <h2><span class="icon"><i class="fa-solid fa-code"></i></span> Schema Markup Breakdown</h2>
       <div class="table-wrapper">
         <table>
@@ -3334,6 +3424,7 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ TOP KEYWORDS ═══ -->
     ${pro ? `
     <div class="card" id="top-keywords">
+      ${cardExportHtml('keywords', project)}
       <h2><span class="icon"><i class="fa-solid fa-key"></i></span> Top Keywords (${targetDomain})</h2>
       ${keywords.length ? `
       <div class="table-wrapper" style="max-height: 400px; overflow-y: auto;">
@@ -3369,6 +3460,7 @@ function buildHtmlTemplate(data, opts = {}) {
 
     <!-- ═══ INTERNAL LINK ANALYSIS ═══ -->
     <div class="card" id="internal-links">
+      ${cardExportHtml('links', project)}
       <h2><span class="icon"><i class="fa-solid fa-link"></i></span> Internal Link Analysis</h2>
       <div class="stat-row">
         <div class="stat-box">
@@ -3407,7 +3499,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>` : ''}
 
     <!-- ═══ AEO / AI CITABILITY AUDIT ═══ -->
-    ${pro && citabilityData?.length ? buildAeoCard(citabilityData, escapeHtml) : ''}
+    ${pro && citabilityData?.length ? buildAeoCard(citabilityData, escapeHtml, project) : ''}
 
     <!-- ═══ LONG-TAIL OPPORTUNITIES ═══ -->
     ${pro && latestAnalysis?.long_tails?.length ? `
@@ -5232,7 +5324,7 @@ function buildMultiHtmlTemplate(allProjectData) {
 
 // ─── AEO Card Builder ────────────────────────────────────────────────────────
 
-function buildAeoCard(citabilityData, escapeHtml) {
+function buildAeoCard(citabilityData, escapeHtml, project) {
   const targetScores = citabilityData.filter(s => s.role === 'target' || s.role === 'owned');
   const compScores = citabilityData.filter(s => s.role === 'competitor');
   if (!targetScores.length) return '';
@@ -5296,6 +5388,7 @@ function buildAeoCard(citabilityData, escapeHtml) {
 
   return `
     <div class="card full-width" id="aeo-citability">
+      ${cardExportHtml('aeo', project)}
       <h2><span class="icon"><i class="fa-solid fa-robot"></i></span> AI Citability Audit</h2>
       <div class="ki-stat-bar">
         <div class="ki-stat"><span class="ki-stat-number" style="color:${scoreColor(avgTarget)}">${avgTarget}</span><span class="ki-stat-label">Target Avg</span></div>
@@ -6886,7 +6979,7 @@ function getGscInsights(gscData, db, project) {
 // SITE WATCH CARD
 // ═══════════════════════════════════════════════════════════════════════════
 
-function buildWatchCard(watchData, escapeHtml) {
+function buildWatchCard(watchData, escapeHtml, project) {
   const { current, previous, events, trend } = watchData;
   const score = current.health_score ?? 0;
   const scoreColor = score >= 80 ? 'var(--color-success)' : score >= 60 ? 'var(--color-warning)' : 'var(--color-danger)';
@@ -6942,6 +7035,7 @@ function buildWatchCard(watchData, escapeHtml) {
 
   return `
   <div class="card" style="margin-bottom:16px;">
+    ${cardExportHtml('watch', project)}
     <h2><span class="icon"><i class="fa-solid fa-eye"></i></span> Site Watch</h2>
 
     <!-- Health Score + Summary -->

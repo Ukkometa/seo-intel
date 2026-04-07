@@ -177,6 +177,12 @@ export function handleSetupRequest(req, res, url) {
     return true;
   }
 
+  // POST /api/setup/dashboard/restart — soft restart / reload hint for dashboard UI
+  if (path === '/api/setup/dashboard/restart' && method === 'POST') {
+    handleDashboardRestart(res);
+    return true;
+  }
+
   // GET /api/setup/version — current version + update info
   if (path === '/api/setup/version' && method === 'GET') {
     handleVersion(req, res);
@@ -255,7 +261,17 @@ function serveWizardHtml(res) {
 function getOllamaHosts() {
   const hosts = [];
   if (process.env.OLLAMA_URL) hosts.push(process.env.OLLAMA_URL);
-  if (process.env.OLLAMA_FALLBACK_URL) hosts.push(process.env.OLLAMA_FALLBACK_URL);
+  // Support comma-separated OLLAMA_HOSTS for multiple LAN addresses
+  if (process.env.OLLAMA_HOSTS) {
+    for (const h of process.env.OLLAMA_HOSTS.split(',')) {
+      const trimmed = h.trim();
+      if (trimmed && !hosts.includes(trimmed)) hosts.push(trimmed);
+    }
+  }
+  // Legacy single fallback
+  if (process.env.OLLAMA_FALLBACK_URL) {
+    if (!hosts.includes(process.env.OLLAMA_FALLBACK_URL)) hosts.push(process.env.OLLAMA_FALLBACK_URL);
+  }
   return hosts;
 }
 
@@ -394,8 +410,17 @@ async function handleEnv(req, res) {
       return;
     }
 
-    const result = updateEnvForSetup(keys);
-    jsonResponse(res, { success: true, path: result.path });
+    // saveModelsModule sends raw env var names (OLLAMA_MODEL, ANALYSIS_PROVIDER, etc.)
+    // while updateEnvForSetup expects camelCase. Write raw env vars directly.
+    for (const [key, value] of Object.entries(keys)) {
+      if (/^[A-Z_]+$/.test(key) && value) {
+        writeEnvKey(key, String(value));
+        process.env[key] = String(value);
+      }
+    }
+
+    const envPath = join(ROOT, '.env');
+    jsonResponse(res, { success: true, path: envPath });
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);
   }
@@ -497,6 +522,15 @@ async function handleGscUpload(req, res) {
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);
   }
+}
+
+function handleDashboardRestart(res) {
+  jsonResponse(res, {
+    success: true,
+    restarted: true,
+    mode: 'soft',
+    message: 'Dashboard restart requested. Reload the dashboard UI to pick up latest settings.',
+  });
 }
 
 // ── Version / Update Handler ──────────────────────────────────────────────

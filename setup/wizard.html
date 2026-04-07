@@ -340,6 +340,26 @@ body {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 20px;
 }
+/* Floating genie card — follows scroll on the right, never takes layout space */
+.genie-card {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  width: 280px;
+  z-index: 50;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  border-color: rgba(124,109,235,0.3);
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  transition: opacity 0.2s;
+}
+.genie-card::-webkit-scrollbar { width: 3px; }
+.genie-card::-webkit-scrollbar-thumb { background: rgba(124,109,235,0.3); border-radius: 3px; }
+.genie-card .genie-close {
+  position: absolute; top: 10px; right: 10px;
+  background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem;
+}
+.genie-card .genie-close:hover { color: var(--text-primary); }
 .model-section {
   position: relative;
 }
@@ -1159,6 +1179,7 @@ input::placeholder {
   body { padding: 16px 12px; }
   .dep-grid { grid-template-columns: 1fr; }
   .model-columns { grid-template-columns: 1fr; }
+  .genie-card { display: none; }
   .form-row { grid-template-columns: 1fr; }
   .step-indicator { flex-wrap: nowrap; gap: 0; overflow-x: auto; }
   .step-connector { width: 12px; min-width: 12px; }
@@ -1288,139 +1309,6 @@ input::placeholder {
       <!-- Populated by JS -->
     </div>
 
-    <!-- OpenClaw Setup Banner -->
-    <div id="openclawBanner" class="openclaw-banner" style="display:none;">
-      <!-- Always-shown agentic setup block -->
-      <div id="ocBannerRecommended" style="display:none;">
-        <div class="openclaw-banner-title" style="margin-bottom:8px;">
-          <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-purple); margin-right:6px;"></i>
-          Agentic Setup — let an AI handle this
-        </div>
-        <div class="openclaw-banner-desc" style="margin-bottom:14px;">Pick your agent. Copy the prompt. Paste it in. Done.</div>
-
-        <!-- Runtime tabs -->
-        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;" id="agentRuntimeTabs">
-          <button class="btn btn-sm agent-runtime-tab active" data-runtime="openclaw" onclick="selectAgentRuntime('openclaw', this)" style="font-size:0.65rem;">
-            <i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;"></i>OpenClaw
-          </button>
-          <button class="btn btn-sm agent-runtime-tab" data-runtime="claudecode" onclick="selectAgentRuntime('claudecode', this)" style="font-size:0.65rem;">
-            <i class="fa-solid fa-terminal" style="margin-right:4px;"></i>Claude Code
-          </button>
-          <button class="btn btn-sm agent-runtime-tab" data-runtime="codex" onclick="selectAgentRuntime('codex', this)" style="font-size:0.65rem;">
-            <i class="fa-solid fa-code" style="margin-right:4px;"></i>Codex CLI
-          </button>
-          <button class="btn btn-sm agent-runtime-tab" data-runtime="perplexity" onclick="selectAgentRuntime('perplexity', this)" style="font-size:0.65rem;">
-            <i class="fa-solid fa-magnifying-glass" style="margin-right:4px;"></i>Perplexity
-          </button>
-        </div>
-
-        <!-- Runtime panels -->
-        <div id="agentRuntime-openclaw" class="agent-runtime-panel">
-          <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:8px;">OpenClaw is running — it can guide setup directly. Run this in your terminal first:</div>
-          <div style="padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary); display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-            <span style="color:var(--text-muted);">$</span>
-            <span id="clawhubCmd">clawhub install ukkometa/seo-intel</span>
-            <button class="btn btn-sm" style="margin-left:auto; padding:3px 8px; font-size:0.6rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-          </div>
-          <div style="font-size:0.65rem; color:var(--text-muted); margin-bottom:8px;">Or paste this into your OpenClaw chat:</div>
-          <div style="position:relative; padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.6; margin-bottom:10px;">
-            <div id="oc-prompt">Set up SEO Intel on my machine.
-Check dependencies, install Ollama if needed, recommend a model based on my VRAM, configure a project with my target site, and run a test crawl.</div>
-            <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText(document.getElementById('oc-prompt').textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-          </div>
-          <div class="openclaw-banner-actions">
-            <button class="btn btn-gold" onclick="startAgentSetup()"><i class="fa-solid fa-play"></i> Start Agent Setup</button>
-            <button class="btn" onclick="continueManualSetup()"><i class="fa-solid fa-list-check"></i> Manual</button>
-          </div>
-        </div>
-
-        <div id="agentRuntime-claudecode" class="agent-runtime-panel" style="display:none;">
-          <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:8px;">Open Claude Code in your terminal (<code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;">claude</code>) and paste this prompt:</div>
-          <div style="position:relative; padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.6; margin-bottom:8px;">
-            <div id="cc-prompt">I'm setting up SEO Intel (npm package: seo-intel).
-Help me:
-1. Check Node.js 22.5+ is installed
-2. Install Ollama if missing (https://ollama.com)
-3. Pull a Qwen model matching my VRAM (run: system_profiler SPDisplaysDataType | grep VRAM)
-4. Create a config file at ./config/myproject.json with my target site
-5. Run: seo-intel crawl myproject
-6. Fix any errors that come up
-
-Start by checking what's already installed.</div>
-            <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText(document.getElementById('cc-prompt').textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-          </div>
-          <div style="font-size:0.62rem; color:var(--text-muted);">Run Claude Code with: <code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;">claude --permission-mode bypassPermissions</code> for full access</div>
-        </div>
-
-        <div id="agentRuntime-codex" class="agent-runtime-panel" style="display:none;">
-          <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:8px;">Open Codex CLI (<code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;">codex</code>) and paste this prompt:</div>
-          <div style="position:relative; padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.6; margin-bottom:8px;">
-            <div id="cx-prompt">Set up the seo-intel npm CLI tool on this machine.
-Tasks:
-1. Verify Node.js 22.5+ (install via nvm if needed)
-2. Install Ollama (https://ollama.com) if not present
-3. Pull gemma4:e4b or smaller if VRAM < 6GB
-4. Create ./config/myproject.json — ask me for my target domain and up to 3 competitor domains
-5. Add GEMINI_API_KEY or ANTHROPIC_API_KEY to .env if I have one
-6. Run: seo-intel crawl myproject
-7. Fix any errors
-
-Use full disk access. Check what's installed before proceeding.</div>
-            <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText(document.getElementById('cx-prompt').textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-          </div>
-          <div style="font-size:0.62rem; color:var(--text-muted);">Codex config: <code style="background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;">sandbox_mode = "danger-full-access"</code> recommended for install tasks</div>
-        </div>
-
-        <div id="agentRuntime-perplexity" class="agent-runtime-panel" style="display:none;">
-          <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:8px;">Open Perplexity Computer and paste this prompt:</div>
-          <div style="position:relative; padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.6; margin-bottom:8px;">
-            <div id="pp-prompt">I want to set up a local SEO analysis tool called SEO Intel.
-It's installed via: npm install -g seo-intel
-
-Please help me:
-1. Check that Node.js 22.5+ is installed on my machine
-2. Install Ollama (ollama.com) if it's not there
-3. Download a Gemma 4 AI model that fits my machine's RAM
-4. Create a project config file pointing at my website and competitors
-5. Run the first crawl and show me the results
-
-Ask me for my website URL before starting.</div>
-            <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText(document.getElementById('pp-prompt').textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-          </div>
-          <div style="font-size:0.62rem; color:var(--text-muted);">Works best with Perplexity Computer's full computer-use mode enabled</div>
-        </div>
-      </div>
-
-      <div id="ocBannerMinimal" style="display:none;">
-        <div class="openclaw-banner-desc" style="color:var(--text-muted); font-size:0.72rem; margin-bottom:10px;">
-          <strong style="color:var(--text-secondary);">Agent setup available.</strong> Pick a runtime below and copy the prompt:
-        </div>
-        <!-- Same runtime tabs, minimal version -->
-        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
-          <button class="btn btn-sm agent-runtime-tab-min active" data-runtime="claudecode" onclick="selectAgentRuntimeMin('claudecode', this)" style="font-size:0.62rem;"><i class="fa-solid fa-terminal" style="margin-right:3px;"></i>Claude Code</button>
-          <button class="btn btn-sm agent-runtime-tab-min" data-runtime="codex" onclick="selectAgentRuntimeMin('codex', this)" style="font-size:0.62rem;"><i class="fa-solid fa-code" style="margin-right:3px;"></i>Codex CLI</button>
-          <button class="btn btn-sm agent-runtime-tab-min" data-runtime="perplexity" onclick="selectAgentRuntimeMin('perplexity', this)" style="font-size:0.62rem;"><i class="fa-solid fa-magnifying-glass" style="margin-right:3px;"></i>Perplexity</button>
-          <button class="btn btn-sm agent-runtime-tab-min" data-runtime="openclaw" onclick="selectAgentRuntimeMin('openclaw', this)" style="font-size:0.62rem;"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:3px;"></i>OpenClaw</button>
-        </div>
-        <div id="minRuntime-claudecode" class="min-runtime-panel" style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>Set up seo-intel: check Node 22.5+, install Ollama, pull gemma4:e4b, create config, run crawl.</div>
-          <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-        </div>
-        <div id="minRuntime-codex" class="min-runtime-panel" style="display:none; position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>Install seo-intel deps (Node 22.5+, Ollama, gemma4:e4b), create project config, run: seo-intel crawl myproject. Use full disk access.</div>
-          <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-        </div>
-        <div id="minRuntime-perplexity" class="min-runtime-panel" style="display:none; position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>Help me set up SEO Intel local SEO tool: install Node.js 22.5+, Ollama, download Gemma 4 model, create config for my website. Ask for my URL.</div>
-          <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-        </div>
-        <div id="minRuntime-openclaw" class="min-runtime-panel" style="display:none; position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.5;">
-          <div>clawhub install ukkometa/seo-intel</div>
-          <button class="btn btn-sm" style="position:absolute; top:4px; right:4px; padding:2px 5px; font-size:0.48rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-        </div>
-      </div>
-    </div>
-
     <div id="installLog" class="log-output"></div>
     <div style="display:flex; gap:10px; justify-content: flex-end; margin-top: 8px;">
       <button class="btn" onclick="runSystemCheck()"><i class="fa-solid fa-arrows-rotate"></i> Re-check</button>
@@ -1439,11 +1327,15 @@ Ask me for my website URL before starting.</div>
 <div class="step-panel" id="step2" style="max-width:none;">
   <div style="position:relative;">
   <div class="card" style="margin-bottom:0; min-width:0;">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-      <h2 style="margin-bottom:0;"><i class="fa-solid fa-microchip"></i> Model Selection</h2>
-      <button class="btn btn-sm" onclick="document.getElementById('openclawFloating').style.display=''" style="font-size:0.65rem; color:var(--accent-purple); border-color:rgba(124,109,235,0.3); background:rgba(124,109,235,0.06);">
-        <i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;"></i>OpenClaw
-      </button>
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin-bottom:16px;">
+      <div>
+        <h2 style="margin-bottom:6px;"><i class="fa-solid fa-microchip"></i> Models & Auth</h2>
+        <div class="hint" style="margin-bottom:0;">Choose your local extraction engine and your analysis provider, then save them without rerunning the whole setup.</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
+        <button class="btn" onclick="restartDashboard()"><i class="fa-solid fa-rotate-right"></i> Restart Dashboard</button>
+        <button class="btn btn-gold" onclick="saveModelsModule()"><i class="fa-solid fa-floppy-disk"></i> Save Models/Auth</button>
+      </div>
     </div>
 
     <!-- Ollama Hosts -->
@@ -1625,44 +1517,8 @@ Ask me for my website URL before starting.</div>
         </div>
       </div>
 
-
-        <p style="font-size:0.72rem; color:var(--text-muted); line-height:1.6; margin-bottom:12px;">
-          Route analysis through frontier models. OpenClaw manages API keys, OAuth, and model routing automatically.
-        </p>
-
-        <div style="font-size:0.68rem; color:var(--text-secondary); margin-bottom:12px;">
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-            <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
-            Claude Opus 4.6
-          </div>
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-            <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
-            Gemini 3.1 Pro
-          </div>
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-            <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
-            GPT-5.4
-          </div>
-        </div>
-
-        <p style="font-size:0.62rem; color:var(--text-muted); line-height:1.5; margin-bottom:8px;">
-          No .env keys needed. OAuth-based model access means the pipeline test may show "no API key" — this is normal when using OpenClaw.
-        </p>
-
-        <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.65rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-          <span style="color:var(--text-muted);">$</span>
-          <span>clawhub install ukkometa/seo-intel</span>
-          <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-        </div>
-
-        <p style="font-size:0.6rem; color:var(--text-muted); margin-bottom:6px;">Or paste into OpenClaw chat:</p>
-        <div style="padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.6; position:relative;">
-          <div style="white-space:pre;">Set up SEO Intel cloud analysis.
-Use Gemini for extraction, Claude for analysis.
-Configure API keys and run a test crawl.</div>
-          <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText('Set up SEO Intel cloud analysis.\nUse Gemini for extraction, Claude for analysis.\nConfigure API keys and run a test crawl.');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-        </div>
     </div>
+    <div id="modelsModuleStatus" style="margin-top:10px; font-size:0.68rem; color:var(--text-muted);"></div>
     <!-- Unified upgrade card (free tier only) -->
     <div id="unifiedUpgrade" style="display:none; position:relative; margin-top:0; padding:48px 32px; border:1px solid rgba(232,213,163,0.15); border-radius:var(--radius); overflow:hidden; text-align:center;">
       <div class="upgrade-overlay-bg" style="position:absolute;inset:0;"></div>
@@ -1694,68 +1550,29 @@ Configure API keys and run a test crawl.</div>
     </div>
   </div>
 
-  <!-- OpenClaw floating sidebar -->
-  <div class="card" id="openclawFloating" style="margin-bottom:0; position:fixed; top:80px; right:20px; width:240px; z-index:50; box-shadow:0 8px 40px rgba(0,0,0,0.5); border-color:rgba(124,109,235,0.3);">
-    <button onclick="document.getElementById('openclawFloating').style.display='none'" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.7rem;"><i class="fa-solid fa-xmark"></i></button>
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-      <svg width="22" height="22" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="14" cy="14" r="13" stroke="var(--accent-purple)" stroke-width="1.5" opacity="0.6"/>
-        <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="var(--accent-purple)" opacity="0.8"/>
-      </svg>
-      <h3 style="font-size:0.85rem; font-weight:600; color:var(--text-primary); margin:0;">OpenClaw</h3>
-    </div>
-
-    <p style="font-size:0.72rem; color:var(--text-muted); line-height:1.6; margin-bottom:12px;">
-      Route analysis through frontier models. OpenClaw manages API keys, OAuth, and model routing automatically.
-    </p>
-
-    <div style="font-size:0.68rem; color:var(--text-secondary); margin-bottom:12px;">
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
-        Claude Opus 4.6
-      </div>
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
-        Gemini 3.1 Pro
-      </div>
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.6rem; width:12px;"></i>
-        GPT-5.4
-      </div>
-    </div>
-
-    <p style="font-size:0.62rem; color:var(--text-muted); line-height:1.5; margin-bottom:8px;">
-      No .env keys needed. OAuth-based model access means the pipeline test may show "no API key" — this is normal when using OpenClaw.
-    </p>
-
-    <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.65rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-      <span style="color:var(--text-muted);">$</span>
-      <span>clawhub install ukkometa/seo-intel</span>
-      <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-    </div>
-
-    <p style="font-size:0.6rem; color:var(--text-muted); margin-bottom:6px;">Or paste into OpenClaw chat:</p>
-    <div style="padding:8px 10px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.6rem; color:var(--text-secondary); line-height:1.6; position:relative;">
-      <div style="white-space:pre;">Set up SEO Intel cloud analysis.
-Use Gemini for extraction, Claude for analysis.
-Configure API keys and run a test crawl.</div>
-      <button class="btn btn-sm" style="position:absolute; top:6px; right:6px; padding:2px 6px; font-size:0.5rem;" onclick="navigator.clipboard.writeText('Set up SEO Intel cloud analysis.\nUse Gemini for extraction, Claude for analysis.\nConfigure API keys and run a test crawl.');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
-    </div>
-  </div>
-
-  </div><!-- close step2 outer grid -->
+  </div><!-- close step2 position:relative -->
 </div>
 
 <!-- ─── Step 3: Project Configuration ─────────────────────────────────── -->
 <div class="step-panel" id="step3">
   <div class="card">
-    <h2><i class="fa-solid fa-folder-open"></i> Project Configuration</h2>
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin-bottom:16px;">
+      <div>
+        <h2 style="margin-bottom:6px;"><i class="fa-solid fa-folder-open"></i> Project Configuration</h2>
+        <div style="font-size:0.68rem; color:var(--text-muted);">Edit project settings without rerunning the whole setup flow.</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
+        <button class="btn" onclick="restartDashboard()"><i class="fa-solid fa-rotate-right"></i> Restart Dashboard</button>
+        <button class="btn btn-gold" onclick="saveConfig(true)"><i class="fa-solid fa-floppy-disk"></i> Save and Update</button>
+      </div>
+    </div>
 
     <div id="existingProjectBar" style="display:none;margin-bottom:1.25rem;padding:10px 14px;background:rgba(232,213,163,0.06);border:1px solid rgba(232,213,163,0.15);border-radius:8px;">
-      <label style="font-size:0.72rem;font-weight:600;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;display:block;">Edit existing project</label>
+      <label style="font-size:0.72rem;font-weight:600;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;display:block;">Active project</label>
       <select id="existingProjectSelect" onchange="loadExistingProject(this.value)" style="width:100%;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:6px;color:var(--text-primary);font-size:0.82rem;font-family:var(--font-body);">
         <option value="">New project</option>
       </select>
+      <div id="projectContextHint" style="margin-top:6px; font-size:0.65rem; color:var(--text-muted);">Changes here apply to the selected project.</div>
     </div>
 
     <div class="form-row">
@@ -1790,34 +1607,44 @@ Configure API keys and run a test crawl.</div>
       </div>
     </div>
 
-    <!-- Owned Subdomains -->
-    <div class="form-group">
-      <label>Owned Subdomains <span style="color:var(--text-muted); font-weight:300;">(optional)</span></label>
-      <div id="ownedList"></div>
-      <button class="btn btn-sm" onclick="addOwnedRow()" style="margin-top: 4px;"><i class="fa-solid fa-plus"></i> Add subdomain</button>
+    <div style="margin-top:20px; padding:16px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius);">
+      <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin-bottom:14px;">
+        <div>
+          <div style="font-size:0.82rem; font-weight:600; color:var(--text-primary);">Competitors & owned surfaces</div>
+          <div style="font-size:0.66rem; color:var(--text-muted); margin-top:4px;">Manage rival domains and owned subdomains without rebuilding the rest of the project.</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn" onclick="restartDashboard()"><i class="fa-solid fa-rotate-right"></i> Restart Dashboard</button>
+          <button class="btn btn-gold" onclick="saveCompetitorsModule()"><i class="fa-solid fa-floppy-disk"></i> Save and Update</button>
+        </div>
+      </div>
+
+      <!-- Owned Subdomains -->
+      <div class="form-group">
+        <label>Owned Subdomains <span style="color:var(--text-muted); font-weight:300;">(optional)</span></label>
+        <div id="ownedList"></div>
+        <button class="btn btn-sm" onclick="addOwnedRow()" style="margin-top: 4px;"><i class="fa-solid fa-plus"></i> Add subdomain</button>
+      </div>
+
+      <!-- Competitors -->
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Competitor Domains</label>
+        <div id="competitorList"></div>
+        <button class="btn btn-sm" onclick="addCompetitorRow()" style="margin-top: 4px;"><i class="fa-solid fa-plus"></i> Add competitor</button>
+      </div>
+
+      <div id="competitorModuleStatus" style="margin-top:10px; font-size:0.68rem; color:var(--text-muted);"></div>
     </div>
 
-    <!-- Competitors -->
-    <div class="form-group">
-      <label>Competitor Domains</label>
-      <div id="competitorList"></div>
-      <button class="btn btn-sm" onclick="addCompetitorRow()" style="margin-top: 4px;"><i class="fa-solid fa-plus"></i> Add competitor</button>
-    </div>
-
-    <!-- Crawl Settings -->
+    <!-- Crawl Settings (simplified — stealth available via CLI --stealth flag) -->
     <div class="form-row">
       <div class="form-group">
-        <label>Crawl Mode</label>
-        <div class="pill-group" id="crawlModePills">
-          <label class="pill-option active" onclick="selectCrawlMode('standard')">
-            <input type="radio" name="crawlMode" value="standard" checked> Standard
-          </label>
-          <label class="pill-option" onclick="selectCrawlMode('stealth')">
-            <input type="radio" name="crawlMode" value="stealth"> Advanced
-          </label>
-        </div>
-        <div id="crawlModeDesc" style="margin-top:8px; padding:8px 10px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); font-size:0.68rem; color:var(--text-muted); line-height:1.5;">
-          <strong style="color:var(--text-secondary);">Standard</strong> — Headless Chromium via Playwright. Fast (~1.5s/page). Respects robots.txt. Works on most sites. Use this unless you get blocked.
+        <label>Crawl Engine</label>
+        <div style="padding:8px 10px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); font-size:0.68rem; color:var(--text-muted); line-height:1.5;">
+          <strong style="color:var(--text-secondary);">Playwright</strong> — Headless Chromium. Fast (~1.5s/page). Respects robots.txt. Works on most sites.
+          <span style="display:block; margin-top:4px; font-size:0.6rem; color:var(--text-muted);">
+            <i class="fa-solid fa-terminal" style="margin-right:3px;"></i> For JS-heavy or blocking sites, use <code style="background:rgba(255,255,255,0.05);padding:1px 3px;border-radius:3px;">seo-intel crawl --stealth</code>
+          </span>
         </div>
 
         <!-- Estimated throughput -->
@@ -1864,10 +1691,26 @@ Configure API keys and run a test crawl.</div>
 <!-- ─── Step 4: Google Search Console ─────────────────────────────────── -->
 <div class="step-panel" id="step4">
   <div class="card">
-    <h2><i class="fa-brands fa-google" style="color:#4285F4;"></i> Google Search Console</h2>
-    <div class="hint" style="margin-bottom: 16px;">
-      GSC data powers your ranking insights, CTR analysis, and wasted impressions detection.
-      You can skip this step and add it later.
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin-bottom:16px;">
+      <div>
+        <h2 style="margin-bottom:6px;"><i class="fa-brands fa-google" style="color:#4285F4;"></i> Google Search Console</h2>
+        <div class="hint" style="margin-bottom:0;">
+          GSC data powers your ranking insights, CTR analysis, and wasted impressions detection.
+          You can skip this step and add it later.
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
+        <button class="btn" onclick="restartDashboard()"><i class="fa-solid fa-rotate-right"></i> Restart Dashboard</button>
+        <button class="btn btn-gold" onclick="refreshGscModule()"><i class="fa-solid fa-floppy-disk"></i> Save and Update</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px;padding:10px 14px;background:rgba(66,133,244,0.05);border:1px solid rgba(66,133,244,0.18);border-radius:8px;">
+      <label style="font-size:0.72rem;font-weight:600;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;display:block;">Project</label>
+      <select id="gscProjectSelect" onchange="changeActiveProjectFromGsc(this.value)" style="width:100%;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:6px;color:var(--text-primary);font-size:0.82rem;font-family:var(--font-body);">
+        <option value="">Select project</option>
+      </select>
+      <div id="gscProjectHint" style="margin-top:6px; font-size:0.65rem; color:var(--text-muted);">Uploads and status checks apply to the selected project.</div>
     </div>
 
     <!-- GSC Status -->
@@ -1947,7 +1790,16 @@ Configure API keys and run a test crawl.</div>
 <!-- ─── Step 5: Pipeline Test ─────────────────────────────────────────── -->
 <div class="step-panel" id="step5">
   <div class="card">
-    <h2><i class="fa-solid fa-vial"></i> Pipeline Test</h2>
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin-bottom:16px;">
+      <div>
+        <h2 style="margin-bottom:6px;"><i class="fa-solid fa-vial"></i> Pipeline Test</h2>
+        <div class="hint" style="margin-bottom:0;">Run validation after model/auth changes and before a full production crawl.</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end;">
+        <button class="btn" onclick="restartDashboard()"><i class="fa-solid fa-rotate-right"></i> Restart Dashboard</button>
+        <button class="btn btn-gold" onclick="saveModelsModule()"><i class="fa-solid fa-floppy-disk"></i> Save Models/Auth</button>
+      </div>
+    </div>
 
     <div id="testCards">
       <div class="test-card" id="testOllama">
@@ -2007,20 +1859,124 @@ Configure API keys and run a test crawl.</div>
       <!-- Populated by JS -->
     </table>
 
-    <h3 style="font-family:var(--font-display); font-size:0.85rem; color:var(--text-primary); margin: 20px 0 10px; font-weight:600;">
-      <i class="fa-solid fa-terminal" style="color:var(--accent-purple); margin-right:6px;"></i> Next Steps
+    <h3 style="font-family:var(--font-display); font-size:0.85rem; color:var(--text-primary); margin: 20px 0 12px; font-weight:600;">
+      <i class="fa-solid fa-rocket" style="color:var(--accent-gold); margin-right:6px;"></i> What's Next
     </h3>
-    <div class="cli-block" id="cliBlock">
-      <button class="btn btn-sm copy-btn" onclick="copyCli()"><i class="fa-regular fa-copy"></i></button>
+
+    <!-- Action cards instead of empty CLI -->
+    <div id="doneActions" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
+      <a href="/" style="text-decoration:none; display:block; padding:14px; background:var(--bg-elevated); border:1px solid rgba(142,203,168,0.2); border-radius:var(--radius); text-align:center; transition:border-color 0.2s;" onmouseover="this.style.borderColor='rgba(142,203,168,0.5)'" onmouseout="this.style.borderColor='rgba(142,203,168,0.2)'">
+        <i class="fa-solid fa-chart-line" style="font-size:1.2rem; color:var(--color-success); display:block; margin-bottom:6px;"></i>
+        <div style="font-size:0.78rem; font-weight:500; color:var(--text-primary);">Open Dashboard</div>
+        <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Start crawling from the UI</div>
+      </a>
+      <div id="doneCliCard" style="padding:14px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); text-align:center;">
+        <i class="fa-solid fa-terminal" style="font-size:1.2rem; color:var(--accent-purple); display:block; margin-bottom:6px;"></i>
+        <div style="font-size:0.78rem; font-weight:500; color:var(--text-primary);">Or via CLI</div>
+        <div id="doneCliHint" style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;"></div>
+      </div>
     </div>
 
-    <div style="text-align:center; margin-top: 24px;">
-      <a href="/" class="btn btn-gold" style="text-decoration:none;"><i class="fa-solid fa-chart-line"></i> Open Dashboard</a>
+    <!-- Compact CLI block (populated by JS) -->
+    <div class="cli-block" id="cliBlock" style="font-size:0.68rem; line-height:1.6;">
+      <button class="btn btn-sm copy-btn" onclick="copyCli()"><i class="fa-regular fa-copy"></i></button>
     </div>
   </div>
 </div>
 
 </div><!-- /wizard-body -->
+
+<!-- ═══ Genie Card — fixed floating agent/OpenClaw helper ═══════════════ -->
+<div class="card genie-card" id="genieCard" style="display:none;">
+  <button class="genie-close" onclick="document.getElementById('genieCard').style.display='none'"><i class="fa-solid fa-xmark"></i></button>
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+    <svg width="24" height="24" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="14" cy="14" r="13" stroke="var(--accent-purple)" stroke-width="1.5" opacity="0.6"/>
+      <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="var(--accent-purple)" opacity="0.8"/>
+    </svg>
+    <span style="font-size:0.92rem; font-weight:600; color:var(--text-primary);">OpenClaw</span>
+  </div>
+
+  <!-- Tab switcher: Agentic Setup vs Cloud Models -->
+  <div style="display:flex; gap:6px; margin-bottom:14px;">
+    <button class="btn btn-sm genie-tab active" data-tab="agents" onclick="switchGenieTab('agents', this)" style="font-size:0.68rem; padding:5px 8px; flex:1;">
+      <i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;"></i>Agentic Setup
+    </button>
+    <button class="btn btn-sm genie-tab" data-tab="cloud" onclick="switchGenieTab('cloud', this)" style="font-size:0.68rem; padding:5px 8px; flex:1;">
+      <i class="fa-solid fa-cloud" style="margin-right:4px;"></i>Cloud Models
+    </button>
+  </div>
+
+  <!-- Agentic Setup tab -->
+  <div id="genieAgents">
+    <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:10px;">Pick your agent. Copy the prompt. Done.</div>
+
+    <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:10px;" id="genieRuntimeTabs">
+      <button class="btn btn-sm agent-runtime-tab active" data-runtime="openclaw" onclick="selectGenieRuntime('openclaw', this)" style="font-size:0.62rem; padding:4px 7px;">OpenClaw</button>
+      <button class="btn btn-sm agent-runtime-tab" data-runtime="claudecode" onclick="selectGenieRuntime('claudecode', this)" style="font-size:0.62rem; padding:4px 7px;">Claude Code</button>
+      <button class="btn btn-sm agent-runtime-tab" data-runtime="codex" onclick="selectGenieRuntime('codex', this)" style="font-size:0.62rem; padding:4px 7px;">Codex</button>
+      <button class="btn btn-sm agent-runtime-tab" data-runtime="perplexity" onclick="selectGenieRuntime('perplexity', this)" style="font-size:0.62rem; padding:4px 7px;">Perplexity</button>
+    </div>
+
+    <div id="genieRuntime-openclaw" class="genie-runtime-panel">
+      <div style="padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+        <span style="color:var(--text-muted);">$</span>
+        <span>clawhub install ukkometa/seo-intel</span>
+        <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
+      </div>
+      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+        <div id="genie-oc-prompt">Set up SEO Intel on my machine. Check deps, install Ollama, recommend a model, configure a project, run a test crawl.</div>
+        <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(document.getElementById('genie-oc-prompt').textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
+      </div>
+      <div style="display:flex; gap:6px; margin-top:10px;">
+        <button class="btn btn-gold" onclick="startAgentSetup()" style="font-size:0.68rem; padding:6px 10px; flex:1;"><i class="fa-solid fa-play"></i> Start</button>
+        <button class="btn" onclick="continueManualSetup()" style="font-size:0.68rem; padding:6px 10px;"><i class="fa-solid fa-list-check"></i> Manual</button>
+      </div>
+    </div>
+
+    <div id="genieRuntime-claudecode" class="genie-runtime-panel" style="display:none;">
+      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+        <div>Set up seo-intel: check Node 22.5+, install Ollama, pull gemma4:e4b, create config, run crawl.</div>
+        <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
+      </div>
+    </div>
+
+    <div id="genieRuntime-codex" class="genie-runtime-panel" style="display:none;">
+      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+        <div>Install seo-intel deps (Node 22.5+, Ollama, gemma4:e4b), create project config, run: seo-intel crawl myproject. Full disk access.</div>
+        <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
+      </div>
+    </div>
+
+    <div id="genieRuntime-perplexity" class="genie-runtime-panel" style="display:none;">
+      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+        <div>Help me set up SEO Intel: install Node.js 22.5+, Ollama, download Gemma 4 model, create config for my website. Ask for my URL.</div>
+        <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cloud Models tab -->
+  <div id="genieCloud" style="display:none;">
+    <p style="font-size:0.75rem; color:var(--text-muted); line-height:1.6; margin-bottom:12px;">
+      Route analysis through frontier models. OpenClaw manages API keys and OAuth automatically.
+    </p>
+    <div style="font-size:0.72rem; color:var(--text-secondary);">
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.62rem; width:12px;"></i> Claude Opus 4.6
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.62rem; width:12px;"></i> Gemini 3.1 Pro
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.62rem; width:12px;"></i> GPT-5.4
+      </div>
+    </div>
+    <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.5; margin-top:10px;">
+      No .env keys needed. OAuth-based model access means the pipeline test may show "no API key" — this is normal.
+    </p>
+  </div>
+</div>
 
 <!-- ─── Agent Chat Panel (shown when OpenClaw agent setup is chosen) ──── -->
 <div class="agent-panel" id="agentPanel">
@@ -2059,6 +2015,7 @@ Configure API keys and run a test crawl.</div>
     savedApiProvider: null,
     configSaved: false,
     projectSlug: '',
+    activeProject: '',
     crawlMode: 'standard',
     testsPassed: false,
     gscFiles: [],       // Files staged for upload
@@ -2232,24 +2189,9 @@ Configure API keys and run a test crawl.</div>
     const nextBtn = document.getElementById('step1Next');
     nextBtn.disabled = !status.node.meetsMinimum;
 
-    // Show OpenClaw banner
-    const banner = document.getElementById('openclawBanner');
-    const bannerRec = document.getElementById('ocBannerRecommended');
-    const bannerMin = document.getElementById('ocBannerMinimal');
-
-    if (status.openclaw?.canAgentSetup) {
-      banner.style.display = '';
-      bannerRec.style.display = 'flex';
-      bannerMin.style.display = 'none';
-    } else if (status.openclaw?.installed) {
-      banner.style.display = '';
-      bannerRec.style.display = 'none';
-      bannerMin.style.display = 'flex';
-    } else {
-      banner.style.display = '';
-      bannerRec.style.display = 'none';
-      bannerMin.style.display = 'flex';
-    }
+    // Show genie card (floating agent/OpenClaw helper)
+    const genie = document.getElementById('genieCard');
+    if (genie) genie.style.display = '';
   }
 
   window.runSystemCheck = async function() {
@@ -2345,8 +2287,10 @@ Configure API keys and run a test crawl.</div>
       const res = await API.get(`/api/setup/ping-ollama?host=${encodeURIComponent(host)}`);
       if (res.reachable) {
         result.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Connected — ${res.models.length} model(s) found</span>`;
-        // Add to .env via server
-        await API.post('/api/setup/save-env', { key: 'OLLAMA_FALLBACK_URL', value: host });
+        // Append to comma-separated OLLAMA_HOSTS in .env
+        const currentHosts = (state.systemStatus?.env?.raw?.OLLAMA_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean);
+        if (!currentHosts.includes(host)) currentHosts.push(host);
+        await API.post('/api/setup/save-env', { key: 'OLLAMA_HOSTS', value: currentHosts.join(',') });
         // Refresh status
         const status = await API.get('/api/setup/status');
         state.systemStatus = status;
@@ -2365,11 +2309,14 @@ Configure API keys and run a test crawl.</div>
   };
 
   window.removeOllamaHost = async function(host) {
-    // Clear from .env
-    await API.post('/api/setup/save-env', { key: 'OLLAMA_FALLBACK_URL', value: '' });
+    // Remove single host from comma-separated OLLAMA_HOSTS
+    const currentHosts = (state.systemStatus?.env?.raw?.OLLAMA_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean);
+    const updated = currentHosts.filter(h => h !== host);
+    await API.post('/api/setup/save-env', { key: 'OLLAMA_HOSTS', value: updated.join(',') });
     const status = await API.get('/api/setup/status');
     state.systemStatus = status;
     renderOllamaHosts();
+    loadModels();
   };
 
   // Render hosts when step 2 loads
@@ -2504,7 +2451,8 @@ Configure API keys and run a test crawl.</div>
   function renderAnalysisModels() {
     const div = document.getElementById('analysisModels');
     div.innerHTML = '';
-    const models = [...(state.modelData.allAnalysis || [])];
+    // Local models only — cloud models live in the Cloud Analysis column
+    const models = [...(state.modelData.allAnalysis || [])].filter(m => m.type !== 'cloud');
     // Sort: installed first, then recommended, then by minVramMB
     models.sort((a, b) => (b.installed ? 1 : 0) - (a.installed ? 1 : 0) || (b.recommended ? 1 : 0) - (a.recommended ? 1 : 0) || a.minVramMB - b.minVramMB);
     const rec = state.modelData.analysis;
@@ -2557,6 +2505,20 @@ Configure API keys and run a test crawl.</div>
     const cloudHint = document.getElementById('analysisCloudHint');
     if (pullRow) pullRow.style.display = 'none';
     if (cloudHint) cloudHint.style.display = 'none';
+
+    if (selected && selected.type === 'cloud') {
+      state.selectedAnalysisProvider = selected.provider;
+      state.selectedAnalysisModel = selected.id;
+      const keyArea = document.getElementById('cloudKeyArea');
+      const keyInput = document.getElementById('cloudApiKeyInput');
+      if (keyArea && keyInput) {
+        keyArea.style.display = '';
+        keyInput.placeholder = `${selected.envKey}=...`;
+        keyInput.dataset.envVar = selected.envKey;
+        keyInput.dataset.provider = selected.provider;
+        keyInput.dataset.model = selected.id;
+      }
+    }
 
     if (selected && !selected.installed) {
       if (selected.type === 'cloud') {
@@ -2628,6 +2590,60 @@ Configure API keys and run a test crawl.</div>
 
   // ── Step 3: Project Configuration ─────────────────────────────────────
 
+  function getActiveProject() {
+    return state.activeProject || state.projectSlug || '';
+  }
+
+  function syncProjectSelectors() {
+    const active = getActiveProject();
+    const selectors = [
+      document.getElementById('existingProjectSelect'),
+      document.getElementById('gscProjectSelect'),
+    ].filter(Boolean);
+
+    selectors.forEach(sel => {
+      if (!sel) return;
+      if (active && Array.from(sel.options).some(opt => opt.value === active)) {
+        sel.value = active;
+      } else if (!active && sel.id === 'existingProjectSelect') {
+        sel.value = '';
+      }
+    });
+  }
+
+  function ensureProjectOption(projectName) {
+    if (!projectName) return;
+    ['existingProjectSelect', 'gscProjectSelect'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      const exists = Array.from(sel.options).some(opt => opt.value === projectName);
+      if (!exists) {
+        const opt = document.createElement('option');
+        opt.value = projectName;
+        opt.textContent = projectName;
+        sel.appendChild(opt);
+      }
+    });
+  }
+
+  function setActiveProject(projectName) {
+    state.activeProject = projectName || '';
+    if (projectName) state.projectSlug = projectName;
+    syncProjectSelectors();
+  }
+
+  async function restartDashboard() {
+    try {
+      const res = await API.post('/api/setup/dashboard/restart', { project: getActiveProject() || null });
+      alert(res.message || 'Dashboard restart requested. Reloading now.');
+      window.location.reload();
+    } catch (err) {
+      alert('Dashboard restart failed: ' + err.message);
+    }
+  }
+
+  window.restartDashboard = restartDashboard;
+
   function slugify(s) {
     return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   }
@@ -2636,23 +2652,17 @@ Configure API keys and run a test crawl.</div>
     const name = document.getElementById('cfgProjectName').value;
     const slug = slugify(name);
     state.projectSlug = slug;
+    if (!state.activeProject || state.activeProject === state.projectSlug) {
+      state.activeProject = slug;
+    }
+    ensureProjectOption(slug);
+    syncProjectSelectors();
     document.getElementById('slugPreview').textContent = slug ? 'config/' + slug + '.json' : '';
   };
 
+  // Crawl mode is always 'standard' in setup — stealth available via CLI --stealth flag
   window.selectCrawlMode = function(mode) {
-    state.crawlMode = mode;
-    document.querySelectorAll('#crawlModePills .pill-option').forEach(p => {
-      p.classList.toggle('active', p.querySelector('input').value === mode);
-    });
-    // Update description
-    const descEl = document.getElementById('crawlModeDesc');
-    if (descEl) {
-      const descs = {
-        standard: '<strong style="color:var(--text-secondary);">Standard</strong> — Headless Chromium via Playwright. Fast (~1.5s/page). Respects robots.txt. Works on most sites. Use this unless you get blocked.',
-        stealth: '<strong style="color:var(--text-secondary);">Advanced</strong> — Full browser rendering with enhanced compatibility. Persistent sessions, realistic browsing patterns. Slower (~3-4s/page). Use for JavaScript-heavy or dynamically-loaded sites.',
-      };
-      descEl.innerHTML = descs[mode] || descs.standard;
-    }
+    state.crawlMode = mode || 'standard';
     updateCrawlEstimate();
   };
 
@@ -2786,7 +2796,7 @@ Configure API keys and run a test crawl.</div>
     return Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
   }
 
-  window.saveConfig = async function() {
+  window.saveConfig = async function(stayOnStep = false) {
     const errEl = document.getElementById('configErrors');
     errEl.textContent = '';
 
@@ -2835,7 +2845,14 @@ Configure API keys and run a test crawl.</div>
       const res = await API.post('/api/setup/config', body);
       state.configSaved = true;
       state.projectSlug = slugify(projectName);
-      goToStep(4);
+      setActiveProject(state.projectSlug);
+      ensureProjectOption(state.projectSlug);
+      await loadExistingProjects();
+      if (stayOnStep) {
+        checkGscStatus();
+      } else {
+        goToStep(4);
+      }
     } catch (err) {
       errEl.innerHTML = '<div>Save failed: ' + err.message + '</div>';
     }
@@ -2849,36 +2866,65 @@ Configure API keys and run a test crawl.</div>
 
   async function loadExistingProjects() {
     try {
-      const raw = await API.get('/api/projects');
-      // Handle both {projects: [...]} and [...] formats
+      const raw = await API.get('/api/setup/projects');
       const projects = Array.isArray(raw) ? raw : (raw.projects || []);
       if (!projects.length) return;
       const bar = document.getElementById('existingProjectBar');
-      const sel = document.getElementById('existingProjectSelect');
+      const projectSel = document.getElementById('existingProjectSelect');
+      const gscSel = document.getElementById('gscProjectSelect');
       bar.style.display = 'block';
-      projects.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.project;
-        opt.textContent = p.project + ' (' + (p.target || p.domain || '?') + ')';
-        sel.appendChild(opt);
+      [projectSel, gscSel].forEach(sel => {
+        if (!sel) return;
+        const keepFirst = sel.options[0];
+        sel.innerHTML = '';
+        sel.appendChild(keepFirst);
       });
+      projects.forEach(p => {
+        const label = p.project + ' (' + (p.target || p.domain || '?') + ')';
+        [projectSel, gscSel].forEach(sel => {
+          if (!sel) return;
+          const opt = document.createElement('option');
+          opt.value = p.project;
+          opt.textContent = label;
+          sel.appendChild(opt);
+        });
+      });
+      syncProjectSelectors();
     } catch { /* not served, skip */ }
   }
 
   window.loadExistingProject = async function(projectName) {
-    if (!projectName) return;
+    if (!projectName) {
+      setActiveProject('');
+      return;
+    }
     try {
       const full = await API.get('/api/setup/config/' + encodeURIComponent(projectName));
       if (!full) return;
 
+      setActiveProject(projectName);
+
       // Populate form fields
       document.getElementById('cfgProjectName').value = full.project || '';
       updateSlug();
+      setActiveProject(projectName);
       document.getElementById('cfgTargetUrl').value = full.target?.url || ('https://' + (full.target?.domain || ''));
       document.getElementById('cfgSiteName').value = full.context?.siteName || '';
       document.getElementById('cfgIndustry').value = full.context?.industry || '';
       document.getElementById('cfgAudience').value = full.context?.audience || '';
       document.getElementById('cfgGoal').value = full.context?.goal || '';
+
+      const ownedList = document.getElementById('ownedList');
+      ownedList.innerHTML = '';
+      const owned = full.owned || [];
+      if (owned.length) {
+        owned.forEach(o => {
+          addOwnedRow();
+          const rows = ownedList.querySelectorAll('.dyn-list-item');
+          const last = rows[rows.length - 1];
+          if (last) last.querySelector('input').value = o.url || ('https://' + o.domain);
+        });
+      }
 
       // Clear and populate competitors
       const compList = document.getElementById('competitorList');
@@ -2895,6 +2941,7 @@ Configure API keys and run a test crawl.</div>
       }
 
       updateTimeEstimate();
+      checkGscStatus();
     } catch (err) {
       console.warn('Failed to load project config:', err);
     }
@@ -2998,6 +3045,9 @@ Configure API keys and run a test crawl.</div>
     const statusBox = document.getElementById('gscStatus');
     const methodSelect = document.getElementById('gscMethodSelect');
     const csvSection = document.getElementById('gscCsvSection');
+    const activeProject = getActiveProject();
+
+    syncProjectSelectors();
 
     statusBox.innerHTML = `
       <div class="gsc-status-icon"><i class="fa-solid fa-spinner fa-spin"></i></div>
@@ -3005,7 +3055,7 @@ Configure API keys and run a test crawl.</div>
     `;
 
     try {
-      const project = state.projectSlug || '';
+      const project = activeProject || '';
       const gsc = await API.get('/api/setup/gsc?project=' + encodeURIComponent(project));
 
       if (gsc.hasData) {
@@ -3054,10 +3104,108 @@ Configure API keys and run a test crawl.</div>
     csvSection.style.display = 'block';
   }
 
+  async function saveCompetitorsModule() {
+    const activeProject = getActiveProject();
+    const statusEl = document.getElementById('competitorModuleStatus');
+    if (!activeProject) {
+      if (statusEl) statusEl.textContent = 'Save the project first so competitors can attach to a real config.';
+      return;
+    }
+
+    const owned = getListValues('ownedList');
+    const competitors = getListValues('competitorList');
+
+    if (statusEl) statusEl.textContent = 'Updating competitors and owned subdomains...';
+
+    try {
+      const current = await API.get('/api/setup/projects/' + encodeURIComponent(activeProject));
+      const currentCompetitors = (current.competitors || []).map(c => c.url || c.domain || c).filter(Boolean);
+      const currentOwned = (current.owned || []).map(o => o.url || o.domain || o).filter(Boolean);
+
+      const toAdd = competitors.filter(x => !currentCompetitors.includes(x));
+      const toRemove = currentCompetitors.filter(x => !competitors.includes(x));
+      const toAddOwned = owned.filter(x => !currentOwned.includes(x));
+      const toRemoveOwned = currentOwned.filter(x => !owned.includes(x));
+
+      await fetch('/api/setup/projects/' + encodeURIComponent(activeProject) + '/competitors', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ add: toAdd, remove: toRemove, addOwned: toAddOwned, removeOwned: toRemoveOwned }),
+      }).then(async res => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        return data;
+      });
+
+      if (statusEl) statusEl.textContent = 'Competitors module updated for ' + activeProject + '.';
+    } catch (err) {
+      if (statusEl) statusEl.textContent = 'Competitors update failed: ' + err.message;
+    }
+  }
+
+  window.saveCompetitorsModule = saveCompetitorsModule;
+
+  async function saveModelsModule() {
+    const payload = {};
+    const statusEl = document.getElementById('modelsModuleStatus');
+    if (state.selectedExtraction) payload.OLLAMA_MODEL = state.selectedExtraction;
+    if (state.selectedAnalysisProvider && state.selectedAnalysisModel) {
+      payload.ANALYSIS_PROVIDER = state.selectedAnalysisProvider;
+      payload.ANALYSIS_MODEL = state.selectedAnalysisModel;
+    } else if (state.selectedAnalysis) {
+      // Local Ollama analysis model — provider/model not set separately
+      payload.ANALYSIS_PROVIDER = 'ollama';
+      payload.ANALYSIS_MODEL = state.selectedAnalysis;
+    }
+
+    const cloudInput = document.getElementById('cloudApiKeyInput');
+    if (cloudInput && cloudInput.dataset && cloudInput.dataset.envVar) {
+      const keyVal = cloudInput.value.trim();
+      if (keyVal) payload[cloudInput.dataset.envVar] = keyVal;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      if (statusEl) statusEl.textContent = 'No model/auth changes to save yet.';
+      return;
+    }
+
+    try {
+      if (statusEl) statusEl.textContent = 'Saving model and auth settings...';
+      await API.post('/api/setup/env', { keys: payload });
+      if (statusEl) statusEl.textContent = 'Models/Auth updated.';
+    } catch (err) {
+      if (statusEl) statusEl.textContent = 'Saving models/auth failed: ' + err.message;
+    }
+  }
+
+  window.saveModelsModule = saveModelsModule;
+
   window.selectGscMethod = function(method) {
     state.gscMethod = method;
     document.querySelectorAll('.gsc-method-card').forEach(c => c.classList.remove('active'));
     event.currentTarget.classList.add('active');
+  };
+
+  window.changeActiveProjectFromGsc = async function(projectName) {
+    if (!projectName) return;
+    await loadExistingProject(projectName);
+    goToStep(4);
+  };
+
+  window.refreshGscModule = async function() {
+    const activeProject = getActiveProject();
+    if (!activeProject) {
+      alert('Pick or save a project first.');
+      return;
+    }
+
+    if (state.gscFiles.length > 0) {
+      await uploadGscFiles();
+      return;
+    }
+
+    await checkGscStatus();
+    alert('GSC module updated for ' + activeProject + '.');
   };
 
   // File handling
@@ -3114,7 +3262,7 @@ Configure API keys and run a test crawl.</div>
 
   window.uploadGscFiles = async function() {
     const statusEl = document.getElementById('gscUploadStatus');
-    const project = state.projectSlug || 'default';
+    const project = getActiveProject() || 'default';
 
     statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading...';
 
@@ -3162,26 +3310,22 @@ Configure API keys and run a test crawl.</div>
       `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`
     ).join('');
 
-    // Populate CLI block — tier-aware
+    // Populate CLI block and hint — tier-aware
     const block = document.getElementById('cliBlock');
     const copyBtn = block.querySelector('.copy-btn').outerHTML;
+    const hintEl = document.getElementById('doneCliHint');
 
     if (state.tier === 'solo' || state.tier === 'agency') {
+      hintEl.textContent = `seo-intel crawl ${slug}`;
       block.innerHTML = copyBtn +
-        `<span class="comment"># Run your first crawl</span>\n` +
-        `<span class="prompt">$</span> seo-intel crawl ${slug}\n\n` +
-        `<span class="comment"># AI gap analysis</span>\n` +
-        `<span class="prompt">$</span> seo-intel analyze ${slug}\n\n` +
-        `<span class="comment"># Open dashboard</span>\n` +
+        `<span class="prompt">$</span> seo-intel crawl ${slug}\n` +
+        `<span class="prompt">$</span> seo-intel analyze ${slug}\n` +
         `<span class="prompt">$</span> seo-intel serve`;
     } else {
+      hintEl.textContent = `seo-intel crawl ${slug}`;
       block.innerHTML = copyBtn +
-        `<span class="comment"># Run your first crawl</span>\n` +
-        `<span class="prompt">$</span> seo-intel crawl ${slug}\n\n` +
-        `<span class="comment"># Browse your data</span>\n` +
-        `<span class="prompt">$</span> seo-intel serve\n\n` +
-        `<span class="comment"># Upgrade to Solo for AI analysis + dashboards</span>\n` +
-        `<span class="comment"># ukkometa.fi/seo-intel</span>`;
+        `<span class="prompt">$</span> seo-intel crawl ${slug}\n` +
+        `<span class="prompt">$</span> seo-intel serve`;
     }
 
     goToStep(6);
@@ -3207,6 +3351,22 @@ Configure API keys and run a test crawl.</div>
   let agentHistory = [];
   let agentBusy = false;
 
+  // ── Genie Card Functions ────────────────────────────────────────────
+  window.switchGenieTab = function(tab, btn) {
+    document.querySelectorAll('.genie-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('genieAgents').style.display = tab === 'agents' ? '' : 'none';
+    document.getElementById('genieCloud').style.display = tab === 'cloud' ? '' : 'none';
+  };
+
+  window.selectGenieRuntime = function(runtime, btn) {
+    document.querySelectorAll('#genieRuntimeTabs .agent-runtime-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.genie-runtime-panel').forEach(p => p.style.display = 'none');
+    const panel = document.getElementById('genieRuntime-' + runtime);
+    if (panel) panel.style.display = '';
+  };
+
   window.selectAgentRuntime = function(runtime, btn) {
     document.querySelectorAll('.agent-runtime-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
@@ -3224,9 +3384,10 @@ Configure API keys and run a test crawl.</div>
   };
 
   window.startAgentSetup = function() {
-    // Hide wizard steps, show agent panel
+    // Hide wizard steps + genie, show agent panel
     document.querySelector('.wizard-body').style.display = 'none';
     document.querySelector('.step-indicator').style.display = 'none';
+    const genie = document.getElementById('genieCard'); if (genie) genie.style.display = 'none';
     document.getElementById('agentPanel').classList.add('active');
 
     agentHistory = [];
@@ -3245,7 +3406,7 @@ Configure API keys and run a test crawl.</div>
 
   window.continueManualSetup = function() {
     // Just hide the banner and let user proceed with wizard
-    document.getElementById('openclawBanner').style.display = 'none';
+    const genie = document.getElementById('genieCard'); if (genie) genie.style.display = 'none';
   };
 
   window.sendAgentMessage = function() {

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.3 (2026-04-07)
+
+### Dashboard: Export & Download
+- Per-card download buttons (Markdown, JSON, CSV) on every dashboard card
+- "Download All Reports (ZIP)" in export sidebar
+- New `/api/export/download` endpoint with section filtering
+
+### Improvements
+- GSC data loader picks most recently modified folder (fixes stale folder selection)
+- Report filenames use `YYYY-MM-DD` dates instead of Unix timestamps
+- Setup wizard: multi-host Ollama support (`OLLAMA_HOSTS` env var)
+- Skill file and Agent Guide updated with `watch`, `blog-draft`, and export features
+
+### Cleanup
+- Removed deprecated agentic setup banner from wizard
+- Consolidated Agent Guide into `skill/` directory
+
 ## 1.4.2 (2026-04-05)
 
 ### New Feature: Site Watch

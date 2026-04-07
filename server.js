@@ -96,6 +96,8 @@ const MIME = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.md': 'text/markdown; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.zip': 'application/zip',
 };
 
 // ── Read progress with PID liveness check (mirrors cli.js) ──
@@ -449,7 +451,7 @@ async function handleRequest(req, res) {
 
         try {
           const data = JSON.parse(rawJson);
-          const stamp = Date.now();
+          const stamp = new Date().toISOString().slice(0, 10);
           const baseName = `${project}-actions-${stamp}`;
           writeFileSync(join(REPORTS_DIR, `${baseName}.json`), JSON.stringify(data, null, 2), 'utf8');
           writeFileSync(join(REPORTS_DIR, `${baseName}.md`), buildActionsMarkdown(data), 'utf8');
@@ -581,6 +583,313 @@ async function handleRequest(req, res) {
 
       json(res, 202, { started: true, pid: child.pid, command: 'analyze', project });
     } catch (e) {
+      json(res, 500, { error: e.message });
+    }
+    return;
+  }
+
+  // ─── API: Universal Export Download ───
+  if (req.method === 'GET' && path === '/api/export/download') {
+    try {
+      const project = url.searchParams.get('project');
+      const section = url.searchParams.get('section') || 'all';
+      const format = url.searchParams.get('format') || 'json';
+
+      if (!project) { json(res, 400, { error: 'Missing project' }); return; }
+
+      const { getDb } = await import('./db/db.js');
+      const db = getDb(join(__dirname, 'seo-intel.db'));
+      const configPath = join(__dirname, 'config', `${project}.json`);
+      const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf8')) : null;
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const { createZip } = await import('./lib/export-zip.js');
+
+      const SECTIONS = ['aeo', 'insights', 'technical', 'keywords', 'pages', 'watch', 'schemas', 'headings', 'links'];
+
+      function querySection(sec) {
+        switch (sec) {
+          case 'aeo': {
+            try {
+              return db.prepare(`
+                SELECT cs.score, cs.entity_authority, cs.structured_claims, cs.answer_density,
+                       cs.qa_proximity, cs.freshness, cs.schema_coverage, cs.tier, cs.ai_intents,
+                       p.url, p.title, p.word_count, d.domain, d.role
+                FROM citability_scores cs
+                JOIN pages p ON p.id = cs.page_id
+                JOIN domains d ON d.id = p.domain_id
+                WHERE d.project = ?
+                ORDER BY d.role ASC, cs.score ASC
+              `).all(project);
+            } catch { return []; }
+          }
+          case 'insights': {
+            try {
+              const rows = db.prepare(
+                `SELECT * FROM insights WHERE project = ? AND status = 'active' ORDER BY type, last_seen DESC`
+              ).all(project);
+              return rows.map(r => {
+                try { return { ...JSON.parse(r.data), _type: r.type, _id: r.id, _first_seen: r.first_seen, _last_seen: r.last_seen }; }
+                catch { return { _type: r.type, _id: r.id, raw: r.data }; }
+              });
+            } catch { return []; }
+          }
+          case 'technical': {
+            try {
+              return db.prepare(`
+                SELECT p.url, p.status_code, p.word_count, p.load_ms, p.is_indexable, p.click_depth,
+                       t.has_canonical, t.has_og_tags, t.has_schema, t.has_robots, t.is_mobile_ok,
+                       d.domain, d.role
+                FROM pages p
+                JOIN domains d ON d.id = p.domain_id
+                LEFT JOIN technical t ON t.page_id = p.id
+                WHERE d.project = ?
+                ORDER BY d.domain, p.url
+              `).all(project);
+            } catch { return []; }
+          }
+          case 'keywords': {
+            try {
+              return db.prepare(`
+                SELECT k.keyword, d.domain, d.role, k.location, COUNT(*) as freq
+                FROM keywords k
+                JOIN pages p ON p.id = k.page_id
+                JOIN domains d ON d.id = p.domain_id
+                WHERE d.project = ?
+                GROUP BY k.keyword, d.domain
+                ORDER BY freq DESC
+              `).all(project);
+            } catch { return []; }
+          }
+          case 'pages': {
+            try {
+              return db.prepare(`
+                SELECT p.url, p.status_code, p.word_count, p.load_ms, p.is_indexable, p.click_depth,
+                       p.title, p.meta_desc, p.published_date, p.modified_date,
+                       p.crawled_at, p.first_seen_at, d.domain, d.role
+                FROM pages p
+                JOIN domains d ON d.id = p.domain_id
+                WHERE d.project = ?
+                ORDER BY d.domain, p.url
+              `).all(project);
+            } catch { return []; }
+          }
+          case 'watch': {
+            try {
+              const snap = db.prepare('SELECT * FROM watch_snapshots WHERE project = ? ORDER BY created_at DESC LIMIT 1').get(project);
+              if (!snap) return [];
+              const events = db.prepare('SELECT * FROM watch_events WHERE snapshot_id = ? ORDER BY severity, event_type').all(snap.id);
+              const pages = db.prepare('SELECT * FROM watch_page_states WHERE snapshot_id = ?').all(snap.id);
+              return { snapshot: snap, events, pages };
+            } catch { return []; }
+          }
+          case 'schemas': {
+            try {
+              return db.prepare(`
+                SELECT d.domain, d.role, p.url, ps.schema_type, ps.name, ps.description,
+                       ps.rating, ps.rating_count, ps.price, ps.currency, ps.author,
+                       ps.date_published, ps.date_modified
+                FROM page_schemas ps
+                JOIN pages p ON p.id = ps.page_id
+                JOIN domains d ON d.id = p.domain_id
+                WHERE d.project = ?
+                ORDER BY d.domain, ps.schema_type
+              `).all(project);
+            } catch { return []; }
+          }
+          case 'headings': {
+            try {
+              return db.prepare(`
+                SELECT d.domain, d.role, p.url, h.level, h.text
+                FROM headings h
+                JOIN pages p ON p.id = h.page_id
+                JOIN domains d ON d.id = p.domain_id
+                WHERE d.project = ?
+                ORDER BY d.domain, p.url, h.level
+              `).all(project);
+            } catch { return []; }
+          }
+          case 'links': {
+            try {
+              return db.prepare(`
+                SELECT l.source_page_id, l.target_url, l.anchor_text, l.is_internal,
+                       p.url as source_url, d.domain, d.role
+                FROM links l
+                JOIN pages p ON p.id = l.source_page_id
+                JOIN domains d ON d.id = p.domain_id
+                WHERE d.project = ?
+                ORDER BY d.domain, p.url
+              `).all(project);
+            } catch { return []; }
+          }
+          default: return [];
+        }
+      }
+
+      function toCSV(rows) {
+        if (!rows || (Array.isArray(rows) && !rows.length)) return '';
+        const arr = Array.isArray(rows) ? rows : (rows.events || rows.pages || []);
+        if (!arr.length) return '';
+        const keys = Object.keys(arr[0]);
+        const escape = (v) => {
+          if (v == null) return '';
+          const s = String(v);
+          return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        return [keys.join(','), ...arr.map(r => keys.map(k => escape(r[k])).join(','))].join('\n');
+      }
+
+      function toMarkdown(sec, data, proj) {
+        const date = new Date().toISOString().slice(0, 10);
+        const header = `# SEO Intel — ${sec.charAt(0).toUpperCase() + sec.slice(1)} Export\n\n- Project: ${proj}\n- Date: ${date}\n\n`;
+        if (!data || (Array.isArray(data) && !data.length)) return header + '_No data available._\n';
+
+        switch (sec) {
+          case 'aeo': {
+            const targetRows = data.filter(r => r.role === 'target' || r.role === 'owned');
+            const avg = targetRows.length ? Math.round(targetRows.reduce((a, r) => a + r.score, 0) / targetRows.length) : 0;
+            let md = header + `## Summary\n\n- Pages scored: ${data.length}\n- Target average: ${avg}/100\n\n`;
+            md += '## Page Scores\n\n| Score | Tier | URL | Title | Weakest Signals |\n|-------|------|-----|-------|-----------------|\n';
+            for (const r of data) {
+              const signals = ['entity_authority', 'structured_claims', 'answer_density', 'qa_proximity', 'freshness', 'schema_coverage'];
+              const weakest = signals.sort((a, b) => (r[a] || 0) - (r[b] || 0)).slice(0, 2).map(s => s.replace(/_/g, ' ')).join(', ');
+              md += `| ${r.score} | ${r.tier} | ${r.url} | ${(r.title || '').slice(0, 50)} | ${weakest} |\n`;
+            }
+            return md;
+          }
+          case 'insights': {
+            let md = header + `## Active Insights (${data.length})\n\n`;
+            const grouped = {};
+            for (const r of data) { (grouped[r._type] ||= []).push(r); }
+            for (const [type, items] of Object.entries(grouped)) {
+              md += `### ${type.replace(/_/g, ' ')} (${items.length})\n\n`;
+              for (const item of items) {
+                const desc = item.phrase || item.keyword || item.title || item.page || item.message || JSON.stringify(item).slice(0, 120);
+                md += `- ${desc}\n`;
+              }
+              md += '\n';
+            }
+            return md;
+          }
+          case 'technical': {
+            let md = header + '## Technical Audit\n\n| URL | Status | Words | Load ms | Canonical | OG | Schema | Robots | Mobile |\n|-----|--------|-------|---------|-----------|-----|--------|--------|--------|\n';
+            for (const r of data) {
+              md += `| ${r.url} | ${r.status_code} | ${r.word_count || 0} | ${r.load_ms || 0} | ${r.has_canonical ? 'Y' : 'N'} | ${r.has_og_tags ? 'Y' : 'N'} | ${r.has_schema ? 'Y' : 'N'} | ${r.has_robots ? 'Y' : 'N'} | ${r.is_mobile_ok ? 'Y' : 'N'} |\n`;
+            }
+            return md;
+          }
+          case 'keywords': {
+            let md = header + '## Keyword Matrix\n\n| Keyword | Domain | Role | Location | Frequency |\n|---------|--------|------|----------|-----------|\n';
+            for (const r of data.slice(0, 500)) {
+              md += `| ${r.keyword} | ${r.domain} | ${r.role} | ${r.location || ''} | ${r.freq} |\n`;
+            }
+            if (data.length > 500) md += `\n_...and ${data.length - 500} more rows._\n`;
+            return md;
+          }
+          case 'pages': {
+            let md = header + '## Crawled Pages\n\n| URL | Status | Words | Title | Domain | Role |\n|-----|--------|-------|-------|--------|------|\n';
+            for (const r of data) {
+              md += `| ${r.url} | ${r.status_code} | ${r.word_count || 0} | ${(r.title || '').slice(0, 50)} | ${r.domain} | ${r.role} |\n`;
+            }
+            return md;
+          }
+          case 'watch': {
+            const snap = data.snapshot || {};
+            const events = data.events || [];
+            let md = header + `## Site Watch Snapshot\n\n- Health score: ${snap.health_score ?? 'N/A'}\n- Pages: ${snap.total_pages || 0}\n- Errors: ${snap.errors_count || 0} | Warnings: ${snap.warnings_count || 0} | Notices: ${snap.notices_count || 0}\n\n`;
+            if (events.length) {
+              md += '## Events\n\n| Type | Severity | URL | Details |\n|------|----------|-----|---------|\n';
+              for (const e of events) {
+                md += `| ${e.event_type} | ${e.severity} | ${e.url} | ${(e.details || '').slice(0, 80)} |\n`;
+              }
+            }
+            return md;
+          }
+          case 'schemas': {
+            let md = header + '## Schema Markup\n\n| Domain | URL | Type | Name | Rating | Price |\n|--------|-----|------|------|--------|-------|\n';
+            for (const r of data) {
+              md += `| ${r.domain} | ${r.url} | ${r.schema_type} | ${(r.name || '').slice(0, 40)} | ${r.rating || ''} | ${r.price ? r.currency + r.price : ''} |\n`;
+            }
+            return md;
+          }
+          case 'headings': {
+            let md = header + '## Heading Structure\n\n| Domain | URL | Level | Text |\n|--------|-----|-------|------|\n';
+            for (const r of data.slice(0, 1000)) {
+              md += `| ${r.domain} | ${r.url} | H${r.level} | ${(r.text || '').slice(0, 80)} |\n`;
+            }
+            if (data.length > 1000) md += `\n_...and ${data.length - 1000} more rows._\n`;
+            return md;
+          }
+          case 'links': {
+            let md = header + '## Internal Links\n\n| Source | Target | Anchor |\n|--------|--------|--------|\n';
+            for (const r of data.filter(l => l.is_internal).slice(0, 1000)) {
+              md += `| ${r.source_url} | ${r.target_url} | ${(r.anchor_text || '').slice(0, 50)} |\n`;
+            }
+            if (data.length > 1000) md += `\n_...and more rows._\n`;
+            return md;
+          }
+          default: {
+            return header + '```json\n' + JSON.stringify(data, null, 2).slice(0, 10000) + '\n```\n';
+          }
+        }
+      }
+
+      // Build response based on section + format
+      const sections = section === 'all' ? SECTIONS : [section];
+      if (section !== 'all' && !SECTIONS.includes(section)) {
+        json(res, 400, { error: `Invalid section. Allowed: ${SECTIONS.join(', ')}, all` });
+        return;
+      }
+
+      if (format === 'zip') {
+        // ZIP: bundle all requested sections in all formats
+        const entries = [];
+        for (const sec of sections) {
+          const data = querySection(sec);
+          const baseName = `${project}-${sec}-${dateStr}`;
+          entries.push({ name: `${baseName}.json`, content: JSON.stringify(data, null, 2) });
+          entries.push({ name: `${baseName}.md`, content: toMarkdown(sec, data, project) });
+          const csv = toCSV(data);
+          if (csv) entries.push({ name: `${baseName}.csv`, content: csv });
+        }
+        const zipBuf = createZip(entries);
+        const zipName = section === 'all' ? `${project}-full-export-${dateStr}.zip` : `${project}-${section}-${dateStr}.zip`;
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="${zipName}"`,
+          'Content-Length': zipBuf.length,
+        });
+        res.end(zipBuf);
+      } else if (format === 'json') {
+        const data = querySection(sections[0]);
+        const fileName = `${project}-${sections[0]}-${dateStr}.json`;
+        const content = JSON.stringify(data, null, 2);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+        });
+        res.end(content);
+      } else if (format === 'csv') {
+        const data = querySection(sections[0]);
+        const fileName = `${project}-${sections[0]}-${dateStr}.csv`;
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+        });
+        res.end(toCSV(data));
+      } else if (format === 'md') {
+        const data = querySection(sections[0]);
+        const fileName = `${project}-${sections[0]}-${dateStr}.md`;
+        res.writeHead(200, {
+          'Content-Type': 'text/markdown; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+        });
+        res.end(toMarkdown(sections[0], data, project));
+      } else {
+        json(res, 400, { error: 'Invalid format. Allowed: json, csv, md, zip' });
+      }
+    } catch (e) {
+      console.error('[export/download]', e);
       json(res, 500, { error: e.message });
     }
     return;

@@ -10,7 +10,7 @@ description: >
   Includes gap-intel for topic/content gap analysis between your site and competitors.
 ---
 
-# SEO Intel (v1.4)
+# SEO Intel (v1.4.2)
 
 Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
 
@@ -35,7 +35,9 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 | Extract | `seo-intel extract <project>` | Solo | Ollama / Gemma 4 or Qwen local |
 | Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
 | AEO | `seo-intel aeo <project>` | Solo | Pure local (no AI needed) |
+| Watch | `seo-intel watch <project>` | Solo | Pure local (diff engine) |
 | Keywords | `seo-intel keywords <project>` | Solo | OpenClaw (Opus/Sonnet) |
+| Blog Draft | `seo-intel blog-draft <project>` | Solo | Cloud LLM (Gemini/Claude/GPT) |
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (full) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (limited) / Solo (full) | HTML |
 
@@ -48,7 +50,8 @@ Agents using this skill should interpret outputs like this:
 - **extract** = semantic layer (entities, intent, CTAs, page types, signals)
 - **analyze / gap-intel / keywords / competitive-actions** = what competitors prove is working or missing
 - **aeo** = whether pages are shaped for AI citation and answer engines
-- **export-actions / brief / suggest-usecases** = implementation-ready next steps
+- **watch** = what changed since last crawl — regressions, new pages, content shifts
+- **export-actions / brief / suggest-usecases / blog-draft** = implementation-ready next steps
 
 When helping a docs writer, page builder, or implementation agent:
 1. identify what competitors cover that the target does not
@@ -67,6 +70,8 @@ seo-intel aeo <project>            # AI Citability Audit — score pages for AI 
 seo-intel keywords <project>       # Keyword Inventor — traditional + AI/agent queries
 seo-intel brief <project>          # Generate content briefs for new pages
 seo-intel gap-intel <project>      # Topic/content gap analysis vs competitors (Solo)
+seo-intel watch <project>          # Site health monitor — diff between crawl runs
+seo-intel blog-draft <project>     # Generate AEO-optimised blog post draft (Solo)
 seo-intel html <project>           # Generate dashboard
 seo-intel serve                    # Web dashboard at localhost:3000
 seo-intel status                   # Data freshness + summary
@@ -74,6 +79,8 @@ seo-intel run                      # Full pipeline: crawl → extract → analyz
 seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel export <project>         # Raw data export (JSON/CSV)
 ```
+
+**Dashboard export:** The web dashboard (`seo-intel serve`) has per-card download buttons (MD/JSON/CSV) and a "Download All Reports (ZIP)" option via `/api/export/download`.
 
 ## Full Command Surface
 
@@ -98,8 +105,10 @@ seo-intel crawl <project>          # Crawl target + competitors
 seo-intel extract <project>        # Local AI extraction (Ollama)
 seo-intel analyze <project>        # Strategic competitive analysis
 seo-intel aeo <project>            # AI citability audit
+seo-intel watch <project>          # Site health monitor — diff between crawl runs
 seo-intel keywords <project>       # Traditional + AI/agent keyword discovery
 seo-intel brief <project>          # Content brief generation
+seo-intel blog-draft <project>     # AEO-optimised blog post draft
 seo-intel gap-intel <project>      # Topic/content gap analysis vs competitors
 ```
 
@@ -156,7 +165,43 @@ seo-intel shallow <project>        # Quick technical audit (no full crawl needed
 seo-intel competitors <project>    # Manage competitor list
 seo-intel subdomains <domain>      # Subdomain discovery
 seo-intel gap-intel <project>      # Topic gap analysis vs competitor domains (Solo)
+seo-intel watch <project>          # Site health monitor — diff between crawl runs (Solo)
+seo-intel blog-draft <project>     # AEO-optimised blog post draft (Solo)
 ```
+
+## Site Watch — Health Monitoring & Change Detection (v1.4.2)
+
+Tracks page-level changes between crawl runs and computes a site health score (0-100). Detects title changes, meta description changes, content hash diffs, new/removed pages, status code changes, indexability flips, and word count shifts.
+
+```bash
+seo-intel watch <project>                # Brief health report
+seo-intel watch <project> --format json  # Structured JSON output
+```
+
+**How it works:**
+- First run captures a baseline snapshot
+- Subsequent runs diff against the previous snapshot
+- Significant changes feed into the Intelligence Ledger automatically
+- Dashboard shows the Site Watch card with health score, trend, and event breakdown
+
+**Events by severity:** error (status code regressions, deindexed pages), warning (title/meta changes, large content shifts), notice (minor word count changes, new pages)
+
+**Agent use:** Run `watch` after every crawl to detect regressions early. If the health score drops, investigate the error/warning events before running analysis commands.
+
+## Blog Draft — AEO-Optimised Content Generation (v1.3.0)
+
+Generates blog post drafts from Intelligence Ledger data — keyword gaps, citability insights, and competitor patterns feed into structured markdown with frontmatter.
+
+```bash
+seo-intel blog-draft <project>                          # Auto-pick topic from ledger
+seo-intel blog-draft <project> --topic "api security"   # Specific topic
+seo-intel blog-draft <project> --lang fi                # Finnish
+seo-intel blog-draft <project> --model claude --save    # Use Claude, save to reports/
+```
+
+**Models:** gemini (default), claude, gpt, deepseek
+
+Solo tier only.
 
 ## Gap Intel — Topic Coverage Gap Analysis (v1.4.0)
 
@@ -262,8 +307,8 @@ seo-intel export-actions <project> --scope all --format brief
 If the agent is writing docs, landing pages, comparison pages, or implementation briefs in an isolated environment, use this order:
 
 1. **Establish reality**
-   - use `crawl`, `schemas`, `headings-audit`, `status`
-   - identify target vs competitor coverage
+   - use `crawl`, `watch`, `schemas`, `headings-audit`, `status`
+   - identify target vs competitor coverage, detect regressions from previous crawl
 2. **Understand meaning**
    - use `extract`, `entities`, `keywords`, `gap-intel`
    - determine what themes, intents, and problem clusters competitors cover
@@ -561,7 +606,7 @@ capabilities.forEach(c => console.log(c.id, c.phase, c.tier));
 pipeline.graph['entities']; // → ['extract']
 ```
 
-Available: `aeo`, `gap-intel`, `shallow`, `decay`, `headings-audit`, `orphans`, `entities`, `schemas`, `friction`, `brief`, `velocity`, `js-delta`, `export-actions`, `competitive-actions`, `suggest-usecases`, `blog-draft`, `insights`, `status`
+Available: `aeo`, `gap-intel`, `watch`, `shallow`, `decay`, `headings-audit`, `orphans`, `entities`, `schemas`, `friction`, `brief`, `velocity`, `js-delta`, `export-actions`, `competitive-actions`, `suggest-usecases`, `blog-draft`, `insights`, `status`
 
 See `AGENT_GUIDE.md` for full orchestration patterns.
 

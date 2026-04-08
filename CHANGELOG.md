@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.5 (2026-04-09)
+
+### Export: actionable summaries only
+- Technical export: per-page issue summary (own site only) — lists specific problems per URL
+- Links export: per-page link issue summary (own site only) — orphan pages, missing anchors, excessive external links
+- No more raw data dumps in profile exports — every row is an action item
+
 ## 1.4.4 (2026-04-08)
 
 ### Export Profiles

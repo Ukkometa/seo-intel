@@ -759,12 +759,24 @@ async function handleRequest(req, res) {
           }
           case 'technical': {
             if (!Array.isArray(data) || prof === 'ai-pipeline') return data;
-            // Dev profile: only pages with issues
-            return data.filter(r =>
-              r.status_code >= 400 || !r.has_canonical || !r.has_og_tags ||
-              !r.has_schema || !r.has_robots || !r.is_mobile_ok ||
-              (r.load_ms && r.load_ms > 3000) || (r.word_count != null && r.word_count < 100)
-            );
+            // Own site only, per-page issue summary
+            const own = data.filter(r => r.role === 'target' || r.role === 'owned');
+            const issues = [];
+            for (const r of own) {
+              const problems = [];
+              if (r.status_code >= 400) problems.push(`HTTP ${r.status_code}`);
+              if (!r.has_canonical) problems.push('no canonical');
+              if (!r.has_og_tags) problems.push('no OG tags');
+              if (!r.has_schema) problems.push('no schema');
+              if (!r.has_robots) problems.push('no robots meta');
+              if (!r.is_mobile_ok) problems.push('not mobile-friendly');
+              if (r.load_ms && r.load_ms > 3000) problems.push(`slow (${r.load_ms}ms)`);
+              if (r.word_count != null && r.word_count < 100) problems.push(`thin content (${r.word_count} words)`);
+              if (problems.length) {
+                issues.push({ url: r.url, domain: r.domain, issues: problems.join(', '), status: r.status_code, load_ms: r.load_ms, word_count: r.word_count });
+              }
+            }
+            return issues;
           }
           case 'headings': {
             if (!Array.isArray(data)) return data;
@@ -795,12 +807,25 @@ async function handleRequest(req, res) {
           }
           case 'links': {
             if (!Array.isArray(data)) return data;
-            // Only orphan pages (pages that are never a target) and broken anchors
-            const targetUrls = new Set(data.filter(l => l.is_internal).map(l => l.target_url));
-            const sourceUrls = new Set(data.map(l => l.source_url));
-            // Pages that link out but are never linked TO = orphan
-            const orphans = new Set([...sourceUrls].filter(u => !targetUrls.has(u)));
-            return data.filter(r => orphans.has(r.source_url) || !r.anchor_text);
+            // Own site only, summarize to per-page link issues
+            const ownLinks = data.filter(r => r.role === 'target' || r.role === 'owned');
+            const internalTargets = new Set(ownLinks.filter(l => l.is_internal).map(l => l.target_url));
+            const byPage = {};
+            for (const r of ownLinks) (byPage[r.source_url] ||= []).push(r);
+            const issues = [];
+            for (const [url, links] of Object.entries(byPage)) {
+              const problems = [];
+              const noAnchor = links.filter(l => !l.anchor_text);
+              if (noAnchor.length) problems.push(`${noAnchor.length} links missing anchor text`);
+              if (!internalTargets.has(url)) problems.push('orphan page (no internal links point here)');
+              const extLinks = links.filter(l => !l.is_internal);
+              // flag if page has excessive external links
+              if (extLinks.length > 20) problems.push(`${extLinks.length} external links`);
+              if (problems.length) {
+                issues.push({ url, domain: links[0].domain, issues: problems.join(', '), total_links: links.length, internal: links.filter(l => l.is_internal).length, external: extLinks.length });
+              }
+            }
+            return issues;
           }
           case 'schemas': {
             if (!Array.isArray(data) || prof !== 'dev') return data;

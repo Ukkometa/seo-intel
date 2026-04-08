@@ -594,6 +594,7 @@ async function handleRequest(req, res) {
       const project = url.searchParams.get('project');
       const section = url.searchParams.get('section') || 'all';
       const format = url.searchParams.get('format') || 'json';
+      const profile = url.searchParams.get('profile'); // dev | content | ai-pipeline
 
       if (!project) { json(res, 400, { error: 'Missing project' }); return; }
 
@@ -606,6 +607,25 @@ async function handleRequest(req, res) {
       const { createZip } = await import('./lib/export-zip.js');
 
       const SECTIONS = ['aeo', 'insights', 'technical', 'keywords', 'pages', 'watch', 'schemas', 'headings', 'links'];
+
+      // ── Profile definitions: which sections + which insight types matter ──
+      const PROFILES = {
+        dev: {
+          sections: ['technical', 'schemas', 'links', 'headings', 'watch', 'insights'],
+          insightTypes: ['technical_gap', 'quick_win', 'site_watch'],
+          label: 'Developer',
+        },
+        content: {
+          sections: ['insights', 'keywords', 'aeo'],
+          insightTypes: ['keyword_gap', 'long_tail', 'content_gap', 'new_page', 'keyword_inventor', 'citability_gap', 'positioning'],
+          label: 'Content',
+        },
+        'ai-pipeline': {
+          sections: ['insights', 'aeo', 'technical', 'keywords', 'watch'],
+          insightTypes: null, // all types
+          label: 'AI Pipeline',
+        },
+      };
 
       function querySection(sec) {
         switch (sec) {
@@ -726,6 +746,103 @@ async function handleRequest(req, res) {
         }
       }
 
+      // ── Profile-aware filtering: strip raw dumps, keep actionable items ──
+      function filterForProfile(sec, data, prof) {
+        if (!prof || !data) return data;
+        const p = PROFILES[prof];
+        if (!p) return data;
+
+        switch (sec) {
+          case 'insights': {
+            if (!Array.isArray(data)) return data;
+            return p.insightTypes ? data.filter(r => p.insightTypes.includes(r._type)) : data;
+          }
+          case 'technical': {
+            if (!Array.isArray(data) || prof === 'ai-pipeline') return data;
+            // Dev profile: only pages with issues
+            return data.filter(r =>
+              r.status_code >= 400 || !r.has_canonical || !r.has_og_tags ||
+              !r.has_schema || !r.has_robots || !r.is_mobile_ok ||
+              (r.load_ms && r.load_ms > 3000) || (r.word_count != null && r.word_count < 100)
+            );
+          }
+          case 'headings': {
+            if (!Array.isArray(data)) return data;
+            // Own site only — group by page, return per-page issue summary
+            const ownOnly = data.filter(r => r.role === 'target' || r.role === 'owned');
+            const byPage = {};
+            for (const r of ownOnly) (byPage[r.url] ||= []).push(r);
+            const issues = [];
+            for (const [url, headings] of Object.entries(byPage)) {
+              const h1s = headings.filter(h => h.level === 1);
+              const levels = headings.map(h => h.level);
+              const problems = [];
+              if (h1s.length === 0) problems.push('missing H1');
+              else if (h1s.length > 1) problems.push(`${h1s.length}× H1`);
+              // Check for skipped levels (e.g. H1→H3 skips H2)
+              const unique = [...new Set(levels)].sort((a, b) => a - b);
+              for (let i = 1; i < unique.length; i++) {
+                if (unique[i] - unique[i - 1] > 1) {
+                  problems.push(`skips H${unique[i - 1]}→H${unique[i]}`);
+                }
+              }
+              if (problems.length) {
+                const sequence = levels.map(l => `H${l}`).join(' → ');
+                issues.push({ url, domain: headings[0].domain, issues: problems.join(', '), sequence, heading_count: headings.length });
+              }
+            }
+            return issues;
+          }
+          case 'links': {
+            if (!Array.isArray(data)) return data;
+            // Only orphan pages (pages that are never a target) and broken anchors
+            const targetUrls = new Set(data.filter(l => l.is_internal).map(l => l.target_url));
+            const sourceUrls = new Set(data.map(l => l.source_url));
+            // Pages that link out but are never linked TO = orphan
+            const orphans = new Set([...sourceUrls].filter(u => !targetUrls.has(u)));
+            return data.filter(r => orphans.has(r.source_url) || !r.anchor_text);
+          }
+          case 'schemas': {
+            if (!Array.isArray(data) || prof !== 'dev') return data;
+            // Dev: pages missing schema are more useful — but we only have pages WITH schema here
+            // So return all (schema gaps come from technical section's has_schema=false)
+            return data;
+          }
+          case 'aeo': {
+            if (!Array.isArray(data)) return data;
+            if (prof === 'content') {
+              // Content: only low-scoring pages (needs improvement)
+              return data.filter(r => r.score < 60);
+            }
+            return data;
+          }
+          case 'keywords': {
+            if (!Array.isArray(data)) return data;
+            if (prof === 'content') {
+              // Content: only competitor-dominated keywords (role != target/owned)
+              const byKw = {};
+              for (const r of data) { (byKw[r.keyword] ||= []).push(r); }
+              const gapKws = new Set();
+              for (const [kw, rows] of Object.entries(byKw)) {
+                const hasTarget = rows.some(r => r.role === 'target' || r.role === 'owned');
+                const hasCompetitor = rows.some(r => r.role === 'competitor');
+                if (!hasTarget && hasCompetitor) gapKws.add(kw);
+              }
+              return data.filter(r => gapKws.has(r.keyword));
+            }
+            return data;
+          }
+          case 'watch': {
+            // Keep only errors + warnings, drop notices
+            if (data && data.events) {
+              return { ...data, events: data.events.filter(e => e.severity === 'error' || e.severity === 'warning') };
+            }
+            return data;
+          }
+          default: return data;
+        }
+      }
+
       function toCSV(rows) {
         if (!rows || (Array.isArray(rows) && !rows.length)) return '';
         const arr = Array.isArray(rows) ? rows : (rows.events || rows.pages || []);
@@ -834,26 +951,56 @@ async function handleRequest(req, res) {
         }
       }
 
-      // Build response based on section + format
-      const sections = section === 'all' ? SECTIONS : [section];
-      if (section !== 'all' && !SECTIONS.includes(section)) {
+      // ── Resolve sections: profile overrides section=all ──
+      const validProfiles = Object.keys(PROFILES);
+      if (profile && !validProfiles.includes(profile)) {
+        json(res, 400, { error: `Invalid profile. Allowed: ${validProfiles.join(', ')}` });
+        return;
+      }
+      const resolvedSections = profile
+        ? PROFILES[profile].sections
+        : (section === 'all' ? SECTIONS : [section]);
+
+      if (!profile && section !== 'all' && !SECTIONS.includes(section)) {
         json(res, 400, { error: `Invalid section. Allowed: ${SECTIONS.join(', ')}, all` });
         return;
       }
 
+      // Helper: query + filter for profile
+      function getData(sec) {
+        const raw = querySection(sec);
+        return profile ? filterForProfile(sec, raw, profile) : raw;
+      }
+
+      function isEmpty(data) {
+        if (!data) return true;
+        if (Array.isArray(data)) return data.length === 0;
+        if (data.events) return data.events.length === 0;
+        return false;
+      }
+
+      const profileTag = profile ? `-${profile}` : '';
+      const profileLabel = profile ? PROFILES[profile].label : '';
+
       if (format === 'zip') {
-        // ZIP: bundle all requested sections in all formats
         const entries = [];
-        for (const sec of sections) {
-          const data = querySection(sec);
-          const baseName = `${project}-${sec}-${dateStr}`;
+        for (const sec of resolvedSections) {
+          const data = getData(sec);
+          if (isEmpty(data)) continue; // skip empty sections
+          const baseName = `${project}${profileTag}-${sec}-${dateStr}`;
           entries.push({ name: `${baseName}.json`, content: JSON.stringify(data, null, 2) });
           entries.push({ name: `${baseName}.md`, content: toMarkdown(sec, data, project) });
           const csv = toCSV(data);
           if (csv) entries.push({ name: `${baseName}.csv`, content: csv });
         }
+        if (!entries.length) {
+          json(res, 200, { message: 'No actionable data to export.' });
+          return;
+        }
         const zipBuf = createZip(entries);
-        const zipName = section === 'all' ? `${project}-full-export-${dateStr}.zip` : `${project}-${section}-${dateStr}.zip`;
+        const zipName = profile
+          ? `${project}-${profile}-export-${dateStr}.zip`
+          : (section === 'all' ? `${project}-full-export-${dateStr}.zip` : `${project}-${section}-${dateStr}.zip`);
         res.writeHead(200, {
           'Content-Type': 'application/zip',
           'Content-Disposition': `attachment; filename="${zipName}"`,
@@ -861,30 +1008,77 @@ async function handleRequest(req, res) {
         });
         res.end(zipBuf);
       } else if (format === 'json') {
-        const data = querySection(sections[0]);
-        const fileName = `${project}-${sections[0]}-${dateStr}.json`;
-        const content = JSON.stringify(data, null, 2);
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Content-Disposition': `attachment; filename="${fileName}"`,
-        });
-        res.end(content);
+        if (profile) {
+          // Profile JSON: merged object with all profile sections
+          const result = { profile: profileLabel, project, date: dateStr, sections: {} };
+          for (const sec of resolvedSections) {
+            const data = getData(sec);
+            if (!isEmpty(data)) result.sections[sec] = data;
+          }
+          const fileName = `${project}-${profile}-${dateStr}.json`;
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          });
+          res.end(JSON.stringify(result, null, 2));
+        } else {
+          const data = getData(resolvedSections[0]);
+          const fileName = `${project}-${resolvedSections[0]}-${dateStr}.json`;
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          });
+          res.end(JSON.stringify(data, null, 2));
+        }
       } else if (format === 'csv') {
-        const data = querySection(sections[0]);
-        const fileName = `${project}-${sections[0]}-${dateStr}.csv`;
-        res.writeHead(200, {
-          'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': `attachment; filename="${fileName}"`,
-        });
-        res.end(toCSV(data));
+        if (profile) {
+          // Profile CSV: concatenate sections with headers
+          let csv = '';
+          for (const sec of resolvedSections) {
+            const data = getData(sec);
+            const secCsv = toCSV(data);
+            if (secCsv) csv += `# ${sec}\n${secCsv}\n\n`;
+          }
+          const fileName = `${project}-${profile}-${dateStr}.csv`;
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          });
+          res.end(csv || 'No actionable data.');
+        } else {
+          const data = getData(resolvedSections[0]);
+          const fileName = `${project}-${resolvedSections[0]}-${dateStr}.csv`;
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          });
+          res.end(toCSV(data));
+        }
       } else if (format === 'md') {
-        const data = querySection(sections[0]);
-        const fileName = `${project}-${sections[0]}-${dateStr}.md`;
-        res.writeHead(200, {
-          'Content-Type': 'text/markdown; charset=utf-8',
-          'Content-Disposition': `attachment; filename="${fileName}"`,
-        });
-        res.end(toMarkdown(sections[0], data, project));
+        if (profile) {
+          // Profile Markdown: combined report
+          let md = `# SEO Intel — ${profileLabel} Report\n\n- Project: ${project}\n- Date: ${dateStr}\n- Profile: ${profileLabel}\n\n`;
+          for (const sec of resolvedSections) {
+            const data = getData(sec);
+            if (isEmpty(data)) continue;
+            md += toMarkdown(sec, data, project).replace(/^# .+\n\n- Project:.+\n- Date:.+\n\n/, ''); // strip per-section header
+          }
+          if (md.split('\n').length < 8) md += '_No actionable data found. Run crawl + extract + analyze first._\n';
+          const fileName = `${project}-${profile}-${dateStr}.md`;
+          res.writeHead(200, {
+            'Content-Type': 'text/markdown; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          });
+          res.end(md);
+        } else {
+          const data = getData(resolvedSections[0]);
+          const fileName = `${project}-${resolvedSections[0]}-${dateStr}.md`;
+          res.writeHead(200, {
+            'Content-Type': 'text/markdown; charset=utf-8',
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          });
+          res.end(toMarkdown(resolvedSections[0], data, project));
+        }
       } else {
         json(res, 400, { error: 'Invalid format. Allowed: json, csv, md, zip' });
       }

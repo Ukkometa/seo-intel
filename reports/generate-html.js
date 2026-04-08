@@ -1525,6 +1525,20 @@ function buildHtmlTemplate(data, opts = {}) {
     .export-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
     .export-btn i { margin-right: 5px; font-size: 0.6rem; }
     .export-btn.active { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(232,213,163,0.06); }
+    .profile-export-picker { position: relative; }
+    .profile-export-trigger { display: flex; align-items: center; width: 100%; }
+    .profile-export-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 0; right: 0;
+      background: #1a1a1a;
+      border: 1px solid var(--accent-gold);
+      border-radius: var(--radius);
+      padding: 10px;
+      z-index: 50;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
     .draft-dropdown { position: relative; }
     .draft-trigger { display: flex; align-items: center; width: 100%; }
     .draft-menu {
@@ -2193,7 +2207,24 @@ function buildHtmlTemplate(data, opts = {}) {
         <i class="fa-solid fa-download"></i> Download
       </div>
       <div class="export-sidebar-btns">
-        <button class="export-btn download-all-btn" data-project="${project}"><i class="fa-solid fa-file-zipper"></i> Download All Reports (ZIP)</button>
+        <div class="profile-export-picker" id="profilePicker${suffix}">
+          <button class="export-btn profile-export-trigger"><i class="fa-solid fa-download"></i> Export Report <i class="fa-solid fa-chevron-down" style="font-size:0.55rem;margin-left:auto;opacity:0.5;"></i></button>
+          <div class="profile-export-menu">
+            <div class="draft-menu-section">Profile</div>
+            <label class="draft-option"><input type="radio" name="exportProfile${suffix}" value="dev" /> <i class="fa-solid fa-wrench"></i> Developer <span style="font-size:0.5rem;opacity:0.45;margin-left:2px;">technical fixes, schema gaps</span></label>
+            <label class="draft-option"><input type="radio" name="exportProfile${suffix}" value="content" checked /> <i class="fa-solid fa-pen-fancy"></i> Content <span style="font-size:0.5rem;opacity:0.45;margin-left:2px;">keyword gaps, opportunities</span></label>
+            <label class="draft-option"><input type="radio" name="exportProfile${suffix}" value="ai-pipeline" /> <i class="fa-solid fa-robot"></i> AI Pipeline <span style="font-size:0.5rem;opacity:0.45;margin-left:2px;">structured JSON for LLMs</span></label>
+            <div class="draft-menu-section" style="margin-top:8px;">Format</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="md" checked /> <i class="fa-solid fa-file-lines"></i> MD</label>
+              <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="json" /> <i class="fa-solid fa-code"></i> JSON</label>
+              <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="csv" /> <i class="fa-solid fa-table"></i> CSV</label>
+              <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="zip" /> <i class="fa-solid fa-file-zipper"></i> ZIP</label>
+            </div>
+            <button class="draft-generate-btn profile-download-btn" data-project="${project}" style="margin-top:10px;"><i class="fa-solid fa-download"></i> Download</button>
+          </div>
+        </div>
+        <button class="export-btn download-all-btn" data-project="${project}" style="font-size:0.58rem;opacity:0.6;"><i class="fa-solid fa-file-zipper"></i> Raw Full Export (ZIP)</button>
       </div>
       <div style="position:relative;">
         <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
@@ -2592,8 +2623,40 @@ function buildHtmlTemplate(data, opts = {}) {
           }
           return;
         }
+        // Profile export picker toggle
+        var profTrigger = e.target.closest('.profile-export-trigger');
+        if (profTrigger) {
+          var picker = profTrigger.closest('.profile-export-picker');
+          if (picker) {
+            e.stopImmediatePropagation();
+            var menu = picker.querySelector('.profile-export-menu');
+            var wasVis = menu.style.display === 'block';
+            document.querySelectorAll('.profile-export-menu').forEach(function(m) { m.style.display = 'none'; });
+            menu.style.display = wasVis ? 'none' : 'block';
+            return;
+          }
+        }
+        // Profile download button
+        var profDl = e.target.closest('.profile-download-btn');
+        if (profDl) {
+          var picker2 = profDl.closest('.profile-export-picker');
+          if (picker2) {
+            e.stopImmediatePropagation();
+            var projP = profDl.getAttribute('data-project');
+            var profVal = picker2.querySelector('input[name^="exportProfile"]:checked');
+            var fmtVal = picker2.querySelector('input[name^="exportFmt"]:checked');
+            var prof = profVal ? profVal.value : 'content';
+            var fmt2 = fmtVal ? fmtVal.value : 'md';
+            picker2.querySelector('.profile-export-menu').style.display = 'none';
+            if (window.location.protocol.startsWith('http')) {
+              window.location = '/api/export/download?project=' + encodeURIComponent(projP) + '&profile=' + encodeURIComponent(prof) + '&format=' + encodeURIComponent(fmt2);
+            }
+            return;
+          }
+        }
         // Outside click — close all open dropdowns
         document.querySelectorAll('.card-export.open').forEach(function(el) { el.classList.remove('open'); });
+        document.querySelectorAll('.profile-export-menu').forEach(function(m) { m.style.display = 'none'; });
       }, true);
     }
 

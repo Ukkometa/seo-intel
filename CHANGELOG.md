@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.4 (2026-04-08)
+
+### Export Profiles
+- New profile-based export: Developer, Content, and AI Pipeline profiles
+- Each profile filters to actionable data only — no raw database dumps
+- Developer profile: technical issues, heading problems (own site only), orphan links, schema gaps
+- Content profile: keyword gaps, long-tail opportunities, citability issues, content gaps
+- AI Pipeline profile: structured JSON with all actionable sections for LLM consumption
+- Heading export collapsed to per-page issue summaries (missing H1, duplicate H1, skipped levels)
+- Empty sections automatically skipped in exports
+- Profile picker UI in dashboard sidebar with format selector (MD, JSON, CSV, ZIP)
+
 ## 1.4.3 (2026-04-07)
 
 ### Dashboard: Export & Download

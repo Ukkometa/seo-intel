@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.7 (2026-04-09)
+
+### Export: profiles are actions only
+- Removed schemas from all export profiles — pure inventory, not actionable
+- "No schema" issues already surfaced in technical section
+- Raw Full Export (ZIP) still includes everything for data access
+
 ## 1.4.6 (2026-04-09)
 
 ### Export: rich actionable content

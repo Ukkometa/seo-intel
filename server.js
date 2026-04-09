@@ -611,7 +611,7 @@ async function handleRequest(req, res) {
       // ── Profile definitions: which sections + which insight types matter ──
       const PROFILES = {
         dev: {
-          sections: ['technical', 'schemas', 'links', 'headings', 'watch', 'insights'],
+          sections: ['technical', 'links', 'headings', 'watch', 'insights'],
           insightTypes: ['technical_gap', 'quick_win', 'site_watch'],
           label: 'Developer',
         },
@@ -827,11 +827,7 @@ async function handleRequest(req, res) {
             }
             return issues;
           }
-          case 'schemas': {
-            if (!Array.isArray(data)) return data;
-            // Own site only for all profiles
-            return data.filter(r => r.role === 'target' || r.role === 'owned');
-          }
+          case 'schemas': return data; // raw only — not in any profile
           case 'aeo': {
             if (!Array.isArray(data)) return data;
             if (prof === 'content') {

@@ -828,10 +828,9 @@ async function handleRequest(req, res) {
             return issues;
           }
           case 'schemas': {
-            if (!Array.isArray(data) || prof !== 'dev') return data;
-            // Dev: pages missing schema are more useful — but we only have pages WITH schema here
-            // So return all (schema gaps come from technical section's has_schema=false)
-            return data;
+            if (!Array.isArray(data)) return data;
+            // Own site only for all profiles
+            return data.filter(r => r.role === 'target' || r.role === 'owned');
           }
           case 'aeo': {
             if (!Array.isArray(data)) return data;
@@ -905,9 +904,47 @@ async function handleRequest(req, res) {
             for (const r of data) { (grouped[r._type] ||= []).push(r); }
             for (const [type, items] of Object.entries(grouped)) {
               md += `### ${type.replace(/_/g, ' ')} (${items.length})\n\n`;
-              for (const item of items) {
-                const desc = item.phrase || item.keyword || item.title || item.page || item.message || JSON.stringify(item).slice(0, 120);
-                md += `- ${desc}\n`;
+              switch (type) {
+                case 'quick_win':
+                  md += '| Page | Issue | Fix | Impact |\n|------|-------|-----|--------|\n';
+                  for (const i of items) md += `| ${i.page || ''} | ${i.issue || ''} | ${i.fix || ''} | ${i.impact || ''} |\n`;
+                  break;
+                case 'keyword_gap':
+                  md += '| Keyword | Your Coverage | Competitor Coverage |\n|---------|--------------|--------------------|\n';
+                  for (const i of items) md += `| ${i.keyword || ''} | ${i.your_coverage || i.target_count || 'none'} | ${i.competitor_coverage || i.competitor_count || ''} |\n`;
+                  break;
+                case 'long_tail':
+                  md += '| Phrase | Parent Keyword | Opportunity |\n|-------|----------------|-------------|\n';
+                  for (const i of items) md += `| ${i.phrase || ''} | ${i.parent || i.keyword || ''} | ${i.opportunity || i.rationale || ''} |\n`;
+                  break;
+                case 'new_page':
+                  md += '| Title | Target Keyword | Rationale |\n|-------|----------------|----------|\n';
+                  for (const i of items) md += `| ${i.title || ''} | ${i.target_keyword || ''} | ${i.rationale || ''} |\n`;
+                  break;
+                case 'content_gap':
+                  md += '| Topic | Gap | Suggestion |\n|-------|-----|------------|\n';
+                  for (const i of items) md += `| ${i.topic || ''} | ${i.gap || ''} | ${i.suggestion || ''} |\n`;
+                  break;
+                case 'technical_gap':
+                  md += '| Issue | Affected | Recommendation |\n|-------|----------|----------------|\n';
+                  for (const i of items) md += `| ${i.gap || i.issue || ''} | ${i.affected || i.pages || ''} | ${i.recommendation || i.fix || ''} |\n`;
+                  break;
+                case 'citability_gap':
+                  md += '| URL | Score | Weakest Signals |\n|-----|-------|----------------|\n';
+                  for (const i of items) md += `| ${i.url || ''} | ${i.score ?? ''} | ${i.weak_signals || ''} |\n`;
+                  break;
+                case 'keyword_inventor':
+                  md += '| Phrase | Cluster | Search Potential |\n|-------|---------|------------------|\n';
+                  for (const i of items) md += `| ${i.phrase || ''} | ${i.cluster || ''} | ${i.potential || i.volume || ''} |\n`;
+                  break;
+                case 'site_watch':
+                  md += '| URL | Event | Details |\n|-----|-------|--------|\n';
+                  for (const i of items) md += `| ${i.url || ''} | ${i.event_type || ''} | ${i.details || ''} |\n`;
+                  break;
+                default:
+                  for (const i of items) {
+                    md += `- ${i.phrase || i.keyword || i.title || i.page || i.message || JSON.stringify(i).slice(0, 120)}\n`;
+                  }
               }
               md += '\n';
             }

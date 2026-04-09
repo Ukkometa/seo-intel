@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.6 (2026-04-09)
+
+### Export: rich actionable content
+- Insights export now renders type-specific tables (quick wins show issue + fix + impact, keyword gaps show coverage, etc.)
+- Schema markup export scoped to own site only — no competitor schema dumps
+- SKILL.md updated with export profiles documentation
+
 ## 1.4.5 (2026-04-09)
 
 ### Export: actionable summaries only

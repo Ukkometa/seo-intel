@@ -27,6 +27,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Load project config by name. Returns null if not found. */
 export function loadConfig(project) {
+  if (!project || !/^[a-z0-9_-]+$/i.test(project)) return null;
   const path = join(__dirname, 'config', `${project}.json`);
   try { return JSON.parse(readFileSync(path, 'utf8')); }
   catch { return null; }

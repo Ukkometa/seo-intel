@@ -268,7 +268,19 @@ export function upsertDomain(db, { domain, project, role }) {
   `).run(domain, project, role, now, now);
 }
 
+function normalizePageUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    u.hash = '';                              // strip fragments (#pricing, #faq, etc.)
+    let path = u.pathname;
+    path = path.replace(/\/index\.html?$/i, '/');  // /en/index.html → /en/
+    u.pathname = path;
+    return u.toString();
+  } catch { return rawUrl; }
+}
+
 export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable, clickDepth = 0, publishedDate = null, modifiedDate = null, contentHash = null, title = null, metaDesc = null, bodyText = null }) {
+  url = normalizePageUrl(url);
   const now = Date.now();
   db.prepare(`
     INSERT INTO pages (domain_id, url, crawled_at, first_seen_at, status_code, word_count, load_ms, is_indexable, click_depth, published_date, modified_date, content_hash, title, meta_desc, body_text)
@@ -350,7 +362,7 @@ export function insertLinks(db, sourceId, links) {
   const stmt = db.prepare(`INSERT INTO links (source_id, target_url, anchor_text, is_internal) VALUES (?, ?, ?, ?)`);
   db.exec('BEGIN');
   try {
-    for (const l of links) stmt.run(sourceId, l.url, l.anchor, l.isInternal ? 1 : 0);
+    for (const l of links) stmt.run(sourceId, normalizePageUrl(l.url), l.anchor, l.isInternal ? 1 : 0);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }

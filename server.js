@@ -596,7 +596,7 @@ async function handleRequest(req, res) {
       const format = url.searchParams.get('format') || 'json';
       const profile = url.searchParams.get('profile'); // dev | content | ai-pipeline
 
-      if (!project) { json(res, 400, { error: 'Missing project' }); return; }
+      if (!project || !/^[a-z0-9_-]+$/i.test(project)) { json(res, 400, { error: 'Invalid project name' }); return; }
 
       const { getDb } = await import('./db/db.js');
       const db = getDb(join(__dirname, 'seo-intel.db'));
@@ -1164,6 +1164,10 @@ async function handleRequest(req, res) {
     const params = url.searchParams;
     const command = params.get('command');
     const project = params.get('project') || '';
+    if (project && !/^[a-z0-9_-]+$/i.test(project)) {
+      json(res, 400, { error: 'Invalid project name' });
+      return;
+    }
 
     // Whitelist allowed commands
     const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
@@ -1190,7 +1194,7 @@ async function handleRequest(req, res) {
     if (params.get('type')) args.push('--type', params.get('type'));
     if (params.get('limit')) args.push('--limit', params.get('limit'));
     if (params.has('raw')) args.push('--raw');
-    if (params.get('out')) args.push('--out', params.get('out'));
+    // --out is NOT passed from dashboard — write paths are server-controlled only (see auto-save below)
 
     // Auto-save exports from dashboard to reports/
     const EXPORT_CMDS = ['export-actions', 'suggest-usecases', 'competitive-actions'];

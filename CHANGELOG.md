@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.9 (2026-04-10)
+
+### Security
+- Fixed arbitrary file write via `--out` query param in dashboard terminal API — write paths now server-controlled only
+- Fixed path traversal in froggo config loader — project names validated to `[a-z0-9_-]`
+- Added project name validation to export and terminal API endpoints
+
+### URL Normalization
+- Pages are now normalized before storage: fragments stripped (`/#pricing` → `/`), `index.html` collapsed
+- Internal link targets also normalized for consistent orphan/link analysis
+- Re-crawl to clean up existing fragment duplicates in your database
+
 ## 1.4.8 (2026-04-10)
 
 ### Export: own site only, zero competitor bloat

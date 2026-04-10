@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.8 (2026-04-10)
+
+### Export: own site only, zero competitor bloat
+- ALL profile sections now filter to own site (target/owned) — no competitor pages, links, headings, or AEO scores
+- Keywords export shows gap summary only: keywords competitors use that you don't, with who uses them
+- AEO export shows only low-scoring own pages (<60) that need improvement
+- Technical export was already own-site; removed the AI pipeline exception that bypassed filtering
+
 ## 1.4.7 (2026-04-09)
 
 ### Export: profiles are actions only

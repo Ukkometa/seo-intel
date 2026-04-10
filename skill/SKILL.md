@@ -10,7 +10,7 @@ description: >
   Includes gap-intel for topic/content gap analysis between your site and competitors.
 ---
 
-# SEO Intel (v1.4.7)
+# SEO Intel (v1.4.8)
 
 Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
 
@@ -35,7 +35,7 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 | Extract | `seo-intel extract <project>` | Solo | Ollama / Gemma 4 or Qwen local |
 | Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
 | AEO | `seo-intel aeo <project>` | Solo | Pure local (no AI needed) |
-| Watch | `seo-intel watch <project>` | Solo | Pure local (diff engine) |
+| Watch | `seo-intel watch <project>` | Free | Pure local (diff engine) |
 | Keywords | `seo-intel keywords <project>` | Solo | OpenClaw (Opus/Sonnet) |
 | Blog Draft | `seo-intel blog-draft <project>` | Solo | Cloud LLM (Gemini/Claude/GPT) |
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (full) | SQL heuristics |
@@ -183,9 +183,9 @@ seo-intel watch <project>          # Site health monitor — diff between crawl 
 seo-intel blog-draft <project>     # AEO-optimised blog post draft (Solo)
 ```
 
-## Site Watch — Health Monitoring & Change Detection (v1.4.2)
+## Site Watch — Health Monitoring & Change Detection (v1.4.2+)
 
-Tracks page-level changes between crawl runs and computes a site health score (0-100). Detects title changes, meta description changes, content hash diffs, new/removed pages, status code changes, indexability flips, and word count shifts.
+Tracks crawl-to-crawl changes and computes a site health score (0-100) from page errors, missing titles, and missing H1s. Site Watch is available on the free tier and auto-runs after every crawl.
 
 ```bash
 seo-intel watch <project>                # Brief health report
@@ -195,12 +195,25 @@ seo-intel watch <project> --format json  # Structured JSON output
 **How it works:**
 - First run captures a baseline snapshot
 - Subsequent runs diff against the previous snapshot
-- Significant changes feed into the Intelligence Ledger automatically
-- Dashboard shows the Site Watch card with health score, trend, and event breakdown
+- Significant changes feed into the Intelligence Ledger as `site_watch` insights
+- Dashboard shows the Site Watch card with health score, trend arrows, severity deltas, and a “What’s New” event feed
+- Available via CLI, dashboard terminal, and programmatic API: `run('watch', project)`
 
-**Events by severity:** error (status code regressions, deindexed pages), warning (title/meta changes, large content shifts), notice (minor word count changes, new pages)
+**Detected event types (10):**
+- `page_added`
+- `page_removed`
+- `status_changed`
+- `new_error`
+- `title_changed`
+- `h1_changed`
+- `meta_desc_changed`
+- `word_count_changed`
+- `indexability_changed`
+- `content_changed`
 
-**Agent use:** Run `watch` after every crawl to detect regressions early. If the health score drops, investigate the error/warning events before running analysis commands.
+**Severity classes:** `critical`, `warning`, `notice`
+
+**Agent use:** Run `watch` after every crawl to detect regressions early. If the health score drops, investigate critical/warning events before spending cycles on higher-order analysis.
 
 ## Blog Draft — AEO-Optimised Content Generation (v1.3.0)
 
@@ -537,7 +550,7 @@ Only changed files are uploaded. Deploy is instant and global (Cloudflare edge, 
 
 ### Keeping llms.txt / skill.md in sync after releases
 
-After any version bump or feature release, update and redeploy:
+After any version bump or feature release, update and redeploy. Also keep public listing surfaces aligned, not just local docs:
 
 ```bash
 # Update skill.md from source
@@ -550,12 +563,15 @@ cp /path/to/seo-intel/skill/SKILL.md /path/to/site/seo-intel/skill.md
 cd /path/to/site && wrangler deploy
 ```
 
-Files that must stay in sync on every version bump:
-- `seo-intel/skill.md` — copy from `seo-intel/skill/SKILL.md`
-- `llms.txt` — version number + feature summary
-- `llms-ctx.txt` — full context, version number, feature descriptions
+Files/surfaces that must stay in sync on every version bump:
+- `skill/SKILL.md`
+- public site `seo-intel/skill.md` — copy from `skill/SKILL.md`
+- public site `llms.txt` — version number + feature summary
+- public site `llms-ctx.txt` — full context, version number, feature descriptions
 - JSON-LD `softwareVersion` on product pages
-- Nav version badge in HTML
+- nav / hero version badges in HTML
+- ClawHub listing / manifest text and runtime expectation disclosure
+- `CHANGELOG.md`
 
 ---
 
@@ -634,13 +650,21 @@ seo-intel crawl <project>
 seo-intel analyze <project> && seo-intel aeo <project> && seo-intel export-actions <project> --format brief
 ```
 
-Wire via OpenClaw cron for proactive weekly briefings delivered to your chat.
+For ongoing operator summaries, treat `reports/` as a folder-aware signal surface, not a one-file source. In practice, the most useful recurring artifacts are:
+- `triage-continuous.md`
+- latest dated `triage-YYYY-MM-DD.md`
+- latest `bugscan-*`
+- optional `bugfix-*`
+- optional `cross-debate-*`
+- optional briefs when they actually exist
+
+Wire via OpenClaw cron for proactive briefings delivered to your chat.
 
 ## Pricing
 
 | Tier | Price | Features |
 |---|---|---|
-| Free | €0 | Unlimited crawl, technical exports, crawl-only dashboard |
+| Free | €0 | Unlimited crawl, technical exports, crawl-only dashboard, Site Watch |
 | Solo | €19.99/mo or €199.99/yr | Full AI pipeline, AEO, all exports, full dashboard |
 
 Solo via [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/).

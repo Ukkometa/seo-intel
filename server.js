@@ -758,7 +758,7 @@ async function handleRequest(req, res) {
             return p.insightTypes ? data.filter(r => p.insightTypes.includes(r._type)) : data;
           }
           case 'technical': {
-            if (!Array.isArray(data) || prof === 'ai-pipeline') return data;
+            if (!Array.isArray(data)) return data;
             // Own site only, per-page issue summary
             const own = data.filter(r => r.role === 'target' || r.role === 'owned');
             const issues = [];
@@ -830,27 +830,30 @@ async function handleRequest(req, res) {
           case 'schemas': return data; // raw only — not in any profile
           case 'aeo': {
             if (!Array.isArray(data)) return data;
-            if (prof === 'content') {
-              // Content: only low-scoring pages (needs improvement)
-              return data.filter(r => r.score < 60);
-            }
-            return data;
+            // Own site only, low-scoring pages that need work
+            const ownAeo = data.filter(r => r.role === 'target' || r.role === 'owned');
+            return ownAeo.filter(r => r.score < 60);
           }
           case 'keywords': {
             if (!Array.isArray(data)) return data;
-            if (prof === 'content') {
-              // Content: only competitor-dominated keywords (role != target/owned)
-              const byKw = {};
-              for (const r of data) { (byKw[r.keyword] ||= []).push(r); }
-              const gapKws = new Set();
-              for (const [kw, rows] of Object.entries(byKw)) {
-                const hasTarget = rows.some(r => r.role === 'target' || r.role === 'owned');
-                const hasCompetitor = rows.some(r => r.role === 'competitor');
-                if (!hasTarget && hasCompetitor) gapKws.add(kw);
-              }
-              return data.filter(r => gapKws.has(r.keyword));
+            // Only keyword gaps: competitor has it, you don't
+            const byKw = {};
+            for (const r of data) { (byKw[r.keyword] ||= []).push(r); }
+            const gapKws = new Set();
+            for (const [kw, rows] of Object.entries(byKw)) {
+              const hasTarget = rows.some(r => r.role === 'target' || r.role === 'owned');
+              const hasCompetitor = rows.some(r => r.role === 'competitor');
+              if (!hasTarget && hasCompetitor) gapKws.add(kw);
             }
-            return data;
+            // Return gap keywords with which competitors use them
+            const gaps = [];
+            for (const kw of gapKws) {
+              const rows = byKw[kw];
+              const competitors = rows.map(r => r.domain).join(', ');
+              const topFreq = Math.max(...rows.map(r => r.freq));
+              gaps.push({ keyword: kw, used_by: competitors, frequency: topFreq });
+            }
+            return gaps.sort((a, b) => b.frequency - a.frequency);
           }
           case 'watch': {
             // Keep only errors + warnings, drop notices
@@ -954,6 +957,15 @@ async function handleRequest(req, res) {
             return md;
           }
           case 'keywords': {
+            // Profile exports return gap summary; raw exports return full matrix
+            if (data[0] && data[0].used_by !== undefined) {
+              let md = header + `## Keyword Gaps (${data.length})\n\nKeywords competitors use that you don't.\n\n| Keyword | Used By | Frequency |\n|---------|---------|----------|\n`;
+              for (const r of data.slice(0, 200)) {
+                md += `| ${r.keyword} | ${r.used_by} | ${r.frequency} |\n`;
+              }
+              if (data.length > 200) md += `\n_...and ${data.length - 200} more._\n`;
+              return md;
+            }
             let md = header + '## Keyword Matrix\n\n| Keyword | Domain | Role | Location | Frequency |\n|---------|--------|------|----------|-----------|\n';
             for (const r of data.slice(0, 500)) {
               md += `| ${r.keyword} | ${r.domain} | ${r.role} | ${r.location || ''} | ${r.freq} |\n`;

@@ -1466,6 +1466,12 @@ function buildHtmlTemplate(data, opts = {}) {
     .term-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
     .term-btn:active { background: rgba(232,213,163,0.1); }
     .term-btn i { margin-right: 3px; font-size: 0.55rem; }
+    .term-btn-intel { border-color: rgba(96,165,250,0.2); }
+    .term-btn-intel:hover { border-color: rgba(96,165,250,0.6); color: rgba(150,200,255,0.9); }
+    .term-btn-intel:active { background: rgba(96,165,250,0.08); }
+    .term-stealth { display:inline-flex; align-items:center; gap:4px; font-size:0.58rem; color:var(--text-muted); cursor:pointer; user-select:none; margin-left:2px; padding:2px 6px; border-radius:4px; border:1px solid transparent; transition:all 0.15s; }
+    .term-stealth:hover { border-color: rgba(124,109,235,0.3); color: var(--text-secondary); }
+    .term-stealth input[type="checkbox"] { accent-color: var(--accent-purple,#7c6deb); width:12px; height:12px; cursor:pointer; }
 
     /* ─── Terminal + Export split layout ───────────────────────────────── */
     .term-split {
@@ -2122,10 +2128,6 @@ function buildHtmlTemplate(data, opts = {}) {
       <button class="es-btn es-btn-restart" id="btnRestart${suffix}" onclick="restartServer()">
         <i class="fa-solid fa-rotate-right"></i> Restart
       </button>
-      <label class="es-stealth-toggle">
-        <input type="checkbox" id="stealthToggle${suffix}"${extractionStatus.liveProgress?.stealth ? ' checked' : ''}>
-        <i class="fa-solid fa-user-ninja"></i> Stealth
-      </label>
     </div>
     </div>
   </div>
@@ -2147,11 +2149,13 @@ function buildHtmlTemplate(data, opts = {}) {
         <div style="padding:8px 12px;background:#111;border-bottom:1px solid var(--border-subtle);display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
           <span style="font-size:0.6rem;color:var(--text-muted);margin-right:4px;"><i class="fa-solid fa-play" style="margin-right:3px;"></i>Run:</span>
           <button class="term-btn" data-cmd="crawl" data-project="${project}"><i class="fa-solid fa-spider"></i> Crawl</button>
+          <label class="term-stealth"><input type="checkbox" id="stealthToggle${suffix}"${extractionStatus.liveProgress?.stealth ? ' checked' : ''}><i class="fa-solid fa-user-ninja"></i></label>
           ${pro ? `<button class="term-btn" data-cmd="extract" data-project="${project}"><i class="fa-solid fa-brain"></i> Extract</button>
-          <button class="term-btn" data-cmd="analyze" data-project="${project}"><i class="fa-solid fa-chart-column"></i> Analyze</button>
-          <button class="term-btn" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>
-          <button class="term-btn" data-cmd="keywords" data-project="${project}"><i class="fa-solid fa-key"></i> Keywords</button>
-          <button class="term-btn" data-cmd="templates" data-project="${project}"><i class="fa-solid fa-clone"></i> Templates</button>` : ''}
+          <span style="width:1px;height:16px;background:var(--border-subtle);margin:0 2px;"></span>
+          <button class="term-btn term-btn-intel" data-cmd="analyze" data-project="${project}"><i class="fa-solid fa-chart-column"></i> Analyze</button>
+          <button class="term-btn term-btn-intel" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>
+          <button class="term-btn term-btn-intel" data-cmd="keywords" data-project="${project}"><i class="fa-solid fa-key"></i> Keywords</button>
+          <button class="term-btn term-btn-intel" data-cmd="templates" data-project="${project}"><i class="fa-solid fa-clone"></i> Templates</button>` : ''}
           <button class="term-btn" data-cmd="status" data-project=""><i class="fa-solid fa-circle-info"></i> Status</button>
           <button class="term-btn" data-cmd="guide" data-project="${project}"><i class="fa-solid fa-map"></i> Guide</button>
           <button class="term-btn" data-cmd="setup" data-project="" style="margin-left:auto;border-color:rgba(232,213,163,0.25);"><i class="fa-solid fa-gear"></i> Setup</button>
@@ -2368,10 +2372,12 @@ function buildHtmlTemplate(data, opts = {}) {
         const proj = btn.getAttribute('data-project');
         const scope = btn.getAttribute('data-scope');
         var extra = scope ? { scope: scope } : {};
-        // Crawl/extract: read stealth toggle + update status bar
-        if (cmd === 'crawl' || cmd === 'extract') {
+        // Crawl: read stealth toggle; Crawl/extract: update status bar
+        if (cmd === 'crawl') {
           var stealthEl = btn.closest('.project-panel')?.querySelector('[id^="stealthToggle"]') || document.getElementById('stealthToggle' + suffix);
           if (stealthEl?.checked) extra.stealth = true;
+        }
+        if (cmd === 'crawl' || cmd === 'extract') {
           if (window._setButtonsState) window._setButtonsState(true, cmd);
           if (window._startPolling) window._startPolling();
         }
@@ -4057,9 +4063,12 @@ function buildHtmlTemplate(data, opts = {}) {
       let pollTimer = null;
 
       window.startJob = function(command, proj) {
-        var stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
         var extra = {};
-        if (stealth) extra.stealth = true;
+        // Stealth only applies to crawl — extract has no network
+        if (command === 'crawl') {
+          var stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
+          if (stealth) extra.stealth = true;
+        }
 
         // Route through terminal for visible output
         if (window._terminalRun) {
@@ -5279,9 +5288,12 @@ function buildMultiHtmlTemplate(allProjectData) {
 
       window.startJob = function(command, proj) {
         var sfx = '-' + proj;
-        var stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
         var extra = {};
-        if (stealth) extra.stealth = true;
+        // Stealth only applies to crawl — extract has no network
+        if (command === 'crawl') {
+          var stealth = document.getElementById('stealthToggle' + sfx)?.checked || false;
+          if (stealth) extra.stealth = true;
+        }
 
         // Route through terminal for visible output
         if (window._terminalRun) {

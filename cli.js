@@ -69,19 +69,27 @@ function defaultSiteUrl(domain) {
 function resolveExtractionRuntime(config) {
   const primaryUrl = config?.crawl?.ollamaHost || process.env.OLLAMA_URL || 'http://localhost:11434';
   const primaryModel = config?.crawl?.extractionModel || process.env.OLLAMA_MODEL || 'gemma4:e4b';
-  const fallbackUrl = process.env.OLLAMA_FALLBACK_URL || '';
-  const fallbackModel = process.env.OLLAMA_FALLBACK_MODEL || primaryModel;
   const localhost = 'http://localhost:11434';
+  const norm = h => String(h || '').trim().replace(/\/+$/, '');
 
   const candidates = [
-    { host: String(primaryUrl).trim().replace(/\/+$/, ''), model: String(primaryModel).trim() || 'gemma4:e4b' },
+    { host: norm(primaryUrl), model: String(primaryModel).trim() || 'gemma4:e4b' },
   ];
 
-  if (fallbackUrl) {
-    candidates.push({
-      host: String(fallbackUrl).trim().replace(/\/+$/, ''),
-      model: String(fallbackModel).trim() || String(primaryModel).trim() || 'gemma4:e4b',
-    });
+  // Legacy single fallback — always use project-selected model, not OLLAMA_FALLBACK_MODEL
+  const fallbackUrl = norm(process.env.OLLAMA_FALLBACK_URL || '');
+  if (fallbackUrl && !candidates.some(c => c.host === fallbackUrl)) {
+    candidates.push({ host: fallbackUrl, model: String(primaryModel).trim() || 'gemma4:e4b' });
+  }
+
+  // OLLAMA_HOSTS — comma-separated LAN hosts from setup wizard
+  if (process.env.OLLAMA_HOSTS) {
+    for (const h of process.env.OLLAMA_HOSTS.split(',')) {
+      const host = norm(h);
+      if (host && !candidates.some(c => c.host === host)) {
+        candidates.push({ host, model: String(primaryModel).trim() || 'gemma4:e4b' });
+      }
+    }
   }
 
   if (!candidates.some(candidate => candidate.host === localhost)) {

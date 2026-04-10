@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.1 (2026-04-11)
+
+### Setup Wizard
+- Fixed Playwright detection on macOS — now checks correct browser cache paths instead of legacy node_modules location
+- Added persistent "Open Dashboard" link in wizard header, visible on all setup steps
+- Renamed floating helper card to "Agentic Installations" with extended per-runtime setup prompts
+- Cloud model cards now show live connection status (Connected via API key or OpenClaw gateway)
+- OpenClaw gateway model detection with authenticated `/v1/models` query
+
+### Extraction: LAN host model fix
+- Fixed LAN/fallback hosts checking for wrong model (used stale `OLLAMA_FALLBACK_MODEL` instead of project-selected model)
+- All Ollama hosts now use the project's configured extraction model consistently
+- Added `OLLAMA_HOSTS` support — comma-separated LAN hosts from setup wizard are picked up by extractor
+
+### Dashboard
+- Stealth toggle moved next to Crawl button (only affects crawl, not extract)
+- Analysis buttons (Analyze, Brief, Keywords, Templates) get subtle blue accent border
+- Visual separator between action and intelligence command groups
+
 ## 1.5.0 (2026-04-10)
 
 ### Export: dashboard data, not raw DB dumps

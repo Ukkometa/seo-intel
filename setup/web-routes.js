@@ -296,6 +296,10 @@ async function handleModels(req, res) {
       ...models,
       gpu: status.vram,
       ollama: status.ollama,
+      openclaw: {
+        gatewayRunning: status.openclaw?.gatewayRunning || false,
+        gatewayModels: status.openclaw?.gatewayModels || [],
+      },
     });
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);

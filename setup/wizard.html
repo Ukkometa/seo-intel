@@ -1198,7 +1198,10 @@ input::placeholder {
 <div class="wizard-header">
   <h1>SEO Intel</h1>
   <div class="subtitle">Setup Wizard</div>
-  <a href="http://localhost:3000/?autorun=setup-classic" title="Run setup in Terminal instead" style="position:absolute;top:14px;right:18px;font-size:0.68rem;color:var(--color-muted,#888);text-decoration:none;opacity:0.7;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i class="fa-solid fa-terminal"></i> Terminal setup</a>
+  <div style="position:absolute;top:14px;right:18px;display:flex;gap:14px;align-items:center;">
+    <a href="/" title="Open Dashboard" style="font-size:0.68rem;color:var(--color-success,#8ecba8);text-decoration:none;opacity:0.8;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
+    <a href="http://localhost:3000/?autorun=setup-classic" title="Run setup in Terminal instead" style="font-size:0.68rem;color:var(--color-muted,#888);text-decoration:none;opacity:0.7;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i class="fa-solid fa-terminal"></i> Terminal setup</a>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
@@ -1894,7 +1897,7 @@ input::placeholder {
       <circle cx="14" cy="14" r="13" stroke="var(--accent-purple)" stroke-width="1.5" opacity="0.6"/>
       <path d="M9 12c0-2.8 2.2-5 5-5s5 2.2 5 5c0 1.8-1 3.4-2.4 4.3L18 20H10l1.4-3.7C10 15.4 9 13.8 9 12z" fill="var(--accent-purple)" opacity="0.8"/>
     </svg>
-    <span style="font-size:0.92rem; font-weight:600; color:var(--text-primary);">OpenClaw</span>
+    <span style="font-size:0.92rem; font-weight:600; color:var(--text-primary);">Agentic Installations</span>
   </div>
 
   <!-- Tab switcher: Agentic Setup vs Cloud Models -->
@@ -1925,7 +1928,7 @@ input::placeholder {
         <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
       <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
-        <div id="genie-oc-prompt">Set up SEO Intel on my machine. Check deps, install Ollama, recommend a model, configure a project, run a test crawl.</div>
+        <div id="genie-oc-prompt">Set up SEO Intel (npm package: seo-intel) on my machine. Steps: 1) Verify Node.js ≥22.5 and npm are installed. 2) Install Ollama and pull the gemma4:e4b model (default extraction engine, ~4GB). 3) Run `seo-intel setup` to create a project config — ask me for my website URL and up to 3 competitor URLs. 4) Run a test crawl with `seo-intel crawl &lt;project&gt;` to verify everything works. 5) Run `seo-intel extract &lt;project&gt;` to test local AI extraction. Report any errors with full context.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(document.getElementById('genie-oc-prompt').textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
       <div style="display:flex; gap:6px; margin-top:10px;">
@@ -1936,21 +1939,21 @@ input::placeholder {
 
     <div id="genieRuntime-claudecode" class="genie-runtime-panel" style="display:none;">
       <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
-        <div>Set up seo-intel: check Node 22.5+, install Ollama, pull gemma4:e4b, create config, run crawl.</div>
+        <div>Set up the npm package `seo-intel` on this machine. Requirements: Node.js ≥22.5, Ollama with gemma4:e4b model (~4GB download). Create a project config for my website — ask me for my URL and competitor domains. Then run a test crawl (`seo-intel crawl &lt;project&gt;`) and extraction (`seo-intel extract &lt;project&gt;`). The tool stores data in SQLite locally. If Ollama isn't installed, install it from ollama.com. After setup, open the dashboard with `seo-intel serve`.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
     </div>
 
     <div id="genieRuntime-codex" class="genie-runtime-panel" style="display:none;">
       <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
-        <div>Install seo-intel deps (Node 22.5+, Ollama, gemma4:e4b), create project config, run: seo-intel crawl myproject. Full disk access.</div>
+        <div>Install and configure the `seo-intel` npm package. Needs: Node.js ≥22.5, Ollama running locally with `gemma4:e4b` pulled. Create a JSON config at configs/&lt;project&gt;.json with target URL + competitor URLs (ask me). Run the full pipeline: `seo-intel crawl &lt;project&gt;` → `seo-intel extract &lt;project&gt;` → `seo-intel serve` to open the dashboard. Needs full disk access for Playwright browser automation.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
     </div>
 
     <div id="genieRuntime-perplexity" class="genie-runtime-panel" style="display:none;">
       <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
-        <div>Help me set up SEO Intel: install Node.js 22.5+, Ollama, download Gemma 4 model, create config for my website. Ask for my URL.</div>
+        <div>I want to install SEO Intel (seo-intel on npm), a local-first SEO competitor analysis tool. Walk me through: 1) Installing Node.js 22.5+ if I don't have it. 2) Installing Ollama and downloading the Gemma 4 e4b model for AI extraction. 3) Running `npx seo-intel setup` to configure my first project. I need to provide my website URL and competitor URLs. 4) Testing the crawl pipeline. Ask me for my website URL to get started.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
     </div>
@@ -1959,21 +1962,15 @@ input::placeholder {
   <!-- Cloud Models tab -->
   <div id="genieCloud" style="display:none;">
     <p style="font-size:0.75rem; color:var(--text-muted); line-height:1.6; margin-bottom:12px;">
-      Route analysis through frontier models. OpenClaw manages API keys and OAuth automatically.
+      Cloud frontier models for competitive analysis. Add API keys in the Models step, or use OpenClaw for automatic key management.
     </p>
     <div style="font-size:0.72rem; color:var(--text-secondary);">
       <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.62rem; width:12px;"></i> Claude Opus 4.6
-      </div>
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.62rem; width:12px;"></i> Gemini 3.1 Pro
-      </div>
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-        <i class="fa-solid fa-check" style="color:var(--accent-purple); font-size:0.62rem; width:12px;"></i> GPT-5.4
+        <i class="fa-solid fa-spinner fa-spin-pulse" style="color:var(--text-muted); font-size:0.62rem; width:12px;"></i> <span style="color:var(--text-muted);">Checking connections...</span>
       </div>
     </div>
     <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.5; margin-top:10px;">
-      No .env keys needed. OAuth-based model access means the pipeline test may show "no API key" — this is normal.
+      Set up API keys in the <strong>Models &amp; Auth</strong> step, or use OpenClaw to skip key management entirely.
     </p>
   </div>
 </div>
@@ -2332,6 +2329,7 @@ input::placeholder {
       state.modelData = await API.get('/api/setup/models');
       renderExtractionModels();
       renderAnalysisModels();
+      renderCloudModelStatus();
     } catch (err) {
       extDiv.innerHTML = `<div style="color:var(--color-danger); font-size:0.75rem;">Failed: ${err.message}</div>`;
       anaDiv.innerHTML = extDiv.innerHTML;
@@ -2490,6 +2488,76 @@ input::placeholder {
     const selected = models.find(m => m.id === state.selectedAnalysis);
     if (selected && !selected.installed) {
       selectAnalysisModel(selected.id);
+    }
+  }
+
+  function renderCloudModelStatus() {
+    const cloudModels = (state.modelData?.allAnalysis || []).filter(m => m.type === 'cloud');
+    const gwModels = state.modelData?.openclaw?.gatewayModels || [];
+    const gwRunning = state.modelData?.openclaw?.gatewayRunning || false;
+
+    // Determine connection status per cloud model
+    // A model is "connected" if: .env key exists OR OpenClaw gateway is active (routes all cloud models)
+    function isConnected(cm) {
+      if (cm.configured) return { connected: true, via: 'key' };
+      // If OpenClaw gateway is running with models, all cloud models are available through it
+      if (gwRunning && gwModels.length > 0) return { connected: true, via: 'openclaw' };
+      return { connected: false };
+    }
+
+    // Mark cloud model cards with visible connection badges
+    const cloudCards = document.querySelectorAll('#cloudAnalysisModels .cloud-model');
+    cloudCards.forEach(card => {
+      const modelId = card.dataset.model;
+      const cm = cloudModels.find(m => m.id === modelId);
+      const old = card.querySelector('.cloud-status-badge');
+      if (old) old.remove();
+      if (!cm) return;
+
+      const status = isConnected(cm);
+      const badge = document.createElement('div');
+      badge.className = 'cloud-status-badge';
+
+      if (status.connected) {
+        const viaLabel = status.via === 'openclaw' ? 'via OpenClaw' : 'API key set';
+        badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(142,203,168,0.15);border:1px solid rgba(142,203,168,0.3);font-size:0.6rem;font-weight:600;color:var(--color-success);letter-spacing:0.02em;"><i class="fa-solid fa-circle-check"></i> Connected <span style="font-weight:400;opacity:0.8;">— ${viaLabel}</span></span>`;
+        badge.style.cssText = 'margin-top:8px;';
+        card.style.borderColor = 'rgba(142,203,168,0.3)';
+      } else {
+        badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);font-size:0.6rem;color:var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> No API key</span>`;
+        badge.style.cssText = 'margin-top:8px;';
+        card.style.borderColor = '';
+      }
+      card.appendChild(badge);
+    });
+
+    // Update the genie Cloud Models tab with live status
+    const genieCloud = document.getElementById('genieCloud');
+    if (genieCloud) {
+      const existingList = genieCloud.querySelector('div[style*="font-size:0.72rem"]');
+      if (!existingList) return;
+
+      let html = '<div style="font-size:0.72rem; color:var(--text-secondary);">';
+      for (const cm of cloudModels) {
+        const status = isConnected(cm);
+        if (status.connected) {
+          const via = status.via === 'openclaw' ? ' <span style="font-size:0.58rem;color:var(--text-muted);">via OpenClaw</span>' : '';
+          html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <i class="fa-solid fa-circle-check" style="color:var(--color-success);font-size:0.62rem;width:12px;"></i> ${cm.name}${via}
+          </div>`;
+        } else {
+          html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <i class="fa-solid fa-circle-xmark" style="color:var(--text-muted);font-size:0.62rem;width:12px;"></i> <span style="color:var(--text-muted);">${cm.name}</span>
+          </div>`;
+        }
+      }
+      if (gwRunning) {
+        html += `<div style="margin-top:8px;padding:6px 8px;background:rgba(124,109,235,0.08);border:1px solid rgba(124,109,235,0.2);border-radius:var(--radius);font-size:0.6rem;color:var(--accent-purple);">
+          <i class="fa-solid fa-plug" style="margin-right:4px;"></i> OpenClaw gateway active — ${gwModels.length} model(s)
+        </div>`;
+      }
+      html += '</div>';
+      existingList.outerHTML = html;
     }
   }
 
@@ -3613,6 +3681,8 @@ input::placeholder {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
       if (saveStatus) { saveStatus.textContent = '✓ Saved to .env'; saveStatus.style.color = 'var(--color-success)'; }
+      // Refresh model data to update cloud connection status
+      try { state.modelData = await API.get('/api/setup/models'); renderCloudModelStatus(); } catch {}
     } catch (err) {
       if (saveStatus) { saveStatus.textContent = err.message; saveStatus.style.color = 'var(--color-danger)'; }
     }

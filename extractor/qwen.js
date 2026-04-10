@@ -24,14 +24,27 @@ function getConfiguredOllamaRoutes() {
   const primaryUrl = normalizeHost(process.env.OLLAMA_URL || DEFAULT_OLLAMA_URL) || DEFAULT_OLLAMA_URL;
   const primaryModel = String(process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL).trim() || DEFAULT_OLLAMA_MODEL;
   const fallbackUrl = normalizeHost(process.env.OLLAMA_FALLBACK_URL || '');
-  const fallbackModel = String(process.env.OLLAMA_FALLBACK_MODEL || primaryModel).trim() || primaryModel;
+  // BUG FIX: fallback hosts MUST use the project-selected model (primaryModel),
+  // not a separate OLLAMA_FALLBACK_MODEL env var. The project config sets
+  // OLLAMA_MODEL to the user's choice — all hosts should respect that.
+  const fallbackModel = primaryModel;
 
   const candidates = [
     { label: 'primary', host: primaryUrl, model: primaryModel },
   ];
 
-  if (fallbackUrl) {
+  if (fallbackUrl && !candidates.some(r => r.host === normalizeHost(fallbackUrl))) {
     candidates.push({ label: 'fallback', host: fallbackUrl, model: fallbackModel });
+  }
+
+  // Support OLLAMA_HOSTS — comma-separated list of additional LAN Ollama hosts
+  if (process.env.OLLAMA_HOSTS) {
+    for (const h of process.env.OLLAMA_HOSTS.split(',')) {
+      const host = normalizeHost(h);
+      if (host && !candidates.some(r => r.host === host)) {
+        candidates.push({ label: 'lan', host, model: primaryModel });
+      }
+    }
   }
 
   if (!candidates.some(route => route.host === LOCALHOST_OLLAMA_URL)) {

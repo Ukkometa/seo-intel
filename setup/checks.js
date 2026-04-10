@@ -10,6 +10,7 @@ import { execSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -141,24 +142,35 @@ export function checkPlaywright() {
   // Check if Chromium binary is actually available
   let chromiumReady = false;
   try {
-    // Playwright stores browser paths in its package
-    const browserPath = join(pkgPath, '.local-browsers');
-    if (existsSync(browserPath)) {
-      const browsers = readdirSync(browserPath);
-      chromiumReady = browsers.some(b => b.toLowerCase().includes('chromium'));
+    // 1. Shared cache (macOS: ~/Library/Caches/ms-playwright, Linux: ~/.cache/ms-playwright)
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const cachePaths = [
+      join(home, 'Library', 'Caches', 'ms-playwright'),           // macOS
+      join(home, '.cache', 'ms-playwright'),                       // Linux
+      join(process.env.LOCALAPPDATA || '', 'ms-playwright'),       // Windows
+      join(pkgPath, '.local-browsers'),                            // legacy / bundled
+    ];
+    for (const cachePath of cachePaths) {
+      if (existsSync(cachePath)) {
+        try {
+          const browsers = readdirSync(cachePath);
+          if (browsers.some(b => b.toLowerCase().includes('chromium'))) {
+            chromiumReady = true;
+            break;
+          }
+        } catch { /* permission error, skip */ }
+      }
     }
-    // Alternative check: playwright's own registry
+    // 2. Fallback: require playwright and check chromium executablePath
     if (!chromiumReady) {
-      const result = spawnSync('npx', ['playwright', 'install', '--dry-run'], {
-        encoding: 'utf8',
-        timeout: 10000,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      // If dry-run shows chromium is already installed, it's ready
-      chromiumReady = result.status === 0 && !result.stdout.includes('chromium');
+      try {
+        const req = createRequire(join(ROOT, 'package.json'));
+        const pw = req('playwright');
+        const execPath = pw.chromium?.executablePath?.();
+        if (execPath && existsSync(execPath)) chromiumReady = true;
+      } catch { /* playwright may not be requireable */ }
     }
   } catch {
-    // If we can't determine, assume it needs install
     chromiumReady = false;
   }
 
@@ -443,6 +455,7 @@ export function checkOpenClaw() {
     hasSkillsDir: false,
     skillsPath: null,
     canAgentSetup: false,
+    gatewayModels: [],   // model IDs available via OpenClaw gateway
   };
 
   // 1. Check if openclaw binary exists
@@ -456,10 +469,25 @@ export function checkOpenClaw() {
     result.version = match ? match[1] : ver;
   } catch { /* ok */ }
 
-  // 3. Check if gateway is running (quick HTTP ping)
+  // 3. Check if gateway is running + fetch available models
+  // Read gateway auth token from config
+  let gwToken = '';
   try {
-    execSync('curl -s --max-time 2 http://127.0.0.1:18789/v1/models >/dev/null 2>&1', { timeout: 5000 });
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    const ocConf = JSON.parse(readFileSync(join(homeDir, '.openclaw', 'openclaw.json'), 'utf8'));
+    gwToken = ocConf?.gateway?.auth?.token || '';
+  } catch { /* no config */ }
+
+  try {
+    const authHeader = gwToken ? `-H "Authorization: Bearer ${gwToken}"` : '';
+    const raw = execSync(`curl -s --max-time 2 ${authHeader} http://127.0.0.1:18789/v1/models 2>/dev/null`, { timeout: 5000 }).toString().trim();
     result.gatewayRunning = true;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.data && Array.isArray(parsed.data)) {
+        result.gatewayModels = parsed.data.map(m => m.id).filter(Boolean);
+      }
+    } catch { /* json parse fail — gateway running but no model list */ }
   } catch {
     result.gatewayRunning = false;
   }

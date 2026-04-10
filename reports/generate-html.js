@@ -40,7 +40,7 @@ function cardExportHtml(section, project) {
 /**
  * Gather all dashboard data for a single project
  */
-function gatherProjectData(db, project, config) {
+export function gatherProjectData(db, project, config) {
   const targetDomain = config.target.domain;
   const competitorDomains = config.competitors.map(c => c.domain);
   const allDomains = [targetDomain, ...competitorDomains];

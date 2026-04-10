@@ -599,556 +599,282 @@ async function handleRequest(req, res) {
       if (!project || !/^[a-z0-9_-]+$/i.test(project)) { json(res, 400, { error: 'Invalid project name' }); return; }
 
       const { getDb } = await import('./db/db.js');
+      const { gatherProjectData } = await import('./reports/generate-html.js');
       const db = getDb(join(__dirname, 'seo-intel.db'));
       const configPath = join(__dirname, 'config', `${project}.json`);
       const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf8')) : null;
+      if (!config) { json(res, 404, { error: `Project config not found: ${project}` }); return; }
 
       const dateStr = new Date().toISOString().slice(0, 10);
       const { createZip } = await import('./lib/export-zip.js');
 
-      const SECTIONS = ['aeo', 'insights', 'technical', 'keywords', 'pages', 'watch', 'schemas', 'headings', 'links'];
+      // ── Gather dashboard data — same source as the HTML dashboard ──
+      const dash = gatherProjectData(db, project, config);
 
-      // ── Profile definitions: which sections + which insight types matter ──
-      const PROFILES = {
-        dev: {
-          sections: ['technical', 'links', 'headings', 'watch', 'insights'],
-          insightTypes: ['technical_gap', 'quick_win', 'site_watch'],
-          label: 'Developer',
-        },
-        content: {
-          sections: ['insights', 'keywords', 'aeo'],
-          insightTypes: ['keyword_gap', 'long_tail', 'content_gap', 'new_page', 'keyword_inventor', 'citability_gap', 'positioning'],
-          label: 'Content',
-        },
-        'ai-pipeline': {
-          sections: ['insights', 'aeo', 'technical', 'keywords', 'watch'],
-          insightTypes: null, // all types
-          label: 'AI Pipeline',
-        },
-      };
+      // ── Build export from dashboard data — exactly what the UI shows ──
+      function buildDashboardExport(dash, prof) {
+        const a = dash.latestAnalysis || {};
+        const sections = {};
 
-      function querySection(sec) {
-        switch (sec) {
-          case 'aeo': {
-            try {
-              return db.prepare(`
-                SELECT cs.score, cs.entity_authority, cs.structured_claims, cs.answer_density,
-                       cs.qa_proximity, cs.freshness, cs.schema_coverage, cs.tier, cs.ai_intents,
-                       p.url, p.title, p.word_count, d.domain, d.role
-                FROM citability_scores cs
-                JOIN pages p ON p.id = cs.page_id
-                JOIN domains d ON d.id = p.domain_id
-                WHERE d.project = ?
-                ORDER BY d.role ASC, cs.score ASC
-              `).all(project);
-            } catch { return []; }
+        // ── Technical: own-site scorecard (summary, not per-page dump) ──
+        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
+          const target = dash.technicalScores?.find(d => d.isTarget);
+          if (target) {
+            sections.technical = {
+              score: target.score,
+              h1_coverage: target.h1Pct + '%',
+              meta_coverage: target.metaPct + '%',
+              schema_coverage: target.schemaPct + '%',
+              title_coverage: target.titlePct + '%',
+            };
           }
-          case 'insights': {
-            try {
-              const rows = db.prepare(
-                `SELECT * FROM insights WHERE project = ? AND status = 'active' ORDER BY type, last_seen DESC`
-              ).all(project);
-              return rows.map(r => {
-                try { return { ...JSON.parse(r.data), _type: r.type, _id: r.id, _first_seen: r.first_seen, _last_seen: r.last_seen }; }
-                catch { return { _type: r.type, _id: r.id, raw: r.data }; }
-              });
-            } catch { return []; }
-          }
-          case 'technical': {
-            try {
-              return db.prepare(`
-                SELECT p.url, p.status_code, p.word_count, p.load_ms, p.is_indexable, p.click_depth,
-                       t.has_canonical, t.has_og_tags, t.has_schema, t.has_robots, t.is_mobile_ok,
-                       d.domain, d.role
-                FROM pages p
-                JOIN domains d ON d.id = p.domain_id
-                LEFT JOIN technical t ON t.page_id = p.id
-                WHERE d.project = ?
-                ORDER BY d.domain, p.url
-              `).all(project);
-            } catch { return []; }
-          }
-          case 'keywords': {
-            try {
-              return db.prepare(`
-                SELECT k.keyword, d.domain, d.role, k.location, COUNT(*) as freq
-                FROM keywords k
-                JOIN pages p ON p.id = k.page_id
-                JOIN domains d ON d.id = p.domain_id
-                WHERE d.project = ?
-                GROUP BY k.keyword, d.domain
-                ORDER BY freq DESC
-              `).all(project);
-            } catch { return []; }
-          }
-          case 'pages': {
-            try {
-              return db.prepare(`
-                SELECT p.url, p.status_code, p.word_count, p.load_ms, p.is_indexable, p.click_depth,
-                       p.title, p.meta_desc, p.published_date, p.modified_date,
-                       p.crawled_at, p.first_seen_at, d.domain, d.role
-                FROM pages p
-                JOIN domains d ON d.id = p.domain_id
-                WHERE d.project = ?
-                ORDER BY d.domain, p.url
-              `).all(project);
-            } catch { return []; }
-          }
-          case 'watch': {
-            try {
-              const snap = db.prepare('SELECT * FROM watch_snapshots WHERE project = ? ORDER BY created_at DESC LIMIT 1').get(project);
-              if (!snap) return [];
-              const events = db.prepare('SELECT * FROM watch_events WHERE snapshot_id = ? ORDER BY severity, event_type').all(snap.id);
-              const pages = db.prepare('SELECT * FROM watch_page_states WHERE snapshot_id = ?').all(snap.id);
-              return { snapshot: snap, events, pages };
-            } catch { return []; }
-          }
-          case 'schemas': {
-            try {
-              return db.prepare(`
-                SELECT d.domain, d.role, p.url, ps.schema_type, ps.name, ps.description,
-                       ps.rating, ps.rating_count, ps.price, ps.currency, ps.author,
-                       ps.date_published, ps.date_modified
-                FROM page_schemas ps
-                JOIN pages p ON p.id = ps.page_id
-                JOIN domains d ON d.id = p.domain_id
-                WHERE d.project = ?
-                ORDER BY d.domain, ps.schema_type
-              `).all(project);
-            } catch { return []; }
-          }
-          case 'headings': {
-            try {
-              return db.prepare(`
-                SELECT d.domain, d.role, p.url, h.level, h.text
-                FROM headings h
-                JOIN pages p ON p.id = h.page_id
-                JOIN domains d ON d.id = p.domain_id
-                WHERE d.project = ?
-                ORDER BY d.domain, p.url, h.level
-              `).all(project);
-            } catch { return []; }
-          }
-          case 'links': {
-            try {
-              return db.prepare(`
-                SELECT l.source_page_id, l.target_url, l.anchor_text, l.is_internal,
-                       p.url as source_url, d.domain, d.role
-                FROM links l
-                JOIN pages p ON p.id = l.source_page_id
-                JOIN domains d ON d.id = p.domain_id
-                WHERE d.project = ?
-                ORDER BY d.domain, p.url
-              `).all(project);
-            } catch { return []; }
-          }
-          default: return [];
+          if (a.technical_gaps?.length) sections.technical_gaps = a.technical_gaps;
         }
+
+        // ── Quick Wins ──
+        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
+          if (a.quick_wins?.length) sections.quick_wins = a.quick_wins;
+        }
+
+        // ── Internal Links: summary stats, not raw links ──
+        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
+          if (dash.internalLinks) {
+            sections.internal_links = {
+              total_links: dash.internalLinks.totalLinks,
+              orphan_pages: dash.internalLinks.orphanCount,
+              top_pages: dash.internalLinks.topPages,
+            };
+          }
+        }
+
+        // ── Keyword Gaps ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (a.keyword_gaps?.length) sections.keyword_gaps = a.keyword_gaps;
+          if (dash.keywordGaps?.length) {
+            sections.top_keyword_gaps = dash.keywordGaps.slice(0, 50);
+          }
+        }
+
+        // ── Long-tail Opportunities ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (a.long_tails?.length) sections.long_tails = a.long_tails;
+        }
+
+        // ── New Pages to Create ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (a.new_pages?.length) sections.new_pages = a.new_pages;
+        }
+
+        // ── Content Gaps ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (a.content_gaps?.length) sections.content_gaps = a.content_gaps;
+        }
+
+        // ── Keyword Inventor ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (a.keyword_inventor?.length) sections.keyword_inventor = a.keyword_inventor;
+        }
+
+        // ── Positioning Strategy ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (a.positioning) sections.positioning = a.positioning;
+        }
+
+        // ── AI Citability (AEO) — own site, low scores only ──
+        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
+          if (dash.citabilityData?.scores?.length) {
+            const own = dash.citabilityData.scores.filter(s => s.role === 'target' || s.role === 'owned');
+            const needsWork = own.filter(s => s.score < 60);
+            if (needsWork.length) sections.citability_low_scores = needsWork;
+            sections.citability_summary = {
+              avg_score: own.length ? Math.round(own.reduce((a, s) => a + s.score, 0) / own.length) : null,
+              pages_scored: own.length,
+              pages_below_60: needsWork.length,
+            };
+          }
+        }
+
+        // ── Site Watch — errors and warnings only ──
+        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
+          if (dash.watchData?.events?.length) {
+            const critical = dash.watchData.events.filter(e => e.severity === 'error' || e.severity === 'warning');
+            if (critical.length) sections.watch_alerts = critical;
+            if (dash.watchData.snapshot) {
+              sections.watch_summary = {
+                health_score: dash.watchData.snapshot.health_score,
+                errors: dash.watchData.snapshot.errors_count,
+                warnings: dash.watchData.snapshot.warnings_count,
+              };
+            }
+          }
+        }
+
+        // ── Schema Breakdown — own site type counts, not per-page dump ──
+        if (!prof || prof === 'dev') {
+          if (dash.schemaBreakdown?.length) {
+            const target = dash.schemaBreakdown.find(d => d.isTarget);
+            if (target?.types?.length) sections.schema_types = target.types;
+          }
+        }
+
+        // ── Crawl Stats ──
+        sections.crawl_stats = dash.crawlStats;
+
+        return sections;
       }
 
-      // ── Profile-aware filtering: strip raw dumps, keep actionable items ──
-      function filterForProfile(sec, data, prof) {
-        if (!prof || !data) return data;
-        const p = PROFILES[prof];
-        if (!p) return data;
+      function dashboardToMarkdown(sections, proj, prof) {
+        const date = new Date().toISOString().slice(0, 10);
+        const label = prof ? { dev: 'Developer', content: 'Content', 'ai-pipeline': 'AI Pipeline' }[prof] : 'Full';
+        let md = `# SEO Intel — ${label} Report\n\n- Project: ${proj}\n- Date: ${date}\n\n`;
 
-        switch (sec) {
-          case 'insights': {
-            if (!Array.isArray(data)) return data;
-            return p.insightTypes ? data.filter(r => p.insightTypes.includes(r._type)) : data;
-          }
-          case 'technical': {
-            if (!Array.isArray(data)) return data;
-            // Own site only, per-page issue summary
-            const own = data.filter(r => r.role === 'target' || r.role === 'owned');
-            const issues = [];
-            for (const r of own) {
-              const problems = [];
-              if (r.status_code >= 400) problems.push(`HTTP ${r.status_code}`);
-              if (!r.has_canonical) problems.push('no canonical');
-              if (!r.has_og_tags) problems.push('no OG tags');
-              if (!r.has_schema) problems.push('no schema');
-              if (!r.has_robots) problems.push('no robots meta');
-              if (!r.is_mobile_ok) problems.push('not mobile-friendly');
-              if (r.load_ms && r.load_ms > 3000) problems.push(`slow (${r.load_ms}ms)`);
-              if (r.word_count != null && r.word_count < 100) problems.push(`thin content (${r.word_count} words)`);
-              if (problems.length) {
-                issues.push({ url: r.url, domain: r.domain, issues: problems.join(', '), status: r.status_code, load_ms: r.load_ms, word_count: r.word_count });
-              }
-            }
-            return issues;
-          }
-          case 'headings': {
-            if (!Array.isArray(data)) return data;
-            // Own site only — group by page, return per-page issue summary
-            const ownOnly = data.filter(r => r.role === 'target' || r.role === 'owned');
-            const byPage = {};
-            for (const r of ownOnly) (byPage[r.url] ||= []).push(r);
-            const issues = [];
-            for (const [url, headings] of Object.entries(byPage)) {
-              const h1s = headings.filter(h => h.level === 1);
-              const levels = headings.map(h => h.level);
-              const problems = [];
-              if (h1s.length === 0) problems.push('missing H1');
-              else if (h1s.length > 1) problems.push(`${h1s.length}× H1`);
-              // Check for skipped levels (e.g. H1→H3 skips H2)
-              const unique = [...new Set(levels)].sort((a, b) => a - b);
-              for (let i = 1; i < unique.length; i++) {
-                if (unique[i] - unique[i - 1] > 1) {
-                  problems.push(`skips H${unique[i - 1]}→H${unique[i]}`);
-                }
-              }
-              if (problems.length) {
-                const sequence = levels.map(l => `H${l}`).join(' → ');
-                issues.push({ url, domain: headings[0].domain, issues: problems.join(', '), sequence, heading_count: headings.length });
-              }
-            }
-            return issues;
-          }
-          case 'links': {
-            if (!Array.isArray(data)) return data;
-            // Own site only, summarize to per-page link issues
-            const ownLinks = data.filter(r => r.role === 'target' || r.role === 'owned');
-            const internalTargets = new Set(ownLinks.filter(l => l.is_internal).map(l => l.target_url));
-            const byPage = {};
-            for (const r of ownLinks) (byPage[r.source_url] ||= []).push(r);
-            const issues = [];
-            for (const [url, links] of Object.entries(byPage)) {
-              const problems = [];
-              const noAnchor = links.filter(l => !l.anchor_text);
-              if (noAnchor.length) problems.push(`${noAnchor.length} links missing anchor text`);
-              if (!internalTargets.has(url)) problems.push('orphan page (no internal links point here)');
-              const extLinks = links.filter(l => !l.is_internal);
-              // flag if page has excessive external links
-              if (extLinks.length > 20) problems.push(`${extLinks.length} external links`);
-              if (problems.length) {
-                issues.push({ url, domain: links[0].domain, issues: problems.join(', '), total_links: links.length, internal: links.filter(l => l.is_internal).length, external: extLinks.length });
-              }
-            }
-            return issues;
-          }
-          case 'schemas': return data; // raw only — not in any profile
-          case 'aeo': {
-            if (!Array.isArray(data)) return data;
-            // Own site only, low-scoring pages that need work
-            const ownAeo = data.filter(r => r.role === 'target' || r.role === 'owned');
-            return ownAeo.filter(r => r.score < 60);
-          }
-          case 'keywords': {
-            if (!Array.isArray(data)) return data;
-            // Only keyword gaps: competitor has it, you don't
-            const byKw = {};
-            for (const r of data) { (byKw[r.keyword] ||= []).push(r); }
-            const gapKws = new Set();
-            for (const [kw, rows] of Object.entries(byKw)) {
-              const hasTarget = rows.some(r => r.role === 'target' || r.role === 'owned');
-              const hasCompetitor = rows.some(r => r.role === 'competitor');
-              if (!hasTarget && hasCompetitor) gapKws.add(kw);
-            }
-            // Return gap keywords with which competitors use them
-            const gaps = [];
-            for (const kw of gapKws) {
-              const rows = byKw[kw];
-              const competitors = rows.map(r => r.domain).join(', ');
-              const topFreq = Math.max(...rows.map(r => r.freq));
-              gaps.push({ keyword: kw, used_by: competitors, frequency: topFreq });
-            }
-            return gaps.sort((a, b) => b.frequency - a.frequency);
-          }
-          case 'watch': {
-            // Keep only errors + warnings, drop notices
-            if (data && data.events) {
-              return { ...data, events: data.events.filter(e => e.severity === 'error' || e.severity === 'warning') };
-            }
-            return data;
-          }
-          default: return data;
+        const s = sections;
+
+        if (s.technical) {
+          md += `## Technical Scorecard\n\n`;
+          md += `- Overall: **${s.technical.score}/100**\n`;
+          md += `- H1: ${s.technical.h1_coverage} | Meta: ${s.technical.meta_coverage} | Schema: ${s.technical.schema_coverage} | Title: ${s.technical.title_coverage}\n\n`;
         }
+        if (s.technical_gaps?.length) {
+          md += `## Technical Gaps (${s.technical_gaps.length})\n\n| Issue | Affected | Fix |\n|-------|----------|-----|\n`;
+          for (const g of s.technical_gaps) md += `| ${g.gap || g.issue || ''} | ${g.affected || g.pages || ''} | ${g.recommendation || g.fix || ''} |\n`;
+          md += '\n';
+        }
+        if (s.quick_wins?.length) {
+          md += `## Quick Wins (${s.quick_wins.length})\n\n| Page | Issue | Fix | Impact |\n|------|-------|-----|--------|\n`;
+          for (const w of s.quick_wins) md += `| ${w.page || ''} | ${w.issue || ''} | ${w.fix || ''} | ${w.impact || ''} |\n`;
+          md += '\n';
+        }
+        if (s.internal_links) {
+          md += `## Internal Links\n\n- Total links: ${s.internal_links.total_links}\n- Orphan pages: ${s.internal_links.orphan_pages}\n`;
+          if (s.internal_links.top_pages?.length) {
+            md += '\n| Page | Depth Score |\n|------|-------------|\n';
+            for (const p of s.internal_links.top_pages) md += `| ${p.url || p.label} | ${p.count} |\n`;
+          }
+          md += '\n';
+        }
+        if (s.watch_summary) {
+          md += `## Site Watch\n\n- Health: **${s.watch_summary.health_score ?? 'N/A'}** | Errors: ${s.watch_summary.errors} | Warnings: ${s.watch_summary.warnings}\n\n`;
+        }
+        if (s.watch_alerts?.length) {
+          md += `### Alerts (${s.watch_alerts.length})\n\n| Type | Severity | URL | Details |\n|------|----------|-----|---------|\n`;
+          for (const e of s.watch_alerts) md += `| ${e.event_type} | ${e.severity} | ${e.url || ''} | ${(e.details || '').slice(0, 80)} |\n`;
+          md += '\n';
+        }
+        if (s.keyword_gaps?.length) {
+          md += `## Keyword Gaps (${s.keyword_gaps.length})\n\n| Keyword | Your Coverage | Competitor Coverage |\n|---------|--------------|--------------------|\n`;
+          for (const g of s.keyword_gaps) md += `| ${g.keyword || ''} | ${g.your_coverage || g.target_count || 'none'} | ${g.competitor_coverage || g.competitor_count || ''} |\n`;
+          md += '\n';
+        }
+        if (s.top_keyword_gaps?.length) {
+          md += `## Top Keyword Gaps\n\n| Keyword | Frequency | Your Count | Gap |\n|---------|-----------|------------|-----|\n`;
+          for (const g of s.top_keyword_gaps) md += `| ${g.keyword || ''} | ${g.total || ''} | ${g.target || 0} | ${g.gap || ''} |\n`;
+          md += '\n';
+        }
+        if (s.long_tails?.length) {
+          md += `## Long-tail Opportunities (${s.long_tails.length})\n\n| Phrase | Parent | Opportunity |\n|-------|--------|-------------|\n`;
+          for (const l of s.long_tails) md += `| ${l.phrase || ''} | ${l.parent || l.keyword || ''} | ${l.opportunity || l.rationale || ''} |\n`;
+          md += '\n';
+        }
+        if (s.new_pages?.length) {
+          md += `## New Pages to Create (${s.new_pages.length})\n\n| Title | Target Keyword | Rationale |\n|-------|----------------|----------|\n`;
+          for (const p of s.new_pages) md += `| ${p.title || ''} | ${p.target_keyword || ''} | ${p.rationale || ''} |\n`;
+          md += '\n';
+        }
+        if (s.content_gaps?.length) {
+          md += `## Content Gaps (${s.content_gaps.length})\n\n| Topic | Gap | Suggestion |\n|-------|-----|------------|\n`;
+          for (const g of s.content_gaps) md += `| ${g.topic || ''} | ${g.gap || ''} | ${g.suggestion || ''} |\n`;
+          md += '\n';
+        }
+        if (s.keyword_inventor?.length) {
+          md += `## Keyword Ideas (${s.keyword_inventor.length})\n\n| Phrase | Cluster | Potential |\n|-------|---------|----------|\n`;
+          for (const k of s.keyword_inventor.slice(0, 50)) md += `| ${k.phrase || ''} | ${k.cluster || ''} | ${k.potential || k.volume || ''} |\n`;
+          if (s.keyword_inventor.length > 50) md += `\n_...and ${s.keyword_inventor.length - 50} more._\n`;
+          md += '\n';
+        }
+        if (s.positioning) {
+          md += `## Positioning Strategy\n\n`;
+          if (s.positioning.open_angle) md += `**Open angle:** ${s.positioning.open_angle}\n\n`;
+          if (s.positioning.target_differentiator) md += `**Differentiator:** ${s.positioning.target_differentiator}\n\n`;
+          if (s.positioning.competitor_map) md += `**Competitor map:** ${s.positioning.competitor_map}\n\n`;
+        }
+        if (s.citability_summary) {
+          md += `## AI Citability\n\n- Average: **${s.citability_summary.avg_score ?? 'N/A'}/100** (${s.citability_summary.pages_scored} pages, ${s.citability_summary.pages_below_60} below 60)\n\n`;
+        }
+        if (s.citability_low_scores?.length) {
+          md += `### Pages Needing Improvement\n\n| Score | URL | Tier |\n|-------|-----|------|\n`;
+          for (const p of s.citability_low_scores) md += `| ${p.score} | ${p.url || ''} | ${p.tier || ''} |\n`;
+          md += '\n';
+        }
+        if (s.schema_types?.length) {
+          md += `## Schema Types (own site)\n\n| Type | Count |\n|------|-------|\n`;
+          for (const t of s.schema_types) md += `| ${t.type || t.schema_type || ''} | ${t.count || ''} |\n`;
+          md += '\n';
+        }
+        if (s.crawl_stats) {
+          md += `## Crawl Info\n\n- Last crawl: ${s.crawl_stats.lastCrawl || 'N/A'}\n- Extracted pages: ${s.crawl_stats.extractedPages || 0}\n`;
+        }
+
+        return md;
       }
 
-      function toCSV(rows) {
-        if (!rows || (Array.isArray(rows) && !rows.length)) return '';
-        const arr = Array.isArray(rows) ? rows : (rows.events || rows.pages || []);
-        if (!arr.length) return '';
-        const keys = Object.keys(arr[0]);
+      function toCSV(obj) {
+        // Flatten sections into CSV-friendly rows
+        const rows = [];
+        for (const [key, val] of Object.entries(obj)) {
+          if (Array.isArray(val)) {
+            for (const item of val) {
+              rows.push({ section: key, ...item });
+            }
+          } else if (val && typeof val === 'object') {
+            rows.push({ section: key, ...val });
+          }
+        }
+        if (!rows.length) return '';
+        const keys = [...new Set(rows.flatMap(r => Object.keys(r)))];
         const escape = (v) => {
           if (v == null) return '';
           const s = String(v);
           return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
         };
-        return [keys.join(','), ...arr.map(r => keys.map(k => escape(r[k])).join(','))].join('\n');
+        return [keys.join(','), ...rows.map(r => keys.map(k => escape(r[k])).join(','))].join('\n');
       }
 
-      function toMarkdown(sec, data, proj) {
-        const date = new Date().toISOString().slice(0, 10);
-        const header = `# SEO Intel — ${sec.charAt(0).toUpperCase() + sec.slice(1)} Export\n\n- Project: ${proj}\n- Date: ${date}\n\n`;
-        if (!data || (Array.isArray(data) && !data.length)) return header + '_No data available._\n';
-
-        switch (sec) {
-          case 'aeo': {
-            const targetRows = data.filter(r => r.role === 'target' || r.role === 'owned');
-            const avg = targetRows.length ? Math.round(targetRows.reduce((a, r) => a + r.score, 0) / targetRows.length) : 0;
-            let md = header + `## Summary\n\n- Pages scored: ${data.length}\n- Target average: ${avg}/100\n\n`;
-            md += '## Page Scores\n\n| Score | Tier | URL | Title | Weakest Signals |\n|-------|------|-----|-------|-----------------|\n';
-            for (const r of data) {
-              const signals = ['entity_authority', 'structured_claims', 'answer_density', 'qa_proximity', 'freshness', 'schema_coverage'];
-              const weakest = signals.sort((a, b) => (r[a] || 0) - (r[b] || 0)).slice(0, 2).map(s => s.replace(/_/g, ' ')).join(', ');
-              md += `| ${r.score} | ${r.tier} | ${r.url} | ${(r.title || '').slice(0, 50)} | ${weakest} |\n`;
-            }
-            return md;
-          }
-          case 'insights': {
-            let md = header + `## Active Insights (${data.length})\n\n`;
-            const grouped = {};
-            for (const r of data) { (grouped[r._type] ||= []).push(r); }
-            for (const [type, items] of Object.entries(grouped)) {
-              md += `### ${type.replace(/_/g, ' ')} (${items.length})\n\n`;
-              switch (type) {
-                case 'quick_win':
-                  md += '| Page | Issue | Fix | Impact |\n|------|-------|-----|--------|\n';
-                  for (const i of items) md += `| ${i.page || ''} | ${i.issue || ''} | ${i.fix || ''} | ${i.impact || ''} |\n`;
-                  break;
-                case 'keyword_gap':
-                  md += '| Keyword | Your Coverage | Competitor Coverage |\n|---------|--------------|--------------------|\n';
-                  for (const i of items) md += `| ${i.keyword || ''} | ${i.your_coverage || i.target_count || 'none'} | ${i.competitor_coverage || i.competitor_count || ''} |\n`;
-                  break;
-                case 'long_tail':
-                  md += '| Phrase | Parent Keyword | Opportunity |\n|-------|----------------|-------------|\n';
-                  for (const i of items) md += `| ${i.phrase || ''} | ${i.parent || i.keyword || ''} | ${i.opportunity || i.rationale || ''} |\n`;
-                  break;
-                case 'new_page':
-                  md += '| Title | Target Keyword | Rationale |\n|-------|----------------|----------|\n';
-                  for (const i of items) md += `| ${i.title || ''} | ${i.target_keyword || ''} | ${i.rationale || ''} |\n`;
-                  break;
-                case 'content_gap':
-                  md += '| Topic | Gap | Suggestion |\n|-------|-----|------------|\n';
-                  for (const i of items) md += `| ${i.topic || ''} | ${i.gap || ''} | ${i.suggestion || ''} |\n`;
-                  break;
-                case 'technical_gap':
-                  md += '| Issue | Affected | Recommendation |\n|-------|----------|----------------|\n';
-                  for (const i of items) md += `| ${i.gap || i.issue || ''} | ${i.affected || i.pages || ''} | ${i.recommendation || i.fix || ''} |\n`;
-                  break;
-                case 'citability_gap':
-                  md += '| URL | Score | Weakest Signals |\n|-----|-------|----------------|\n';
-                  for (const i of items) md += `| ${i.url || ''} | ${i.score ?? ''} | ${i.weak_signals || ''} |\n`;
-                  break;
-                case 'keyword_inventor':
-                  md += '| Phrase | Cluster | Search Potential |\n|-------|---------|------------------|\n';
-                  for (const i of items) md += `| ${i.phrase || ''} | ${i.cluster || ''} | ${i.potential || i.volume || ''} |\n`;
-                  break;
-                case 'site_watch':
-                  md += '| URL | Event | Details |\n|-----|-------|--------|\n';
-                  for (const i of items) md += `| ${i.url || ''} | ${i.event_type || ''} | ${i.details || ''} |\n`;
-                  break;
-                default:
-                  for (const i of items) {
-                    md += `- ${i.phrase || i.keyword || i.title || i.page || i.message || JSON.stringify(i).slice(0, 120)}\n`;
-                  }
-              }
-              md += '\n';
-            }
-            return md;
-          }
-          case 'technical': {
-            let md = header + '## Technical Audit\n\n| URL | Status | Words | Load ms | Canonical | OG | Schema | Robots | Mobile |\n|-----|--------|-------|---------|-----------|-----|--------|--------|--------|\n';
-            for (const r of data) {
-              md += `| ${r.url} | ${r.status_code} | ${r.word_count || 0} | ${r.load_ms || 0} | ${r.has_canonical ? 'Y' : 'N'} | ${r.has_og_tags ? 'Y' : 'N'} | ${r.has_schema ? 'Y' : 'N'} | ${r.has_robots ? 'Y' : 'N'} | ${r.is_mobile_ok ? 'Y' : 'N'} |\n`;
-            }
-            return md;
-          }
-          case 'keywords': {
-            // Profile exports return gap summary; raw exports return full matrix
-            if (data[0] && data[0].used_by !== undefined) {
-              let md = header + `## Keyword Gaps (${data.length})\n\nKeywords competitors use that you don't.\n\n| Keyword | Used By | Frequency |\n|---------|---------|----------|\n`;
-              for (const r of data.slice(0, 200)) {
-                md += `| ${r.keyword} | ${r.used_by} | ${r.frequency} |\n`;
-              }
-              if (data.length > 200) md += `\n_...and ${data.length - 200} more._\n`;
-              return md;
-            }
-            let md = header + '## Keyword Matrix\n\n| Keyword | Domain | Role | Location | Frequency |\n|---------|--------|------|----------|-----------|\n';
-            for (const r of data.slice(0, 500)) {
-              md += `| ${r.keyword} | ${r.domain} | ${r.role} | ${r.location || ''} | ${r.freq} |\n`;
-            }
-            if (data.length > 500) md += `\n_...and ${data.length - 500} more rows._\n`;
-            return md;
-          }
-          case 'pages': {
-            let md = header + '## Crawled Pages\n\n| URL | Status | Words | Title | Domain | Role |\n|-----|--------|-------|-------|--------|------|\n';
-            for (const r of data) {
-              md += `| ${r.url} | ${r.status_code} | ${r.word_count || 0} | ${(r.title || '').slice(0, 50)} | ${r.domain} | ${r.role} |\n`;
-            }
-            return md;
-          }
-          case 'watch': {
-            const snap = data.snapshot || {};
-            const events = data.events || [];
-            let md = header + `## Site Watch Snapshot\n\n- Health score: ${snap.health_score ?? 'N/A'}\n- Pages: ${snap.total_pages || 0}\n- Errors: ${snap.errors_count || 0} | Warnings: ${snap.warnings_count || 0} | Notices: ${snap.notices_count || 0}\n\n`;
-            if (events.length) {
-              md += '## Events\n\n| Type | Severity | URL | Details |\n|------|----------|-----|---------|\n';
-              for (const e of events) {
-                md += `| ${e.event_type} | ${e.severity} | ${e.url} | ${(e.details || '').slice(0, 80)} |\n`;
-              }
-            }
-            return md;
-          }
-          case 'schemas': {
-            let md = header + '## Schema Markup\n\n| Domain | URL | Type | Name | Rating | Price |\n|--------|-----|------|------|--------|-------|\n';
-            for (const r of data) {
-              md += `| ${r.domain} | ${r.url} | ${r.schema_type} | ${(r.name || '').slice(0, 40)} | ${r.rating || ''} | ${r.price ? r.currency + r.price : ''} |\n`;
-            }
-            return md;
-          }
-          case 'headings': {
-            let md = header + '## Heading Structure\n\n| Domain | URL | Level | Text |\n|--------|-----|-------|------|\n';
-            for (const r of data.slice(0, 1000)) {
-              md += `| ${r.domain} | ${r.url} | H${r.level} | ${(r.text || '').slice(0, 80)} |\n`;
-            }
-            if (data.length > 1000) md += `\n_...and ${data.length - 1000} more rows._\n`;
-            return md;
-          }
-          case 'links': {
-            let md = header + '## Internal Links\n\n| Source | Target | Anchor |\n|--------|--------|--------|\n';
-            for (const r of data.filter(l => l.is_internal).slice(0, 1000)) {
-              md += `| ${r.source_url} | ${r.target_url} | ${(r.anchor_text || '').slice(0, 50)} |\n`;
-            }
-            if (data.length > 1000) md += `\n_...and more rows._\n`;
-            return md;
-          }
-          default: {
-            return header + '```json\n' + JSON.stringify(data, null, 2).slice(0, 10000) + '\n```\n';
-          }
-        }
-      }
-
-      // ── Resolve sections: profile overrides section=all ──
-      const validProfiles = Object.keys(PROFILES);
+      // ── Build and serve ──
+      const validProfiles = ['dev', 'content', 'ai-pipeline'];
       if (profile && !validProfiles.includes(profile)) {
         json(res, 400, { error: `Invalid profile. Allowed: ${validProfiles.join(', ')}` });
         return;
       }
-      const resolvedSections = profile
-        ? PROFILES[profile].sections
-        : (section === 'all' ? SECTIONS : [section]);
 
-      if (!profile && section !== 'all' && !SECTIONS.includes(section)) {
-        json(res, 400, { error: `Invalid section. Allowed: ${SECTIONS.join(', ')}, all` });
-        return;
-      }
+      const sections = buildDashboardExport(dash, profile);
+      const profileLabel = profile ? { dev: 'Developer', content: 'Content', 'ai-pipeline': 'AI Pipeline' }[profile] : 'Full';
+      const tag = profile || 'full';
 
-      // Helper: query + filter for profile
-      function getData(sec) {
-        const raw = querySection(sec);
-        return profile ? filterForProfile(sec, raw, profile) : raw;
-      }
-
-      function isEmpty(data) {
-        if (!data) return true;
-        if (Array.isArray(data)) return data.length === 0;
-        if (data.events) return data.events.length === 0;
-        return false;
-      }
-
-      const profileTag = profile ? `-${profile}` : '';
-      const profileLabel = profile ? PROFILES[profile].label : '';
-
-      if (format === 'zip') {
-        const entries = [];
-        for (const sec of resolvedSections) {
-          const data = getData(sec);
-          if (isEmpty(data)) continue; // skip empty sections
-          const baseName = `${project}${profileTag}-${sec}-${dateStr}`;
-          entries.push({ name: `${baseName}.json`, content: JSON.stringify(data, null, 2) });
-          entries.push({ name: `${baseName}.md`, content: toMarkdown(sec, data, project) });
-          const csv = toCSV(data);
-          if (csv) entries.push({ name: `${baseName}.csv`, content: csv });
-        }
-        if (!entries.length) {
-          json(res, 200, { message: 'No actionable data to export.' });
-          return;
-        }
-        const zipBuf = createZip(entries);
-        const zipName = profile
-          ? `${project}-${profile}-export-${dateStr}.zip`
-          : (section === 'all' ? `${project}-full-export-${dateStr}.zip` : `${project}-${section}-${dateStr}.zip`);
-        res.writeHead(200, {
-          'Content-Type': 'application/zip',
-          'Content-Disposition': `attachment; filename="${zipName}"`,
-          'Content-Length': zipBuf.length,
-        });
-        res.end(zipBuf);
-      } else if (format === 'json') {
-        if (profile) {
-          // Profile JSON: merged object with all profile sections
-          const result = { profile: profileLabel, project, date: dateStr, sections: {} };
-          for (const sec of resolvedSections) {
-            const data = getData(sec);
-            if (!isEmpty(data)) result.sections[sec] = data;
-          }
-          const fileName = `${project}-${profile}-${dateStr}.json`;
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          });
-          res.end(JSON.stringify(result, null, 2));
-        } else {
-          const data = getData(resolvedSections[0]);
-          const fileName = `${project}-${resolvedSections[0]}-${dateStr}.json`;
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          });
-          res.end(JSON.stringify(data, null, 2));
-        }
-      } else if (format === 'csv') {
-        if (profile) {
-          // Profile CSV: concatenate sections with headers
-          let csv = '';
-          for (const sec of resolvedSections) {
-            const data = getData(sec);
-            const secCsv = toCSV(data);
-            if (secCsv) csv += `# ${sec}\n${secCsv}\n\n`;
-          }
-          const fileName = `${project}-${profile}-${dateStr}.csv`;
-          res.writeHead(200, {
-            'Content-Type': 'text/csv; charset=utf-8',
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          });
-          res.end(csv || 'No actionable data.');
-        } else {
-          const data = getData(resolvedSections[0]);
-          const fileName = `${project}-${resolvedSections[0]}-${dateStr}.csv`;
-          res.writeHead(200, {
-            'Content-Type': 'text/csv; charset=utf-8',
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          });
-          res.end(toCSV(data));
-        }
+      if (format === 'json') {
+        const content = JSON.stringify({ profile: profileLabel, project, date: dateStr, ...sections }, null, 2);
+        const fileName = `${project}-${tag}-${dateStr}.json`;
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="${fileName}"` });
+        res.end(content);
       } else if (format === 'md') {
-        if (profile) {
-          // Profile Markdown: combined report
-          let md = `# SEO Intel — ${profileLabel} Report\n\n- Project: ${project}\n- Date: ${dateStr}\n- Profile: ${profileLabel}\n\n`;
-          for (const sec of resolvedSections) {
-            const data = getData(sec);
-            if (isEmpty(data)) continue;
-            md += toMarkdown(sec, data, project).replace(/^# .+\n\n- Project:.+\n- Date:.+\n\n/, ''); // strip per-section header
-          }
-          if (md.split('\n').length < 8) md += '_No actionable data found. Run crawl + extract + analyze first._\n';
-          const fileName = `${project}-${profile}-${dateStr}.md`;
-          res.writeHead(200, {
-            'Content-Type': 'text/markdown; charset=utf-8',
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          });
-          res.end(md);
-        } else {
-          const data = getData(resolvedSections[0]);
-          const fileName = `${project}-${resolvedSections[0]}-${dateStr}.md`;
-          res.writeHead(200, {
-            'Content-Type': 'text/markdown; charset=utf-8',
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          });
-          res.end(toMarkdown(resolvedSections[0], data, project));
-        }
+        const content = dashboardToMarkdown(sections, project, profile);
+        const fileName = `${project}-${tag}-${dateStr}.md`;
+        res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${fileName}"` });
+        res.end(content);
+      } else if (format === 'csv') {
+        const content = toCSV(sections);
+        const fileName = `${project}-${tag}-${dateStr}.csv`;
+        res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${fileName}"` });
+        res.end(content || 'No data.');
+      } else if (format === 'zip') {
+        const entries = [];
+        entries.push({ name: `${project}-${tag}-${dateStr}.json`, content: JSON.stringify({ profile: profileLabel, project, date: dateStr, ...sections }, null, 2) });
+        entries.push({ name: `${project}-${tag}-${dateStr}.md`, content: dashboardToMarkdown(sections, project, profile) });
+        const csv = toCSV(sections);
+        if (csv) entries.push({ name: `${project}-${tag}-${dateStr}.csv`, content: csv });
+        const zipBuf = createZip(entries);
+        res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${project}-${tag}-${dateStr}.zip"`, 'Content-Length': zipBuf.length });
+        res.end(zipBuf);
       } else {
         json(res, 400, { error: 'Invalid format. Allowed: json, csv, md, zip' });
       }

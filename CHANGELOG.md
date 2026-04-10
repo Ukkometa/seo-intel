@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 (2026-04-10)
+
+### Export: dashboard data, not raw DB dumps
+- **Complete rewrite** of export endpoint — now exports the same processed data the dashboard shows
+- Dev export: technical scorecard, quick wins, technical gaps, internal link stats, watch alerts
+- Content export: keyword gaps, long-tails, new pages, content gaps, positioning, citability issues
+- AI Pipeline: all actionable sections combined in structured JSON
+- ~14 KB dev export instead of ~200 KB of competitor bloat
+- No more raw link/heading/schema/keyword dumps — every item is an action
+
 ## 1.4.9 (2026-04-10)
 
 ### Security

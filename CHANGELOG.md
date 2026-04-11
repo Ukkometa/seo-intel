@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.2 (2026-04-11)
+
+### Unified Export
+- Merged dev/content/ai-pipeline profiles into a single unified export
+- One file, all actionable sections: scorecard → fixes → content strategy → reference
+- Removed profile picker — just choose format (MD/JSON/CSV/ZIP) and download
+- Cleaner filenames: `carbium-2026-04-11.md` instead of `carbium-dev-2026-04-11.md`
+
 ## 1.5.1 (2026-04-11)
 
 ### Setup Wizard

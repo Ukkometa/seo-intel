@@ -2214,11 +2214,7 @@ function buildHtmlTemplate(data, opts = {}) {
         <div class="profile-export-picker" id="profilePicker${suffix}">
           <button class="export-btn profile-export-trigger"><i class="fa-solid fa-download"></i> Export Report <i class="fa-solid fa-chevron-down" style="font-size:0.55rem;margin-left:auto;opacity:0.5;"></i></button>
           <div class="profile-export-menu">
-            <div class="draft-menu-section">Profile</div>
-            <label class="draft-option"><input type="radio" name="exportProfile${suffix}" value="dev" /> <i class="fa-solid fa-wrench"></i> Developer <span style="font-size:0.5rem;opacity:0.45;margin-left:2px;">technical fixes, schema gaps</span></label>
-            <label class="draft-option"><input type="radio" name="exportProfile${suffix}" value="content" checked /> <i class="fa-solid fa-pen-fancy"></i> Content <span style="font-size:0.5rem;opacity:0.45;margin-left:2px;">keyword gaps, opportunities</span></label>
-            <label class="draft-option"><input type="radio" name="exportProfile${suffix}" value="ai-pipeline" /> <i class="fa-solid fa-robot"></i> AI Pipeline <span style="font-size:0.5rem;opacity:0.45;margin-left:2px;">structured JSON for LLMs</span></label>
-            <div class="draft-menu-section" style="margin-top:8px;">Format</div>
+            <div class="draft-menu-section">Format</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="md" checked /> <i class="fa-solid fa-file-lines"></i> MD</label>
               <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="json" /> <i class="fa-solid fa-code"></i> JSON</label>
@@ -2649,13 +2645,11 @@ function buildHtmlTemplate(data, opts = {}) {
           if (picker2) {
             e.stopImmediatePropagation();
             var projP = profDl.getAttribute('data-project');
-            var profVal = picker2.querySelector('input[name^="exportProfile"]:checked');
             var fmtVal = picker2.querySelector('input[name^="exportFmt"]:checked');
-            var prof = profVal ? profVal.value : 'content';
             var fmt2 = fmtVal ? fmtVal.value : 'md';
             picker2.querySelector('.profile-export-menu').style.display = 'none';
             if (window.location.protocol.startsWith('http')) {
-              window.location = '/api/export/download?project=' + encodeURIComponent(projP) + '&profile=' + encodeURIComponent(prof) + '&format=' + encodeURIComponent(fmt2);
+              window.location = '/api/export/download?project=' + encodeURIComponent(projP) + '&format=' + encodeURIComponent(fmt2);
             }
             return;
           }

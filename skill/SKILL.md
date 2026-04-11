@@ -10,7 +10,7 @@ description: >
   Includes gap-intel for topic/content gap analysis between your site and competitors.
 ---
 
-# SEO Intel (v1.5.1)
+# SEO Intel (v1.5.2)
 
 Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
 
@@ -82,17 +82,11 @@ seo-intel export <project>         # Raw data export (JSON/CSV)
 
 **Dashboard export:** The web dashboard (`seo-intel serve`) has per-card download buttons (MD/JSON/CSV) and profile-based export via `/api/export/download`.
 
-### Export Profiles (v1.4.4+)
+### Export Report (v1.5.2+)
 
-The dashboard "Export Report" picker offers three profiles — each filters to actionable items only (no raw dumps):
+Single unified export — everything actionable in one file. Sections: Technical Scorecard, Site Watch, Technical Gaps, Quick Wins, Keyword Gaps, Long-tails, New Pages, Content Gaps, Positioning, AI Citability, Internal Links, Schema Types, Keyword Ideas.
 
-| Profile | What you get | Best for |
-|---------|-------------|----------|
-| **Developer** | Technical issues, heading problems, orphan links, schema gaps, site watch errors — own site only, per-page issue summaries | Devs fixing crawl/structure issues |
-| **Content** | Keyword gaps, long-tails, content gaps, new page ideas, citability issues (<60), competitor-only keywords | Writers and SEO strategists |
-| **AI Pipeline** | All insights + AEO + technical + keywords + watch — structured JSON | Feeding into LLM pipelines |
-
-Formats: Markdown, JSON, CSV, ZIP. API: `/api/export/download?project=<name>&profile=<dev|content|ai-pipeline>&format=<md|json|csv|zip>`
+Formats: Markdown, JSON, CSV, ZIP. API: `/api/export/download?project=<name>&format=<md|json|csv|zip>`
 
 Per-card exports (MD/JSON/CSV) on individual dashboard cards still work for granular downloads.
 

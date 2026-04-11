@@ -594,7 +594,6 @@ async function handleRequest(req, res) {
       const project = url.searchParams.get('project');
       const section = url.searchParams.get('section') || 'all';
       const format = url.searchParams.get('format') || 'json';
-      const profile = url.searchParams.get('profile'); // dev | content | ai-pipeline
 
       if (!project || !/^[a-z0-9_-]+$/i.test(project)) { json(res, 400, { error: 'Invalid project name' }); return; }
 
@@ -611,111 +610,73 @@ async function handleRequest(req, res) {
       // ── Gather dashboard data — same source as the HTML dashboard ──
       const dash = gatherProjectData(db, project, config);
 
-      // ── Build export from dashboard data — exactly what the UI shows ──
-      function buildDashboardExport(dash, prof) {
+      // ── Build unified export from dashboard data ──
+      function buildDashboardExport(dash) {
         const a = dash.latestAnalysis || {};
         const sections = {};
 
-        // ── Technical: own-site scorecard (summary, not per-page dump) ──
-        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
-          const target = dash.technicalScores?.find(d => d.isTarget);
-          if (target) {
-            sections.technical = {
-              score: target.score,
-              h1_coverage: target.h1Pct + '%',
-              meta_coverage: target.metaPct + '%',
-              schema_coverage: target.schemaPct + '%',
-              title_coverage: target.titlePct + '%',
-            };
-          }
-          if (a.technical_gaps?.length) sections.technical_gaps = a.technical_gaps;
+        // ── Status: scorecard + crawl ──
+        const target = dash.technicalScores?.find(d => d.isTarget);
+        if (target) {
+          sections.technical = {
+            score: target.score,
+            h1_coverage: target.h1Pct + '%',
+            meta_coverage: target.metaPct + '%',
+            schema_coverage: target.schemaPct + '%',
+            title_coverage: target.titlePct + '%',
+          };
         }
 
-        // ── Quick Wins ──
-        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
-          if (a.quick_wins?.length) sections.quick_wins = a.quick_wins;
-        }
-
-        // ── Internal Links: summary stats, not raw links ──
-        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
-          if (dash.internalLinks) {
-            sections.internal_links = {
-              total_links: dash.internalLinks.totalLinks,
-              orphan_pages: dash.internalLinks.orphanCount,
-              top_pages: dash.internalLinks.topPages,
+        // ── Site Watch ──
+        if (dash.watchData?.events?.length) {
+          const critical = dash.watchData.events.filter(e => e.severity === 'error' || e.severity === 'warning');
+          if (critical.length) sections.watch_alerts = critical;
+          if (dash.watchData.snapshot) {
+            sections.watch_summary = {
+              health_score: dash.watchData.snapshot.health_score,
+              errors: dash.watchData.snapshot.errors_count,
+              warnings: dash.watchData.snapshot.warnings_count,
             };
           }
         }
 
-        // ── Keyword Gaps ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (a.keyword_gaps?.length) sections.keyword_gaps = a.keyword_gaps;
-          if (dash.keywordGaps?.length) {
-            sections.top_keyword_gaps = dash.keywordGaps.slice(0, 50);
-          }
+        // ── Fix Now: technical gaps + quick wins ──
+        if (a.technical_gaps?.length) sections.technical_gaps = a.technical_gaps;
+        if (a.quick_wins?.length) sections.quick_wins = a.quick_wins;
+
+        // ── Content Strategy: keywords, gaps, new pages, positioning ──
+        if (a.keyword_gaps?.length) sections.keyword_gaps = a.keyword_gaps;
+        if (dash.keywordGaps?.length) sections.top_keyword_gaps = dash.keywordGaps.slice(0, 50);
+        if (a.long_tails?.length) sections.long_tails = a.long_tails;
+        if (a.new_pages?.length) sections.new_pages = a.new_pages;
+        if (a.content_gaps?.length) sections.content_gaps = a.content_gaps;
+        if (a.positioning) sections.positioning = a.positioning;
+
+        // ── AI Citability ──
+        if (dash.citabilityData?.scores?.length) {
+          const own = dash.citabilityData.scores.filter(s => s.role === 'target' || s.role === 'owned');
+          const needsWork = own.filter(s => s.score < 60);
+          if (needsWork.length) sections.citability_low_scores = needsWork;
+          sections.citability_summary = {
+            avg_score: own.length ? Math.round(own.reduce((a, s) => a + s.score, 0) / own.length) : null,
+            pages_scored: own.length,
+            pages_below_60: needsWork.length,
+          };
         }
 
-        // ── Long-tail Opportunities ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (a.long_tails?.length) sections.long_tails = a.long_tails;
+        // ── Reference: internal links, schema types, keyword ideas ──
+        if (dash.internalLinks) {
+          sections.internal_links = {
+            total_links: dash.internalLinks.totalLinks,
+            orphan_pages: dash.internalLinks.orphanCount,
+            top_pages: dash.internalLinks.topPages,
+          };
         }
-
-        // ── New Pages to Create ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (a.new_pages?.length) sections.new_pages = a.new_pages;
+        if (dash.schemaBreakdown?.length) {
+          const tgt = dash.schemaBreakdown.find(d => d.isTarget);
+          if (tgt?.types?.length) sections.schema_types = tgt.types;
         }
-
-        // ── Content Gaps ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (a.content_gaps?.length) sections.content_gaps = a.content_gaps;
-        }
-
-        // ── Keyword Inventor ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (a.keyword_inventor?.length) sections.keyword_inventor = a.keyword_inventor;
-        }
-
-        // ── Positioning Strategy ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (a.positioning) sections.positioning = a.positioning;
-        }
-
-        // ── AI Citability (AEO) — own site, low scores only ──
-        if (!prof || prof === 'content' || prof === 'ai-pipeline') {
-          if (dash.citabilityData?.scores?.length) {
-            const own = dash.citabilityData.scores.filter(s => s.role === 'target' || s.role === 'owned');
-            const needsWork = own.filter(s => s.score < 60);
-            if (needsWork.length) sections.citability_low_scores = needsWork;
-            sections.citability_summary = {
-              avg_score: own.length ? Math.round(own.reduce((a, s) => a + s.score, 0) / own.length) : null,
-              pages_scored: own.length,
-              pages_below_60: needsWork.length,
-            };
-          }
-        }
-
-        // ── Site Watch — errors and warnings only ──
-        if (!prof || prof === 'dev' || prof === 'ai-pipeline') {
-          if (dash.watchData?.events?.length) {
-            const critical = dash.watchData.events.filter(e => e.severity === 'error' || e.severity === 'warning');
-            if (critical.length) sections.watch_alerts = critical;
-            if (dash.watchData.snapshot) {
-              sections.watch_summary = {
-                health_score: dash.watchData.snapshot.health_score,
-                errors: dash.watchData.snapshot.errors_count,
-                warnings: dash.watchData.snapshot.warnings_count,
-              };
-            }
-          }
-        }
-
-        // ── Schema Breakdown — own site type counts, not per-page dump ──
-        if (!prof || prof === 'dev') {
-          if (dash.schemaBreakdown?.length) {
-            const target = dash.schemaBreakdown.find(d => d.isTarget);
-            if (target?.types?.length) sections.schema_types = target.types;
-          }
-        }
+        if (a.keyword_inventor?.length) sections.keyword_inventor = a.keyword_inventor;
 
         // ── Crawl Stats ──
         sections.crawl_stats = dash.crawlStats;
@@ -723,10 +684,9 @@ async function handleRequest(req, res) {
         return sections;
       }
 
-      function dashboardToMarkdown(sections, proj, prof) {
+      function dashboardToMarkdown(sections, proj) {
         const date = new Date().toISOString().slice(0, 10);
-        const label = prof ? { dev: 'Developer', content: 'Content', 'ai-pipeline': 'AI Pipeline' }[prof] : 'Full';
-        let md = `# SEO Intel — ${label} Report\n\n- Project: ${proj}\n- Date: ${date}\n\n`;
+        let md = `# SEO Intel Report — ${proj}\n\n- Date: ${date}\n\n`;
 
         const s = sections;
 
@@ -841,39 +801,31 @@ async function handleRequest(req, res) {
       }
 
       // ── Build and serve ──
-      const validProfiles = ['dev', 'content', 'ai-pipeline'];
-      if (profile && !validProfiles.includes(profile)) {
-        json(res, 400, { error: `Invalid profile. Allowed: ${validProfiles.join(', ')}` });
-        return;
-      }
-
-      const sections = buildDashboardExport(dash, profile);
-      const profileLabel = profile ? { dev: 'Developer', content: 'Content', 'ai-pipeline': 'AI Pipeline' }[profile] : 'Full';
-      const tag = profile || 'full';
+      const sections = buildDashboardExport(dash);
 
       if (format === 'json') {
-        const content = JSON.stringify({ profile: profileLabel, project, date: dateStr, ...sections }, null, 2);
-        const fileName = `${project}-${tag}-${dateStr}.json`;
+        const content = JSON.stringify({ project, date: dateStr, ...sections }, null, 2);
+        const fileName = `${project}-${dateStr}.json`;
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="${fileName}"` });
         res.end(content);
       } else if (format === 'md') {
-        const content = dashboardToMarkdown(sections, project, profile);
-        const fileName = `${project}-${tag}-${dateStr}.md`;
+        const content = dashboardToMarkdown(sections, project);
+        const fileName = `${project}-${dateStr}.md`;
         res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${fileName}"` });
         res.end(content);
       } else if (format === 'csv') {
         const content = toCSV(sections);
-        const fileName = `${project}-${tag}-${dateStr}.csv`;
+        const fileName = `${project}-${dateStr}.csv`;
         res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${fileName}"` });
         res.end(content || 'No data.');
       } else if (format === 'zip') {
         const entries = [];
-        entries.push({ name: `${project}-${tag}-${dateStr}.json`, content: JSON.stringify({ profile: profileLabel, project, date: dateStr, ...sections }, null, 2) });
-        entries.push({ name: `${project}-${tag}-${dateStr}.md`, content: dashboardToMarkdown(sections, project, profile) });
+        entries.push({ name: `${project}-${dateStr}.json`, content: JSON.stringify({ project, date: dateStr, ...sections }, null, 2) });
+        entries.push({ name: `${project}-${dateStr}.md`, content: dashboardToMarkdown(sections, project) });
         const csv = toCSV(sections);
-        if (csv) entries.push({ name: `${project}-${tag}-${dateStr}.csv`, content: csv });
+        if (csv) entries.push({ name: `${project}-${dateStr}.csv`, content: csv });
         const zipBuf = createZip(entries);
-        res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${project}-${tag}-${dateStr}.zip"`, 'Content-Length': zipBuf.length });
+        res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${project}-${dateStr}.zip"`, 'Content-Length': zipBuf.length });
         res.end(zipBuf);
       } else {
         json(res, 400, { error: 'Invalid format. Allowed: json, csv, md, zip' });

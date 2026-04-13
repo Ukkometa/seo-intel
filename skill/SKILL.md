@@ -10,7 +10,7 @@ description: >
   Includes gap-intel for topic/content gap analysis between your site and competitors.
 ---
 
-# SEO Intel (v1.5.2)
+# SEO Intel (v1.5.21)
 
 Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
 
@@ -31,6 +31,7 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 
 | Stage | Command | Gate | Best engine |
 |---|---|---|---|
+| **Scan** | `seo-intel scan <domain>` | Solo | Full pipeline (no config) |
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
 | Extract | `seo-intel extract <project>` | Solo | Ollama / Gemma 4 or Qwen local |
 | Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
@@ -62,6 +63,7 @@ When helping a docs writer, page builder, or implementation agent:
 ## Core Commands
 
 ```bash
+seo-intel scan <domain>            # One-shot full audit (no config needed)
 seo-intel setup                    # First-time wizard — detects OpenClaw
 seo-intel crawl <project>          # Crawl target + competitors
 seo-intel extract <project>        # Local AI extraction (Ollama)
@@ -80,13 +82,33 @@ seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel export <project>         # Raw data export (JSON/CSV)
 ```
 
+### Scan — One-Shot Full Audit (v1.5.21+)
+
+Zero-config audit pipeline. Just pass a domain — no project setup, no competitor config needed.
+
+```bash
+seo-intel scan carbium.io                # Full pipeline with AI-enriched export
+seo-intel scan carbium.io --no-ai        # Deterministic export only (no LLM enrichment)
+seo-intel scan carbium.io --pages 50     # Limit crawl to 50 pages
+seo-intel scan carbium.io --model claude # Use Claude instead of Gemini
+seo-intel scan carbium.io --no-stealth   # Disable stealth browser mode
+```
+
+**Pipeline:** crawl (stealth) → extract (Ollama) → analyze (Gemini/Claude) → AI-enriched markdown export.
+
+Output: `reports/scan-<domain>-<date>.md` — full report with filled tables, instruction blocks, and AI action plan.
+
 **Dashboard export:** The web dashboard (`seo-intel serve`) has per-card download buttons (MD/JSON/CSV) and profile-based export via `/api/export/download`.
 
-### Export Report (v1.5.2+)
+### Export Report (v1.5.21+)
 
 Single unified export — everything actionable in one file. Sections: Technical Scorecard, Site Watch, Technical Gaps, Quick Wins, Keyword Gaps, Long-tails, New Pages, Content Gaps, Positioning, AI Citability, Internal Links, Schema Types, Keyword Ideas.
 
-Formats: Markdown, JSON, CSV, ZIP. API: `/api/export/download?project=<name>&format=<md|json|csv|zip>`
+**Deterministic fills:** Empty table columns are now auto-filled from DB data (long-tail parents, content gap suggestions, keyword potential, page rationale). Instruction blocks between sections explain how to use each data set.
+
+**AI Smart Export:** Toggle in dashboard opens a popup with swarm animation + progress bar. Gemini enriches the report: fills remaining gaps, scores priorities, adds a top-10 AI Action Plan. Non-blocking (async spawn).
+
+Formats: Markdown, JSON, CSV, ZIP. API: `/api/export/download?project=<name>&format=<md|json|csv|zip>&ai=true`
 
 Per-card exports (MD/JSON/CSV) on individual dashboard cards still work for granular downloads.
 
@@ -97,6 +119,7 @@ Use this section when an isolated agent needs the whole toolbox in one place.
 ### Setup / Core Flow
 
 ```bash
+seo-intel scan <domain>            # One-shot full audit (no config needed)
 seo-intel setup                    # First-time wizard — detects OpenClaw
 seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel status                   # Data freshness + system summary

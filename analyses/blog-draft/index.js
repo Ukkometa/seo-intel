@@ -89,9 +89,10 @@ export function gatherBlogDraftContext(db, project, topic = null) {
 
 // ── Prompt Builder ──────────────────────────────────────────────────────────
 
-export function buildBlogDraftPrompt(context, { config, lang = 'en', topic = null }) {
+export function buildBlogDraftPrompt(context, { config, lang = 'en', topic = null, contentType = 'blog' }) {
   const { longTails, keywordGaps, citabilityGaps, entityRows, topCitablePages, kwInventor, contentGaps, insights } = context;
   const isFi = lang === 'fi';
+  const langName = isFi ? 'Finnish' : 'English';
 
   // Extract unique entities from extraction data
   const allEntities = new Set();
@@ -103,11 +104,19 @@ export function buildBlogDraftPrompt(context, { config, lang = 'en', topic = nul
   }
   const topEntities = [...allEntities].slice(0, 15);
 
-  // ── Section 1: Role ──
+  // ── Section 1: Role — adapts to content type ──
+  const typeInstructions = {
+    blog: `Your task: write a complete, publish-ready blog post draft in ${langName}.
+The post must score 70+ on the AEO citability scale (entity authority, structured claims, answer density, Q&A proximity, freshness signals, schema coverage).`,
+    docs: `Your task: write a complete, publish-ready documentation page in ${langName}.
+The page must be technically precise, well-structured, and scannable. Use step-by-step instructions where applicable. Optimise for developers and technical users searching for how-to answers.`,
+    social: `Your task: write a set of social media posts in ${langName}.
+Create 5-7 distinct posts suitable for LinkedIn/X/Twitter. Each should be self-contained, engaging, and drive traffic to the site. Include hashtag suggestions. Vary formats: thread opener, hot take, stat-based, question-based, listicle.`,
+  };
+
   let prompt = `You are an expert content strategist and copywriter specialising in AEO (Answer Engine Optimisation).
 
-Your task: write a complete, publish-ready blog post draft in ${isFi ? 'Finnish' : 'English'}.
-The post must score 70+ on the AEO citability scale (entity authority, structured claims, answer density, Q&A proximity, freshness signals, schema coverage).
+${typeInstructions[contentType] || typeInstructions.blog}
 
 `;
 
@@ -183,12 +192,46 @@ The post must score 70+ on the AEO citability scale (entity authority, structure
     }
   }
 
-  // ── Section 5: AEO structural requirements ──
-  prompt += `
+  // ── Section 5: Structural requirements — adapts to content type ──
+  const siteName = config.context?.siteName || config.target?.domain;
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (contentType === 'social') {
+    prompt += `
+## Social Media Requirements
+
+1. Create 5-7 distinct posts, each separated by ---
+2. Each post must be self-contained (not a thread unless marked as such)
+3. Include a mix of: hot takes, statistics/data, questions, listicles, how-to snippets
+4. Optimise for engagement: hooks in the first line, clear value proposition
+5. Include 3-5 relevant hashtags per post
+6. Keep posts under 280 characters for X/Twitter variants; LinkedIn variants can be longer (600-1,200 chars)
+7. Reference ${siteName} naturally where appropriate (not in every post)
+8. Include one thread idea (3-5 connected posts) marked with [THREAD]
+9. Language: ${isFi ? 'Finnish' : 'English'}
+`;
+  } else if (contentType === 'docs') {
+    prompt += `
+## Documentation Requirements
+
+The page MUST include:
+1. YAML frontmatter with: title, slug, description (155 chars max), primary_keyword, secondary_keywords[], date (${today}), lang (${lang}), tags[]
+2. An H1 that clearly states what this page covers
+3. A 1-2 sentence overview immediately after the H1
+4. Prerequisites section (if applicable)
+5. Step-by-step instructions with numbered lists
+6. Code examples with language-tagged fenced code blocks
+7. At least one table for reference data (parameters, options, etc.)
+8. A "Troubleshooting" or "Common Issues" section at the end
+9. Word count: 800-2,000 words
+10. Internal link suggestions: include 2-3 \`[anchor text](URL)\` links to related pages
+`;
+  } else {
+    prompt += `
 ## AEO Structural Requirements
 
 The draft MUST include:
-1. YAML frontmatter with: title, slug, description (155 chars max), primary_keyword, secondary_keywords[], date (${new Date().toISOString().slice(0, 10)}), updated (same), lang (${lang}), tags[]${!topic ? ', topic_selection_rationale' : ''}
+1. YAML frontmatter with: title, slug, description (155 chars max), primary_keyword, secondary_keywords[], date (${today}), updated (same), lang (${lang}), tags[]${!topic ? ', topic_selection_rationale' : ''}
 2. An H1 that contains the primary keyword
 3. A 2-3 sentence summary immediately after the H1 (answer-first structure — inverted pyramid). This paragraph will be cited by AI assistants.
 4. Minimum 6 H2 subheadings
@@ -196,10 +239,11 @@ The draft MUST include:
 6. At least one numbered or bulleted list with 4+ items
 7. At least one "X is Y because Z" definitional sentence per major concept
 8. A FAQ section at the end with minimum 4 Q&A pairs (### H3 questions, 2-4 sentence answers)
-9. A closing CTA paragraph referencing ${config.context?.siteName || config.target?.domain}
+9. A closing CTA paragraph referencing ${siteName}
 10. Word count: 1,200-2,000 words
 11. Internal link suggestions: include 2-3 \`[anchor text](URL)\` links back to the site where natural
 `;
+  }
 
   // ── Section 6: Language ──
   if (isFi) {
@@ -217,11 +261,19 @@ Write in clear, direct international English. No filler phrases. No "in today's 
   }
 
   // ── Section 7: Output format ──
-  prompt += `
+  if (contentType === 'social') {
+    prompt += `
 ## Output Format
 
-Respond with ONLY the complete markdown document. Start with --- (YAML frontmatter open fence). End with the FAQ section and CTA. No explanation before or after. No triple backticks wrapping the response.
+Respond with ONLY the social media posts. Separate each post with ---. No explanation before or after. No triple backticks wrapping the response.
 `;
+  } else {
+    prompt += `
+## Output Format
+
+Respond with ONLY the complete markdown document. Start with --- (YAML frontmatter open fence). End with the ${contentType === 'docs' ? 'Troubleshooting section' : 'FAQ section and CTA'}. No explanation before or after. No triple backticks wrapping the response.
+`;
+  }
 
   return prompt;
 }

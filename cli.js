@@ -4439,6 +4439,7 @@ program
   .description('Generate an AEO-optimised blog post draft from Intelligence Ledger data')
   .option('--topic <keyword>', 'Focus the post on a specific topic')
   .option('--lang <code>', 'Language: en or fi', 'en')
+  .option('--type <type>', 'Content type: blog, docs, or social', 'blog')
   .option('--model <name>', 'Model to use for generation (gemini, claude, gpt, deepseek)', 'gemini')
   .option('--save', 'Save the generated draft to reports/')
   .action(async (project, opts) => {
@@ -4480,6 +4481,7 @@ program
       config,
       lang: opts.lang,
       topic: opts.topic || null,
+      contentType: opts.type || 'blog',
     });
     console.log(chalk.gray(`    Prompt size: ${(prompt.length / 1024).toFixed(1)}KB`));
 
@@ -4770,6 +4772,243 @@ program.hook('preAction', async () => {
     await activateLicense().catch(() => {});
   }
 });
+
+// ── SCAN — One-shot full audit ────────────────────────────────────────────────
+program
+  .command('scan <domain>')
+  .description('One-shot full audit: crawl → extract → analyze → export (no config needed)')
+  .option('--pages <n>', 'Max pages to crawl', '100')
+  .option('--no-ai', 'Skip AI-enriched export (deterministic only)')
+  .option('--model <name>', 'Model for analysis + AI export (gemini, claude, gpt)', 'gemini')
+  .option('--no-stealth', 'Disable stealth browser mode')
+  .action(async (domainInput, opts) => {
+    if (!requirePro('scan')) return;
+
+    // ── Parse domain ──
+    const domain = domainInput.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+    const projectSlug = '_scan-' + domain.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    const siteUrl = defaultSiteUrl(domain);
+    const useStealth = opts.stealth !== false;
+    const useAi = opts.ai !== false;
+    const maxPages = Math.min(parseInt(opts.pages) || 100, capPages(9999));
+
+    console.log(chalk.bold.hex('#d4af37')(`\n${'═'.repeat(60)}`));
+    console.log(chalk.bold.hex('#d4af37')(`  ⚡ SCAN — Full SEO Audit`));
+    console.log(chalk.bold.hex('#d4af37')(`${'═'.repeat(60)}`));
+    console.log('');
+    console.log(chalk.white(`  Target:    ${chalk.bold(domain)}`));
+    console.log(chalk.white(`  Pages:     ${maxPages}`));
+    console.log(chalk.white(`  Stealth:   ${useStealth ? chalk.green('yes') : chalk.gray('no')}`));
+    console.log(chalk.white(`  AI Export: ${useAi ? chalk.green('yes') : chalk.gray('no')}`));
+    console.log(chalk.white(`  Model:     ${opts.model}`));
+    console.log('');
+
+    const scanStart = Date.now();
+    const db = getDb();
+
+    // ── Ephemeral config ──
+    const config = {
+      project: projectSlug,
+      context: { siteName: domain, industry: '', audience: '', goal: '' },
+      target: { domain, url: siteUrl, maxPages, crawlMode: 'standard' },
+      competitors: [],
+      owned: [],
+    };
+    // Save config so dashboard/export functions work
+    const configPath = join(__dirname, `config/${projectSlug}.json`);
+    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+    applyExtractionRuntimeConfig(config);
+
+    // ── Step 1: Crawl + Extract ──
+    console.log(chalk.bold.cyan('  ⏱  Step 1/3 — Crawl + Extract'));
+    console.log('');
+
+    // Check extraction availability
+    let doExtract = true;
+    const ollamaAvailable = await checkOllamaAvailability(config);
+    if (!ollamaAvailable) {
+      console.log(chalk.yellow('  ⚠  No AI extraction available (Ollama unreachable)'));
+      console.log(chalk.gray('  → Crawl-only mode — body text still captured for analysis'));
+      console.log('');
+      doExtract = false;
+    }
+
+    upsertDomain(db, { domain, project: projectSlug, role: 'target' });
+    const domainId = db.prepare('SELECT id FROM domains WHERE domain = ? AND project = ?').get(domain, projectSlug)?.id;
+
+    let pageCount = 0, extracted = 0, failed = 0;
+    const tag = chalk.cyan(`[${domain.split('.')[0]}]`);
+
+    for await (const page of crawlDomain(siteUrl, { maxPages, stealth: useStealth, tiered: true })) {
+      if (page._blocked) {
+        console.log(chalk.bold.red(`  ${tag} ⛔ BLOCKED: ${page._blockReason}`));
+        break;
+      }
+
+      const pageRes = upsertPage(db, {
+        domainId, url: page.url, statusCode: page.status,
+        wordCount: page.wordCount, loadMs: page.loadMs,
+        isIndexable: page.isIndexable, clickDepth: page.depth ?? 0,
+        publishedDate: page.publishedDate || null, modifiedDate: page.modifiedDate || null,
+        contentHash: page.contentHash || null, title: page.title || null,
+        metaDesc: page.metaDesc || null, bodyText: page.fullBodyText || page.bodyText || null,
+      });
+      const pageId = pageRes?.id;
+
+      upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
+      insertHeadings(db, pageId, page.headings);
+      insertLinks(db, pageId, page.links);
+      if (page.parsedSchemas?.length) insertPageSchemas(db, pageId, page.parsedSchemas);
+
+      if (doExtract) {
+        process.stdout.write(chalk.gray(`  ${tag} [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 60)} → extracting...`));
+        try {
+          const extractFn = await getExtractPage();
+          const extraction = await extractFn(page);
+          insertExtraction(db, { pageId, data: extraction });
+          insertKeywords(db, pageId, extraction.keywords);
+          process.stdout.write(chalk.green(` ✓\n`));
+          extracted++;
+        } catch (err) {
+          process.stdout.write(chalk.red(` ✗ ${err.message}\n`));
+          failed++;
+        }
+      } else {
+        process.stdout.write(chalk.gray(`  ${tag} [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 65)} ✓\n`));
+      }
+      pageCount++;
+    }
+
+    const crawlSec = ((Date.now() - scanStart) / 1000).toFixed(1);
+    console.log(chalk.green(`\n  ✅ Crawl done: ${pageCount} pages, ${extracted} extracted (${crawlSec}s)\n`));
+
+    // ── Step 2: Analyze ──
+    console.log(chalk.bold.cyan('  ⏱  Step 2/3 — Analyze'));
+    console.log('');
+
+    const summary = getCompetitorSummary(db, projectSlug);
+    const target = summary.find(s => s.role === 'target');
+
+    if (!target) {
+      console.log(chalk.yellow('  ⚠  No target data found — skipping analysis'));
+    } else {
+      target.domain = domain;
+      const keywordMatrix = getKeywordMatrix(db, projectSlug);
+      const headings = getHeadingStructure(db, projectSlug);
+
+      const buildPromptFn = await getBuildAnalysisPrompt();
+      const prompt = buildPromptFn({
+        project: projectSlug, target, competitors: [],
+        keywordMatrix, headingStructure: headings, context: config.context,
+      });
+
+      console.log(chalk.gray(`  Prompt: ~${Math.round(prompt.length / 4)} tokens → ${opts.model}...`));
+      process.env._SEO_INTEL_PROJECT = projectSlug;
+      const result = await callAnalysisModel(prompt, opts.model);
+
+      if (result) {
+        try {
+          const jsonMatch = result.match(/\{[\s\S]*\}/);
+          const analysis = JSON.parse(jsonMatch[0]);
+
+          // Save to DB
+          const analysisTs = Date.now();
+          db.prepare(`
+            INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            projectSlug, analysisTs, opts.model,
+            JSON.stringify(analysis.keyword_gaps || []),
+            JSON.stringify(analysis.long_tails || []),
+            JSON.stringify(analysis.quick_wins || []),
+            JSON.stringify(analysis.new_pages || []),
+            JSON.stringify(analysis.content_gaps || []),
+            JSON.stringify(analysis.positioning || {}),
+            JSON.stringify(analysis.technical_gaps || []),
+            result,
+          );
+          const analysisRowId = db.prepare('SELECT last_insert_rowid() as id').get().id;
+          upsertInsightsFromAnalysis(db, projectSlug, analysisRowId, analysis, analysisTs);
+
+          printAnalysisSummary(analysis, projectSlug);
+        } catch (parseErr) {
+          console.log(chalk.yellow(`  ⚠  Could not parse analysis: ${parseErr.message}`));
+          const rawPath = join(__dirname, `reports/${projectSlug}-raw-${new Date().toISOString().slice(0, 10)}.md`);
+          writeFileSync(rawPath, result, 'utf8');
+          console.log(chalk.gray(`  Raw output saved: ${rawPath}`));
+        }
+      } else {
+        console.log(chalk.yellow('  ⚠  No response from model — skipping analysis'));
+      }
+    }
+
+    // ── Step 3: Export ──
+    console.log(chalk.bold.cyan('\n  ⏱  Step 3/3 — Export Report'));
+    console.log('');
+
+    // Generate dashboard (so gatherProjectData works)
+    try {
+      const allConfigs = loadAllConfigs();
+      generateMultiDashboard(db, allConfigs);
+    } catch { /* ok if this fails */ }
+
+    // Build export markdown via the server's export logic
+    const { gatherProjectData } = await import('./reports/generate-html.js');
+    const dash = gatherProjectData(db, projectSlug, config);
+
+    // Inline the deterministic markdown builder from server.js
+    const { buildScanMarkdown } = await import('./lib/scan-export.js');
+    let md = buildScanMarkdown(dash, projectSlug, domain);
+
+    // AI enrichment
+    if (useAi) {
+      console.log(chalk.gray(`  Enriching with AI (${opts.model})...`));
+      const aiPrompt = `You are an SEO strategist reviewing a data export report. Your job is to ENRICH this report, NOT rewrite it.
+
+Rules:
+- Keep ALL existing data, tables, headers, and instruction blocks exactly as they are
+- Fill any empty table cells (marked with empty | | columns) with concise, actionable content
+- For empty "Parent" cells: infer the parent keyword cluster
+- For empty "Opportunity" cells: classify as how-to guide, comparison, tutorial, landing page, etc.
+- For empty "Gap"/"Suggestion"/"Rationale"/"Potential" cells: fill with concise actionable content
+- After the last section, add "## AI Action Plan" with a numbered top-10 highest-impact actions
+- Keep markdown format — tables, headers, blockquotes
+- Be concise — table cells under 80 chars
+- Do NOT add commentary outside the report
+
+Here is the report:
+
+${md}`;
+      const aiResult = await callAnalysisModel(aiPrompt, opts.model);
+      if (aiResult && aiResult.trim().length > md.length * 0.5) {
+        md = aiResult;
+        console.log(chalk.green('  ✓ AI enrichment applied'));
+      } else {
+        console.log(chalk.yellow('  ⚠  AI enrichment failed — using deterministic export'));
+      }
+    }
+
+    // Save
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const fileName = `scan-${domain.replace(/[^a-z0-9]/gi, '-')}-${dateStr}.md`;
+    const outPath = join(__dirname, 'reports', fileName);
+    writeFileSync(outPath, md, 'utf8');
+
+    const totalSec = ((Date.now() - scanStart) / 1000).toFixed(1);
+    console.log('');
+    console.log(chalk.bold.hex('#d4af37')(`${'═'.repeat(60)}`));
+    console.log(chalk.bold.hex('#d4af37')(`  ✅ Scan Complete — ${totalSec}s`));
+    console.log(chalk.bold.hex('#d4af37')(`${'═'.repeat(60)}`));
+    console.log('');
+    console.log(chalk.white(`  Report: ${chalk.bold(outPath)}`));
+    console.log(chalk.white(`  Pages:  ${pageCount} crawled, ${extracted} extracted`));
+    console.log(chalk.white(`  Export: ${useAi ? 'AI-enriched' : 'deterministic'} markdown`));
+    console.log('');
+
+    // Clean up ephemeral config (keep the report)
+    try { unlinkSync(configPath); } catch { /* fine if already gone */ }
+  });
 
 // ── BUG-002: No-args getting-started handler ─────────────────────────────────
 // When run with no command, show a friendly entry point instead of generic help

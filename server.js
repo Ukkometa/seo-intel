@@ -251,6 +251,116 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ─── AI Smart Export loader page (standalone popup) ───
+  if (req.method === 'GET' && path === '/ai-loader') {
+    const exportUrl = url.searchParams.get('url') || '';
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Smart Export</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body,html{width:100%;height:100%;background:#0a0a0a;font-family:'Inter',sans-serif;color:#e0e0e0;overflow:hidden;}
+#swarmBg{position:fixed;inset:0;z-index:0;}
+.card{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;padding:32px;}
+.inner{background:rgba(18,18,18,0.75);backdrop-filter:blur(16px);border:1px solid rgba(212,175,55,0.15);border-radius:20px;padding:40px 48px 32px;text-align:center;box-shadow:0 0 80px rgba(212,175,55,0.06),0 32px 64px rgba(0,0,0,0.5);max-width:440px;width:100%;}
+h1{font-family:'Syne',sans-serif;font-size:1.3rem;color:#d4af37;margin-bottom:4px;letter-spacing:-0.02em;}
+h1 i{margin-right:8px;}
+.sub{font-size:0.72rem;color:#777;margin-bottom:28px;}
+.status{font-size:0.76rem;color:#aaa;margin-bottom:18px;min-height:1.4em;transition:all 0.3s;}
+.status i{color:#d4af37;margin-right:8px;}
+.track{width:100%;height:5px;background:rgba(255,255,255,0.05);border-radius:5px;overflow:hidden;margin-bottom:6px;}
+.bar{height:100%;width:0%;border-radius:5px;background:linear-gradient(90deg,#d4af37,#f5c842,#d4af37);background-size:200% 100%;animation:shimmer 1.5s ease infinite;transition:width 0.6s cubic-bezier(0.4,0,0.2,1);}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.pct{font-size:0.62rem;color:#555;font-family:'SF Mono',ui-monospace,monospace;text-align:right;margin-bottom:20px;}
+.cancel{font-size:0.64rem;color:#666;background:none;border:1px solid #333;padding:5px 18px;border-radius:8px;cursor:pointer;transition:all 0.2s;}
+.cancel:hover{color:#ccc;border-color:#666;}
+.done-msg{display:none;margin-top:16px;font-size:0.7rem;color:#50c878;}
+.done-msg i{margin-right:6px;}
+</style></head><body>
+<div id="swarmBg"></div>
+<div class="card"><div class="inner">
+  <h1><i class="fa-solid fa-wand-magic-sparkles"></i> AI Smart Export</h1>
+  <p class="sub">Enriching your report with AI intelligence</p>
+  <div class="status" id="status"><i class="fa-solid fa-brain fa-beat-fade"></i> Initializing...</div>
+  <div class="track"><div class="bar" id="bar"></div></div>
+  <div class="pct" id="pct">0%</div>
+  <button class="cancel" id="cancelBtn">Cancel</button>
+  <div class="done-msg" id="doneMsg"><i class="fa-solid fa-circle-check"></i> Export complete — file downloaded</div>
+</div></div>
+<script>
+(function(){
+  // ── Swarm ──
+  var el=document.getElementById('swarmBg'),N=350;
+  var sc=new THREE.Scene();sc.fog=new THREE.FogExp2(0x0a0a0a,0.003);
+  var cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,1,800);cam.position.set(0,0,220);
+  var r=new THREE.WebGLRenderer({antialias:true,alpha:true});r.setSize(innerWidth,innerHeight);r.setPixelRatio(Math.min(devicePixelRatio,1.5));r.setClearColor(0x0a0a0a,1);el.appendChild(r.domElement);
+  var cv=document.createElement('canvas');cv.width=cv.height=64;var cx=cv.getContext('2d'),g=cx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(0.3,'rgba(212,175,55,0.9)');g.addColorStop(1,'rgba(212,175,55,0)');cx.fillStyle=g;cx.fillRect(0,0,64,64);
+  var tex=new THREE.CanvasTexture(cv);
+  var pos=new Float32Array(N*3),col=new Float32Array(N*3),sz=new Float32Array(N);
+  for(var i=0;i<N;i++){var t=i/N,ao=(i%4)*(Math.PI/2),rd=Math.pow(t,0.5)*120,a=t*Math.PI*6+ao;
+    pos[i*3]=Math.cos(a)*rd;pos[i*3+1]=(Math.random()-0.5)*14*(1-t);pos[i*3+2]=Math.sin(a)*rd;
+    var ig=Math.random()>0.65;col[i*3]=ig?0.83:0.35;col[i*3+1]=ig?0.69:0.48;col[i*3+2]=ig?0.22:0.93;sz[i]=ig?3.2:1.6;}
+  var geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('color',new THREE.BufferAttribute(col,3));geo.setAttribute('size',new THREE.BufferAttribute(sz,1));
+  var vs='attribute float size;attribute vec3 color;varying vec3 vColor;void main(){vColor=color;vec4 mv=modelViewMatrix*vec4(position,1.0);gl_PointSize=size*2.2*(220.0/-mv.z);gl_Position=projectionMatrix*mv;}';
+  var fs='uniform sampler2D pointTexture;varying vec3 vColor;void main(){vec4 tc=texture2D(pointTexture,gl_PointCoord);if(tc.a<0.1)discard;gl_FragColor=vec4(vColor*1.8,1.0)*tc;}';
+  var mat=new THREE.ShaderMaterial({uniforms:{pointTexture:{value:tex}},vertexShader:vs,fragmentShader:fs,blending:THREE.AdditiveBlending,depthTest:false,transparent:true});
+  sc.add(new THREE.Points(geo,mat));
+  var maxD=30*30,lp=new Float32Array(N*36),lg=new THREE.BufferGeometry();lg.setAttribute('position',new THREE.BufferAttribute(lp,3));
+  sc.add(new THREE.LineSegments(lg,new THREE.LineBasicMaterial({color:0xd4af37,transparent:true,opacity:0.07,blending:THREE.AdditiveBlending})));
+  var vi=0,cnt=0;for(var i=0;i<N&&cnt<N*5;i++){for(var j=i+1;j<N&&cnt<N*5;j++){var dx=pos[i*3]-pos[j*3],dy=pos[i*3+1]-pos[j*3+1],dz=pos[i*3+2]-pos[j*3+2];if(dx*dx+dy*dy+dz*dz<maxD){lp[vi++]=pos[i*3];lp[vi++]=pos[i*3+1];lp[vi++]=pos[i*3+2];lp[vi++]=pos[j*3];lp[vi++]=pos[j*3+1];lp[vi++]=pos[j*3+2];cnt++;}}}
+  lg.setDrawRange(0,cnt*2);lg.attributes.position.needsUpdate=true;
+  (function anim(){requestAnimationFrame(anim);sc.rotation.y+=0.0025;sc.rotation.x+=0.0008;r.render(sc,cam)})();
+  window.addEventListener('resize',function(){cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();r.setSize(innerWidth,innerHeight);});
+
+  // ── Progress ──
+  var STEPS=[
+    {at:0,icon:'fa-brain fa-beat-fade',text:'Analyzing report structure...'},
+    {at:12,icon:'fa-table-cells fa-fade',text:'Filling empty table cells...'},
+    {at:28,icon:'fa-diagram-project fa-beat-fade',text:'Mapping keyword clusters...'},
+    {at:45,icon:'fa-magnifying-glass-chart fa-fade',text:'Cross-referencing competitors...'},
+    {at:58,icon:'fa-ranking-star fa-beat-fade',text:'Scoring priorities...'},
+    {at:72,icon:'fa-list-check fa-fade',text:'Building action plan...'},
+    {at:88,icon:'fa-file-export fa-fade',text:'Finalizing export...'}
+  ];
+  var barEl=document.getElementById('bar'),pctEl=document.getElementById('pct'),statusEl=document.getElementById('status');
+  var cur=0,timer=null;
+  function ease(s,e,d){var st=Date.now();clearInterval(timer);timer=setInterval(function(){var t=Math.min((Date.now()-st)/d,1),v=s+(e-s)*(1-Math.pow(1-t,3));cur=v;barEl.style.width=v+'%';pctEl.textContent=Math.round(v)+'%';var step=STEPS[0];for(var i=STEPS.length-1;i>=0;i--){if(v>=STEPS[i].at){step=STEPS[i];break;}}statusEl.innerHTML='<i class="fa-solid '+step.icon+'"></i> '+step.text;if(t>=1)clearInterval(timer);},50);}
+  ease(0,22,7000);setTimeout(function(){ease(22,48,12000)},7000);setTimeout(function(){ease(48,72,14000)},19000);setTimeout(function(){ease(72,92,20000)},33000);
+
+  // ── Fetch ──
+  var exportUrl=${JSON.stringify(exportUrl)};
+  var aborted=false;
+  var ctrl=new AbortController();
+  document.getElementById('cancelBtn').onclick=function(){aborted=true;ctrl.abort();window.close();};
+  fetch(exportUrl,{signal:ctrl.signal}).then(function(resp){
+    if(!resp.ok)throw new Error('HTTP '+resp.status);
+    var cd=resp.headers.get('content-disposition')||'';var m=cd.match(/filename="?([^"]+)"?/);
+    var fn=m?m[1]:'export.md';
+    return resp.blob().then(function(b){return{blob:b,fn:fn}});
+  }).then(function(res){
+    clearInterval(timer);cur=100;barEl.style.width='100%';pctEl.textContent='100%';
+    statusEl.innerHTML='<i class="fa-solid fa-circle-check" style="color:#50c878"></i> Export complete!';
+    document.getElementById('doneMsg').style.display='block';
+    document.getElementById('cancelBtn').textContent='Close';
+    document.getElementById('cancelBtn').onclick=function(){window.close();};
+    var a=document.createElement('a');a.href=URL.createObjectURL(res.blob);a.download=res.fn;a.click();URL.revokeObjectURL(a.href);
+  }).catch(function(err){
+    if(aborted)return;
+    clearInterval(timer);
+    statusEl.innerHTML='<i class="fa-solid fa-triangle-exclamation" style="color:#ff6b6b"></i> '+err.message;
+    document.getElementById('cancelBtn').textContent='Close';
+    document.getElementById('cancelBtn').onclick=function(){window.close();};
+  });
+})();
+<\/script></body></html>`);
+    return;
+  }
+
   // ─── API: Get progress ───
   if (req.method === 'GET' && path === '/api/progress') {
     const progress = readProgress();
@@ -684,27 +794,82 @@ async function handleRequest(req, res) {
         return sections;
       }
 
+      // ── Helpers for deterministic enrichment ──
+      function inferLongTailParent(phrase, keywordGaps) {
+        // Match long-tail to its most likely parent keyword from keyword gaps
+        const lower = phrase.toLowerCase();
+        let best = null, bestScore = 0;
+        for (const g of (keywordGaps || [])) {
+          const kw = (g.keyword || '').toLowerCase();
+          if (!kw || kw.length < 3) continue;
+          // Score: how many words from the gap keyword appear in the phrase
+          const words = kw.split(/\s+/);
+          const score = words.filter(w => lower.includes(w)).length / words.length;
+          if (score > bestScore && score >= 0.5) { bestScore = score; best = g.keyword; }
+        }
+        return best;
+      }
+
+      function inferLongTailOpportunity(item) {
+        const p = (item.phrase || '').toLowerCase();
+        const intent = item.intent || '';
+        const pageType = item.page_type || '';
+        if (p.startsWith('how to ') || p.includes(' tutorial')) return `How-to ${pageType || 'guide'} — ${intent || 'informational'} intent`;
+        if (p.includes(' vs ') || p.includes(' comparison')) return `Comparison ${pageType || 'article'} — captures decision-stage traffic`;
+        if (p.includes('best ') || p.includes('top ')) return `Listicle / roundup — high commercial intent`;
+        if (p.includes('what is ') || p.includes('explained')) return `Explainer ${pageType || 'page'} — top-of-funnel awareness`;
+        if (p.includes(' api ') || p.includes(' sdk ')) return `Technical docs ${pageType || 'page'} — developer intent`;
+        if (p.includes(' price') || p.includes(' cost') || p.includes(' pricing')) return `Pricing / comparison page — transactional intent`;
+        if (intent) return `${pageType || 'Content'} page — ${intent} intent`;
+        return pageType ? `${pageType} page` : '';
+      }
+
+      function inferPotential(item) {
+        const p = (item.priority || '').toLowerCase();
+        if (p === 'high' || p === 'critical') return 'High';
+        if (p === 'medium') return 'Medium';
+        if (p === 'low') return 'Low';
+        // Fallback: questions and comparisons tend to be higher value
+        const phrase = (item.phrase || '').toLowerCase();
+        if (phrase.startsWith('how') || phrase.includes(' vs ') || phrase.includes('best ')) return 'High';
+        if (item.type === 'question' || item.type === 'comparison') return 'High';
+        if (item.type === 'ai_query') return 'Medium';
+        return 'Medium';
+      }
+
       function dashboardToMarkdown(sections, proj) {
         const date = new Date().toISOString().slice(0, 10);
         let md = `# SEO Intel Report — ${proj}\n\n- Date: ${date}\n\n`;
 
         const s = sections;
 
+        // ── Technical Scorecard ──
         if (s.technical) {
           md += `## Technical Scorecard\n\n`;
           md += `- Overall: **${s.technical.score}/100**\n`;
           md += `- H1: ${s.technical.h1_coverage} | Meta: ${s.technical.meta_coverage} | Schema: ${s.technical.schema_coverage} | Title: ${s.technical.title_coverage}\n\n`;
         }
+
+        // ── Technical Gaps ──
         if (s.technical_gaps?.length) {
-          md += `## Technical Gaps (${s.technical_gaps.length})\n\n| Issue | Affected | Fix |\n|-------|----------|-----|\n`;
+          md += `## Technical Gaps (${s.technical_gaps.length})\n\n`;
+          md += `> Implement these schema and markup fixes to qualify for rich results. Start with FAQ and HowTo schema — they have the highest SERP visibility impact.\n\n`;
+          md += `| Issue | Affected | Fix |\n|-------|----------|-----|\n`;
           for (const g of s.technical_gaps) md += `| ${g.gap || g.issue || ''} | ${g.affected || g.pages || ''} | ${g.recommendation || g.fix || ''} |\n`;
           md += '\n';
         }
+
+        // ── Quick Wins ──
         if (s.quick_wins?.length) {
-          md += `## Quick Wins (${s.quick_wins.length})\n\n| Page | Issue | Fix | Impact |\n|------|-------|-----|--------|\n`;
+          const highCount = s.quick_wins.filter(w => w.impact === 'high').length;
+          md += `## Quick Wins (${s.quick_wins.length})\n\n`;
+          md += `> **${highCount} high-impact items.** Sort by Impact, pick the top 3 "high" items and implement this week. Each fix takes <30 min and directly improves rankings.\n\n`;
+          md += `| Page | Issue | Fix | Impact |\n|------|-------|-----|--------|\n`;
           for (const w of s.quick_wins) md += `| ${w.page || ''} | ${w.issue || ''} | ${w.fix || ''} | ${w.impact || ''} |\n`;
           md += '\n';
         }
+
+        // ── Internal Links ──
         if (s.internal_links) {
           md += `## Internal Links\n\n- Total links: ${s.internal_links.total_links}\n- Orphan pages: ${s.internal_links.orphan_pages}\n`;
           if (s.internal_links.top_pages?.length) {
@@ -713,6 +878,8 @@ async function handleRequest(req, res) {
           }
           md += '\n';
         }
+
+        // ── Site Watch ──
         if (s.watch_summary) {
           md += `## Site Watch\n\n- Health: **${s.watch_summary.health_score ?? 'N/A'}** | Errors: ${s.watch_summary.errors} | Warnings: ${s.watch_summary.warnings}\n\n`;
         }
@@ -721,56 +888,110 @@ async function handleRequest(req, res) {
           for (const e of s.watch_alerts) md += `| ${e.event_type} | ${e.severity} | ${e.url || ''} | ${(e.details || '').slice(0, 80)} |\n`;
           md += '\n';
         }
+
+        // ── Keyword Gaps ──
         if (s.keyword_gaps?.length) {
-          md += `## Keyword Gaps (${s.keyword_gaps.length})\n\n| Keyword | Your Coverage | Competitor Coverage |\n|---------|--------------|--------------------|\n`;
+          const highGaps = s.keyword_gaps.filter(g => (g.competitor_coverage || g.competitor_count || 0) >= 4).length;
+          md += `## Keyword Gaps (${s.keyword_gaps.length})\n\n`;
+          md += `> **${highGaps} high-priority gaps** (competitor coverage >= 4). Focus on gaps that match existing product features — these are "free points" where you have the product but lack the page.\n\n`;
+          md += `| Keyword | Your Coverage | Competitor Coverage |\n|---------|--------------|--------------------|\n`;
           for (const g of s.keyword_gaps) md += `| ${g.keyword || ''} | ${g.your_coverage || g.target_count || 'none'} | ${g.competitor_coverage || g.competitor_count || ''} |\n`;
           md += '\n';
         }
+
+        // ── Top Keyword Gaps (fill frequency + gap from competitor_count) ──
         if (s.top_keyword_gaps?.length) {
-          md += `## Top Keyword Gaps\n\n| Keyword | Frequency | Your Count | Gap |\n|---------|-----------|------------|-----|\n`;
-          for (const g of s.top_keyword_gaps) md += `| ${g.keyword || ''} | ${g.total || ''} | ${g.target || 0} | ${g.gap || ''} |\n`;
+          md += `## Top Keyword Gaps\n\n`;
+          md += `> Keywords your competitors rank for that you don't cover at all. Frequency = how many competitor sites mention it.\n\n`;
+          md += `| Keyword | Frequency | Your Count | Gap |\n|---------|-----------|------------|-----|\n`;
+          for (const g of s.top_keyword_gaps) {
+            const freq = g.total || g.competitor_count || '';
+            const target = g.target || 0;
+            const gap = freq ? (Number(freq) - Number(target)) || freq : '';
+            md += `| ${g.keyword || ''} | ${freq} | ${target} | ${gap} |\n`;
+          }
           md += '\n';
         }
+
+        // ── Long-tail Opportunities (fill parent + opportunity) ──
         if (s.long_tails?.length) {
-          md += `## Long-tail Opportunities (${s.long_tails.length})\n\n| Phrase | Parent | Opportunity |\n|-------|--------|-------------|\n`;
-          for (const l of s.long_tails) md += `| ${l.phrase || ''} | ${l.parent || l.keyword || ''} | ${l.opportunity || l.rationale || ''} |\n`;
+          md += `## Long-tail Opportunities (${s.long_tails.length})\n\n`;
+          md += `> Long-tail keywords are lower competition and higher conversion. Each phrase maps to a parent cluster and content type.\n\n`;
+          md += `| Phrase | Parent | Opportunity |\n|-------|--------|-------------|\n`;
+          for (const l of s.long_tails) {
+            const parent = l.parent || l.keyword || inferLongTailParent(l.phrase, s.keyword_gaps) || '';
+            const opportunity = l.opportunity || l.rationale || inferLongTailOpportunity(l) || '';
+            md += `| ${l.phrase || ''} | ${parent} | ${opportunity} |\n`;
+          }
           md += '\n';
         }
+
+        // ── New Pages to Create (fill rationale from 'why' field) ──
         if (s.new_pages?.length) {
-          md += `## New Pages to Create (${s.new_pages.length})\n\n| Title | Target Keyword | Rationale |\n|-------|----------------|----------|\n`;
-          for (const p of s.new_pages) md += `| ${p.title || ''} | ${p.target_keyword || ''} | ${p.rationale || ''} |\n`;
+          md += `## New Pages to Create (${s.new_pages.length})\n\n`;
+          md += `> Each page targets a specific keyword gap. Create these as standalone pages with proper H1, schema, and internal links from existing content.\n\n`;
+          md += `| Title | Target Keyword | Rationale |\n|-------|----------------|----------|\n`;
+          for (const p of s.new_pages) {
+            const rationale = p.rationale || p.why || p.content_angle || '';
+            md += `| ${p.title || ''} | ${p.target_keyword || ''} | ${rationale} |\n`;
+          }
           md += '\n';
         }
+
+        // ── Content Gaps (fill gap + suggestion from covered_by, why_it_matters, suggested_title) ──
         if (s.content_gaps?.length) {
-          md += `## Content Gaps (${s.content_gaps.length})\n\n| Topic | Gap | Suggestion |\n|-------|-----|------------|\n`;
-          for (const g of s.content_gaps) md += `| ${g.topic || ''} | ${g.gap || ''} | ${g.suggestion || ''} |\n`;
+          md += `## Content Gaps (${s.content_gaps.length})\n\n`;
+          md += `> Topics your competitors cover that you don't. Prioritise gaps where multiple competitors have content — that signals proven search demand.\n\n`;
+          md += `| Topic | Gap | Suggestion |\n|-------|-----|------------|\n`;
+          for (const g of s.content_gaps) {
+            const gap = g.gap || (g.covered_by?.length ? `Covered by ${g.covered_by.join(', ')}` : '') || g.why_it_matters || '';
+            const suggestion = g.suggestion || g.suggested_title || (g.format ? `Create a ${g.format} covering this topic` : '') || '';
+            md += `| ${g.topic || ''} | ${gap} | ${suggestion} |\n`;
+          }
           md += '\n';
         }
+
+        // ── Keyword Ideas (fill potential from priority) ──
         if (s.keyword_inventor?.length) {
-          md += `## Keyword Ideas (${s.keyword_inventor.length})\n\n| Phrase | Cluster | Potential |\n|-------|---------|----------|\n`;
-          for (const k of s.keyword_inventor.slice(0, 50)) md += `| ${k.phrase || ''} | ${k.cluster || ''} | ${k.potential || k.volume || ''} |\n`;
+          md += `## Keyword Ideas (${s.keyword_inventor.length})\n\n`;
+          md += `> Clustered keyword suggestions for content planning. High-potential keywords are questions, comparisons, or high-priority phrases matching your product features.\n\n`;
+          md += `| Phrase | Cluster | Potential |\n|-------|---------|----------|\n`;
+          for (const k of s.keyword_inventor.slice(0, 50)) {
+            const potential = k.potential || k.volume || inferPotential(k) || '';
+            md += `| ${k.phrase || ''} | ${k.cluster || ''} | ${potential} |\n`;
+          }
           if (s.keyword_inventor.length > 50) md += `\n_...and ${s.keyword_inventor.length - 50} more._\n`;
           md += '\n';
         }
+
+        // ── Positioning Strategy ──
         if (s.positioning) {
           md += `## Positioning Strategy\n\n`;
           if (s.positioning.open_angle) md += `**Open angle:** ${s.positioning.open_angle}\n\n`;
           if (s.positioning.target_differentiator) md += `**Differentiator:** ${s.positioning.target_differentiator}\n\n`;
           if (s.positioning.competitor_map) md += `**Competitor map:** ${s.positioning.competitor_map}\n\n`;
         }
+
+        // ── AI Citability ──
         if (s.citability_summary) {
           md += `## AI Citability\n\n- Average: **${s.citability_summary.avg_score ?? 'N/A'}/100** (${s.citability_summary.pages_scored} pages, ${s.citability_summary.pages_below_60} below 60)\n\n`;
         }
         if (s.citability_low_scores?.length) {
-          md += `### Pages Needing Improvement\n\n| Score | URL | Tier |\n|-------|-----|------|\n`;
+          md += `### Pages Needing Improvement\n\n`;
+          md += `> Pages scoring below 60 are unlikely to be cited by AI assistants. Focus on adding structured Q&A, entity depth, and clear factual claims.\n\n`;
+          md += `| Score | URL | Tier |\n|-------|-----|------|\n`;
           for (const p of s.citability_low_scores) md += `| ${p.score} | ${p.url || ''} | ${p.tier || ''} |\n`;
           md += '\n';
         }
+
+        // ── Schema Types ──
         if (s.schema_types?.length) {
           md += `## Schema Types (own site)\n\n| Type | Count |\n|------|-------|\n`;
           for (const t of s.schema_types) md += `| ${t.type || t.schema_type || ''} | ${t.count || ''} |\n`;
           md += '\n';
         }
+
+        // ── Crawl Info ──
         if (s.crawl_stats) {
           md += `## Crawl Info\n\n- Last crawl: ${s.crawl_stats.lastCrawl || 'N/A'}\n- Extracted pages: ${s.crawl_stats.extractedPages || 0}\n`;
         }
@@ -800,8 +1021,56 @@ async function handleRequest(req, res) {
         return [keys.join(','), ...rows.map(r => keys.map(k => escape(r[k])).join(','))].join('\n');
       }
 
+      // ── AI Smart Export enrichment ──
+      async function aiEnrichMarkdown(md, proj) {
+        const prompt = `You are an SEO strategist reviewing a data export report. Your job is to ENRICH this report, NOT rewrite it.
+
+Rules:
+- Keep ALL existing data, tables, headers, and instruction blocks exactly as they are
+- Fill any empty table cells (marked with empty | | columns) with concise, actionable content
+- For empty "Parent" cells in Long-tail Opportunities: infer the parent keyword cluster
+- For empty "Opportunity" cells: classify as how-to guide, comparison, tutorial, landing page, etc.
+- For empty "Gap" cells in Content Gaps: describe what content is missing
+- For empty "Suggestion" cells: give a specific content format and angle
+- For empty "Rationale" cells: explain why this page matters for SEO
+- For empty "Potential" cells: rate as High/Medium/Low based on keyword type
+- After the last section, add a new section "## AI Action Plan" with a numbered list of the top 10 highest-impact actions, ordered by priority
+- Keep the same markdown format — tables, headers, blockquotes
+- Be concise — table cells should be under 80 chars
+- Do NOT add commentary, preamble, or explanation outside the report
+
+Here is the report to enrich:
+
+${md}`;
+        return new Promise((resolve) => {
+          const child = spawn('gemini', ['-p', '-'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: process.env,
+            timeout: 120000,
+          });
+          let stdout = '', stderr = '';
+          child.stdout.on('data', (d) => { stdout += d.toString(); });
+          child.stderr.on('data', (d) => { stderr += d.toString(); });
+          child.on('error', (err) => {
+            console.warn('[ai-export] Gemini spawn failed:', err.message);
+            resolve(md + `\n\n> _AI enrichment unavailable: ${err.message}_\n`);
+          });
+          child.on('close', (code) => {
+            if (code === 0 && stdout.trim()) {
+              resolve(stdout);
+            } else {
+              console.warn('[ai-export] Gemini exited', code, stderr.slice(0, 200));
+              resolve(md + `\n\n> _AI enrichment unavailable: gemini exited ${code}_\n`);
+            }
+          });
+          child.stdin.write(prompt);
+          child.stdin.end();
+        });
+      }
+
       // ── Build and serve ──
       const sections = buildDashboardExport(dash);
+      const useAi = url.searchParams.get('ai') === 'true';
 
       if (format === 'json') {
         const content = JSON.stringify({ project, date: dateStr, ...sections }, null, 2);
@@ -809,8 +1078,9 @@ async function handleRequest(req, res) {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="${fileName}"` });
         res.end(content);
       } else if (format === 'md') {
-        const content = dashboardToMarkdown(sections, project);
-        const fileName = `${project}-${dateStr}.md`;
+        let content = dashboardToMarkdown(sections, project);
+        if (useAi) content = await aiEnrichMarkdown(content, project);
+        const fileName = `${project}-${useAi ? 'ai-' : ''}${dateStr}.md`;
         res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${fileName}"` });
         res.end(content);
       } else if (format === 'csv') {
@@ -821,7 +1091,9 @@ async function handleRequest(req, res) {
       } else if (format === 'zip') {
         const entries = [];
         entries.push({ name: `${project}-${dateStr}.json`, content: JSON.stringify({ project, date: dateStr, ...sections }, null, 2) });
-        entries.push({ name: `${project}-${dateStr}.md`, content: dashboardToMarkdown(sections, project) });
+        let mdContent = dashboardToMarkdown(sections, project);
+        if (useAi) mdContent = await aiEnrichMarkdown(mdContent, project);
+        entries.push({ name: `${project}-${useAi ? 'ai-' : ''}${dateStr}.md`, content: mdContent });
         const csv = toCSV(sections);
         if (csv) entries.push({ name: `${project}-${dateStr}.csv`, content: csv });
         const zipBuf = createZip(entries);
@@ -883,6 +1155,11 @@ async function handleRequest(req, res) {
       const outFile = join(__dirname, 'reports', `${project}-${slug}-${ts}.md`);
       args.push('--output', outFile);
       args.push('--format', 'brief');
+    }
+    // Auto-save AEO audit output
+    if (command === 'aeo' && project) {
+      const ts = new Date().toISOString().slice(0, 10);
+      args.push('--save');
     }
 
     // SSE headers

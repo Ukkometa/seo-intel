@@ -33,6 +33,7 @@ function cardExportHtml(section, project) {
       <button data-fmt="json"><i class="fa-solid fa-code"></i> JSON</button>
       <button data-fmt="csv"><i class="fa-solid fa-table"></i> CSV</button>
       <button data-fmt="zip"><i class="fa-solid fa-file-zipper"></i> ZIP (all)</button>
+      <label style="display:flex;align-items:center;gap:5px;padding:4px 10px;font-size:0.6rem;color:var(--accent-gold);cursor:pointer;border-top:1px solid var(--border-subtle);margin-top:2px;padding-top:6px;"><input type="checkbox" class="card-ai-toggle" style="accent-color:var(--accent-gold);" /> <i class="fa-solid fa-wand-magic-sparkles"></i> AI Smart</label>
     </div>
   </div>`;
 }
@@ -104,7 +105,7 @@ export function gatherProjectData(db, project, config) {
   const performanceBubbles = getPerformanceBubbleData(db, project);
   const headingFlow = getHeadingFlowData(db, project, config);
   const territoryTreemap = getTerritoryTreemapData(db, project, config);
-  const topicClusters = getTopicClusterData(project); // from topic-cluster-mapper output
+  const topicClusters = getTopicClusterData(db, project); // auto-generates from DB if no file exists
   const linkDna = getLinkDnaData(db, project, config);
   const linkRadarPulse = getLinkRadarPulseData(db, project, config);
 
@@ -1648,15 +1649,16 @@ function buildHtmlTemplate(data, opts = {}) {
       cursor: pointer;
     }
     .export-viewer {
-      flex: 1;
-      padding: 12px;
+      padding: 12px 16px;
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: 0.66rem;
       line-height: 1.7;
       color: var(--text-muted);
       overflow-y: auto;
-      max-height: 400px;
+      min-height: 60px;
+      max-height: 600px;
     }
+    .export-viewer:empty, .export-viewer:has(> div:only-child) { max-height: 80px; }
     .export-viewer h1, .export-viewer h2, .export-viewer h3 { color: var(--text-primary); margin: 12px 0 6px; font-family: var(--font-display); font-size: 0.8rem; }
     .export-viewer h2 { font-size: 0.75rem; }
     .export-viewer h3 { font-size: 0.7rem; }
@@ -1672,6 +1674,62 @@ function buildHtmlTemplate(data, opts = {}) {
     }
 
     /* Action exports integrated into terminal panel — CSS cleaned up */
+
+    /* ── AI Smart Export Modal ── */
+    .ai-export-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,0.85); backdrop-filter: blur(12px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
+    }
+    .ai-export-overlay.active { opacity: 1; pointer-events: all; }
+    .ai-export-card {
+      position: relative; z-index: 2;
+      background: rgba(18,18,18,0.85); border: 1px solid rgba(212,175,55,0.2);
+      border-radius: 16px; padding: 32px 40px 28px; text-align: center;
+      box-shadow: 0 0 60px rgba(212,175,55,0.08), 0 24px 48px rgba(0,0,0,0.5);
+      min-width: 340px; max-width: 420px;
+    }
+    .ai-export-card h3 {
+      font-family: var(--font-display); font-size: 1.1rem; color: var(--accent-gold);
+      margin: 0 0 4px; letter-spacing: -0.02em;
+    }
+    .ai-export-card .ai-subtitle {
+      font-size: 0.68rem; color: var(--text-muted); margin-bottom: 24px;
+    }
+    .ai-export-status {
+      font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 16px;
+      min-height: 1.2em;
+    }
+    .ai-export-status i { color: var(--accent-gold); margin-right: 6px; }
+    .ai-progress-track {
+      width: 100%; height: 4px; background: rgba(255,255,255,0.06);
+      border-radius: 4px; overflow: hidden; margin-bottom: 20px;
+      position: relative;
+    }
+    .ai-progress-bar {
+      height: 100%; width: 0%; border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent-gold), #f5c842, var(--accent-gold));
+      background-size: 200% 100%;
+      animation: ai-shimmer 1.5s ease infinite;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @keyframes ai-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .ai-progress-pct {
+      font-size: 0.6rem; color: var(--text-muted); font-family: 'SF Mono', monospace;
+      margin-top: -14px; margin-bottom: 12px; text-align: right;
+    }
+    .ai-export-cancel {
+      font-size: 0.62rem; color: var(--text-muted); background: none; border: 1px solid var(--border-subtle);
+      padding: 4px 14px; border-radius: var(--radius); cursor: pointer; transition: all 0.2s;
+    }
+    .ai-export-cancel:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    #aiSwarmCanvas {
+      position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: 0;
+    }
 
   </style>
 </head>`;
@@ -2194,7 +2252,8 @@ function buildHtmlTemplate(data, opts = {}) {
           <div class="draft-menu" id="draftMenu${suffix}">
             <div class="draft-menu-section">Type</div>
             <label class="draft-option"><input type="radio" name="draftType${suffix}" value="blog" checked /> <i class="fa-solid fa-blog"></i> Blog Post</label>
-            <label class="draft-option"><input type="radio" name="draftType${suffix}" value="docs" disabled /> <i class="fa-solid fa-book"></i> Documentation <span style="font-size:0.55rem;opacity:0.4;margin-left:4px;">soon</span></label>
+            <label class="draft-option"><input type="radio" name="draftType${suffix}" value="docs" /> <i class="fa-solid fa-book"></i> Documentation</label>
+            <label class="draft-option"><input type="radio" name="draftType${suffix}" value="social" /> <i class="fa-solid fa-share-nodes"></i> Social Media</label>
             <div class="draft-menu-section" style="margin-top:8px;">Topic <span style="font-size:0.55rem;opacity:0.4;">(optional)</span></div>
             <input type="text" id="draftTopic${suffix}" class="draft-topic-input" placeholder="e.g. solana rpc, site speed..." />
             <div class="draft-menu-section" style="margin-top:8px;">Language</div>
@@ -2221,22 +2280,12 @@ function buildHtmlTemplate(data, opts = {}) {
               <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="csv" /> <i class="fa-solid fa-table"></i> CSV</label>
               <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="zip" /> <i class="fa-solid fa-file-zipper"></i> ZIP</label>
             </div>
+            <label class="draft-option" style="margin-top:8px;border-color:var(--accent-gold);background:rgba(212,175,55,0.04);"><input type="checkbox" name="aiExport${suffix}" value="1" /> <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-gold);"></i> AI Smart Export</label>
+            <div style="font-size:0.55rem;color:var(--text-muted);padding:2px 4px;">Fills gaps, adds priorities & action tips via AI</div>
             <button class="draft-generate-btn profile-download-btn" data-project="${project}" style="margin-top:10px;"><i class="fa-solid fa-download"></i> Download</button>
           </div>
         </div>
         <button class="export-btn download-all-btn" data-project="${project}" style="font-size:0.58rem;opacity:0.6;"><i class="fa-solid fa-file-zipper"></i> Raw Full Export (ZIP)</button>
-      </div>
-      <div style="position:relative;">
-        <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
-          <i class="fa-solid fa-check" style="margin-right:4px;"></i><span></span>
-        </div>
-        <button id="exportExpand${suffix}" class="export-expand-btn" title="Expand viewer"><i class="fa-solid fa-expand"></i></button>
-        <div id="exportViewer${suffix}" class="export-viewer">
-          <div style="color:#444;padding:20px 0;text-align:center;">
-            <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
-            Click an export to generate an<br/>implementation-ready action brief.
-          </div>
-        </div>
       </div>
       ` : `
       <div style="padding:20px 14px;text-align:center;">
@@ -2247,6 +2296,22 @@ function buildHtmlTemplate(data, opts = {}) {
       `}
     </div>
   </div>
+  ${pro ? `
+  <div class="viewer-row" style="max-width:var(--max-width);margin:0 auto;">
+    <div style="position:relative;background:#0e0e0e;border:1px solid var(--border-card);border-radius:0 0 var(--radius) var(--radius);border-top:none;">
+      <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
+        <i class="fa-solid fa-check" style="margin-right:4px;"></i><span></span>
+      </div>
+      <button id="exportExpand${suffix}" class="export-expand-btn" title="Expand viewer"><i class="fa-solid fa-expand"></i></button>
+      <div id="exportViewer${suffix}" class="export-viewer">
+        <div style="color:#444;padding:20px 0;text-align:center;">
+          <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
+          Click an export or generate a draft — output appears here.
+        </div>
+      </div>
+    </div>
+  </div>
+  ` : ''}
 
   <script>
   (function() {
@@ -2423,6 +2488,7 @@ function buildHtmlTemplate(data, opts = {}) {
             if (msg.type === 'stdout') mdContent += msg.data + '\\n';
             else if (msg.type === 'stderr') mdContent += msg.data + '\\n';
             else if (msg.type === 'exit') {
+              var exitCode = msg.data && msg.data.code;
               running = false;
               status.textContent = 'done';
               status.style.color = 'var(--color-success)';
@@ -2445,11 +2511,17 @@ function buildHtmlTemplate(data, opts = {}) {
               }
               // Show save status
               var saveEl = document.getElementById('exportSaveStatus' + suffix);
-              if (saveEl && code === 0) {
-                var slugName = cmd === 'suggest-usecases' ? 'suggestions' : (scope || 'all');
+              if (saveEl && exitCode === 0) {
                 var dateStr = new Date().toISOString().slice(0, 10);
+                var savedName;
+                if (cmd === 'aeo') {
+                  savedName = proj + '-aeo-' + dateStr + '.md';
+                } else {
+                  var slugName = cmd === 'suggest-usecases' ? 'suggestions' : (scope || 'all');
+                  savedName = proj + '-' + slugName + '-' + dateStr + '.md';
+                }
                 saveEl.style.display = 'block';
-                saveEl.querySelector('span').textContent = 'Saved → reports/' + proj + '-' + slugName + '-' + dateStr + '.md';
+                saveEl.querySelector('span').textContent = 'Saved → reports/' + savedName;
               }
             }
           } catch (_) {}
@@ -2464,20 +2536,22 @@ function buildHtmlTemplate(data, opts = {}) {
       });
     });
 
-    // Draft dropdown
+    // Draft dropdown — use capture phase to match card-export handler
     var draftTrigger = document.getElementById('draftTrigger' + suffix);
     var draftMenu = document.getElementById('draftMenu' + suffix);
     var draftGenerate = document.getElementById('draftGenerate' + suffix);
     if (draftTrigger && draftMenu) {
       draftTrigger.addEventListener('click', function(e) {
-        e.stopPropagation();
+        e.stopImmediatePropagation();
+        // Close other menus
+        document.querySelectorAll('.draft-menu.open').forEach(function(m) { if (m !== draftMenu) m.classList.remove('open'); });
+        document.querySelectorAll('.profile-export-menu').forEach(function(m) { m.style.display = 'none'; });
         draftMenu.classList.toggle('open');
-      });
-      document.addEventListener('click', function(e) {
-        if (!draftMenu.contains(e.target) && e.target !== draftTrigger) {
-          draftMenu.classList.remove('open');
-        }
-      });
+      }, true);
+      // Clicks inside the menu should not close it
+      draftMenu.addEventListener('click', function(e) {
+        e.stopImmediatePropagation();
+      }, true);
     }
     if (draftGenerate) {
       draftGenerate.addEventListener('click', function() {
@@ -2490,29 +2564,28 @@ function buildHtmlTemplate(data, opts = {}) {
         var lang = langEl ? langEl.value : 'en';
         var topic = topicEl ? topicEl.value.trim() : '';
 
-        if (draftType !== 'blog') return; // docs not yet supported
-
         draftMenu.classList.remove('open');
 
-        // Run blog-draft via terminal SSE
-        var extra = { lang: lang };
-        if (topic) extra.topic = topic;
-
+        // Run blog-draft via terminal SSE — type is passed so prompt builder can adapt
         var params = new URLSearchParams({ command: 'blog-draft' });
         params.set('project', proj);
         params.set('lang', lang);
+        params.set('type', draftType);
         params.set('save', '1');
         if (topic) params.set('topic', topic);
 
+        var typeLabels = { blog: 'blog post', docs: 'documentation', social: 'social media post' };
+        var typeLabel = typeLabels[draftType] || draftType;
+
         if (!isServed) {
-          var cmd = 'seo-intel blog-draft ' + proj + (topic ? ' --topic "' + topic + '"' : '') + ' --lang ' + lang + ' --save';
+          var cmd = 'seo-intel blog-draft ' + proj + (topic ? ' --topic "' + topic + '"' : '') + ' --lang ' + lang + ' --type ' + draftType + ' --save';
           if (exportViewer) {
             exportViewer.innerHTML = '<div style="color:var(--color-danger);padding:12px;">Not connected. Run in terminal:<br/><code style="color:var(--accent-gold);">' + cmd + '</code></div>';
           }
           return;
         }
 
-        if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;"><i class="fa-solid fa-wand-magic-sparkles fa-spin" style="margin-right:6px;color:var(--accent-gold);"></i>Generating AEO draft...</div>';
+        if (exportViewer) exportViewer.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;"><i class="fa-solid fa-wand-magic-sparkles fa-spin" style="margin-right:6px;color:var(--accent-gold);"></i>Generating ' + typeLabel + ' draft...</div>';
 
         var mdContent = '';
         var es = new EventSource('/api/terminal?' + params.toString());
@@ -2593,6 +2666,16 @@ function buildHtmlTemplate(data, opts = {}) {
       document.addEventListener('click', function(e) {
         var btn = e.target.closest('.card-export-btn');
         var fmtBtn = e.target.closest('[data-fmt]');
+        // Clicks on AI toggle checkbox or its label inside card-export — don't close dropdown
+        var aiLabel = e.target.closest('label');
+        if (aiLabel && aiLabel.querySelector('.card-ai-toggle')) {
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (e.target.classList && e.target.classList.contains('card-ai-toggle')) {
+          e.stopImmediatePropagation();
+          return;
+        }
         if (btn) {
           var wrap = btn.closest('.card-export');
           if (wrap) {
@@ -2611,8 +2694,14 @@ function buildHtmlTemplate(data, opts = {}) {
             var sec = wrap2.getAttribute('data-section');
             var proj2 = wrap2.getAttribute('data-project');
             var fmt = fmtBtn.getAttribute('data-fmt');
+            var aiToggle = wrap2.querySelector('.card-ai-toggle');
+            var useAi = aiToggle && aiToggle.checked;
+            var exportUrl = '/api/export/download?project=' + encodeURIComponent(proj2) + '&section=' + encodeURIComponent(sec) + '&format=' + encodeURIComponent(fmt) + (useAi ? '&ai=true' : '');
             if (window.location.protocol.startsWith('http')) {
-              window.location = '/api/export/download?project=' + encodeURIComponent(proj2) + '&section=' + encodeURIComponent(sec) + '&format=' + encodeURIComponent(fmt);
+              if (useAi) {
+                var loaderUrl = '/ai-loader?url=' + encodeURIComponent(exportUrl);
+                window.open(loaderUrl, 'ai-export', 'width=600,height=480,menubar=no,toolbar=no,status=no');
+              } else { window.location = exportUrl; }
             }
             return;
           }
@@ -2647,12 +2736,23 @@ function buildHtmlTemplate(data, opts = {}) {
             var projP = profDl.getAttribute('data-project');
             var fmtVal = picker2.querySelector('input[name^="exportFmt"]:checked');
             var fmt2 = fmtVal ? fmtVal.value : 'md';
+            var aiCheck = picker2.querySelector('input[name^="aiExport"]');
+            var useAi2 = aiCheck && aiCheck.checked;
             picker2.querySelector('.profile-export-menu').style.display = 'none';
+            var exportUrl2 = '/api/export/download?project=' + encodeURIComponent(projP) + '&format=' + encodeURIComponent(fmt2) + (useAi2 ? '&ai=true' : '');
             if (window.location.protocol.startsWith('http')) {
-              window.location = '/api/export/download?project=' + encodeURIComponent(projP) + '&format=' + encodeURIComponent(fmt2);
+              if (useAi2) {
+                var loaderUrl2 = '/ai-loader?url=' + encodeURIComponent(exportUrl2);
+                window.open(loaderUrl2, 'ai-export', 'width=600,height=480,menubar=no,toolbar=no,status=no');
+              } else { window.location = exportUrl2; }
             }
             return;
           }
+        }
+        // Clicks inside an open profile-export-menu (radio buttons etc) — don't close
+        if (e.target.closest('.profile-export-menu')) {
+          e.stopImmediatePropagation();
+          return;
         }
         // Outside click — close all open dropdowns
         document.querySelectorAll('.card-export.open').forEach(function(el) { el.classList.remove('open'); });
@@ -4750,8 +4850,214 @@ function buildHtmlTemplate(data, opts = {}) {
 
   </script>`;
 
+  // ── AI Smart Export Modal ──
+  const aiModalHtml = `
+  <div class="ai-export-overlay" id="aiExportOverlay">
+    <div id="aiSwarmCanvas"></div>
+    <div class="ai-export-card">
+      <h3><i class="fa-solid fa-wand-magic-sparkles"></i> AI Smart Export</h3>
+      <p class="ai-subtitle">Enriching your report with AI intelligence</p>
+      <div class="ai-export-status" id="aiExportStatus"><i class="fa-solid fa-brain fa-beat-fade"></i> Initializing...</div>
+      <div class="ai-progress-track"><div class="ai-progress-bar" id="aiProgressBar"></div></div>
+      <div class="ai-progress-pct" id="aiProgressPct">0%</div>
+      <button class="ai-export-cancel" id="aiExportCancel">Cancel</button>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+  (function(){
+    // ── Swarm animation (compact, gold-themed) ──
+    var overlay = document.getElementById('aiExportOverlay');
+    var swarmEl = document.getElementById('aiSwarmCanvas');
+    var swarmInited = false, swarmRaf = null, swarmRenderer, swarmScene, swarmCam;
+
+    function initSwarm() {
+      if (swarmInited) return;
+      swarmInited = true;
+      var N = 300, sc = new THREE.Scene();
+      sc.fog = new THREE.FogExp2(0x000000, 0.004);
+      var cam = new THREE.PerspectiveCamera(60, swarmEl.clientWidth / Math.max(swarmEl.clientHeight, 1), 1, 800);
+      cam.position.set(0, 0, 200);
+      var r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      r.setSize(swarmEl.clientWidth, swarmEl.clientHeight);
+      r.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+      r.setClearColor(0x000000, 0);
+      swarmEl.appendChild(r.domElement);
+      swarmRenderer = r; swarmScene = sc; swarmCam = cam;
+
+      // Dot texture
+      var cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      var cx = cv.getContext('2d'), grd = cx.createRadialGradient(32,32,0,32,32,32);
+      grd.addColorStop(0, 'rgba(255,255,255,1)');
+      grd.addColorStop(0.3, 'rgba(212,175,55,0.9)');
+      grd.addColorStop(1, 'rgba(212,175,55,0)');
+      cx.fillStyle = grd; cx.fillRect(0,0,64,64);
+      var tex = new THREE.CanvasTexture(cv);
+
+      // Particles — galaxy spiral
+      var pos = new Float32Array(N*3), col = new Float32Array(N*3), szArr = new Float32Array(N);
+      for (var i = 0; i < N; i++) {
+        var t = i/N, ao = (i%4)*(Math.PI/2), rd = Math.pow(t,0.5)*100, a = t*Math.PI*5 + ao;
+        pos[i*3] = Math.cos(a)*rd; pos[i*3+1] = (Math.random()-0.5)*12*(1-t); pos[i*3+2] = Math.sin(a)*rd;
+        var isGold = Math.random() > 0.7;
+        if (isGold) { col[i*3]=0.83; col[i*3+1]=0.69; col[i*3+2]=0.22; szArr[i]=3; }
+        else { col[i*3]=0.38; col[i*3+1]=0.51; col[i*3+2]=0.96; szArr[i]=1.5; }
+      }
+      var geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      geo.setAttribute('size', new THREE.BufferAttribute(szArr, 1));
+
+      var vs = 'attribute float size; attribute vec3 color; varying vec3 vColor; void main(){ vColor=color; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=size*2.0*(200.0/-mv.z); gl_Position=projectionMatrix*mv; }';
+      var fs = 'uniform sampler2D pointTexture; varying vec3 vColor; void main(){ vec4 tc=texture2D(pointTexture,gl_PointCoord); if(tc.a<0.1) discard; gl_FragColor=vec4(vColor*1.8,1.0)*tc; }';
+      var mat = new THREE.ShaderMaterial({ uniforms:{ pointTexture:{value:tex} }, vertexShader:vs, fragmentShader:fs, blending:THREE.AdditiveBlending, depthTest:false, transparent:true });
+      var pts = new THREE.Points(geo, mat);
+      sc.add(pts);
+
+      // Connection lines
+      var maxD = 28*28, lPos = new Float32Array(N*36), lGeo = new THREE.BufferGeometry();
+      lGeo.setAttribute('position', new THREE.BufferAttribute(lPos, 3));
+      var lMat = new THREE.LineBasicMaterial({ color: 0xd4af37, transparent:true, opacity:0.08, blending:THREE.AdditiveBlending });
+      var lines = new THREE.LineSegments(lGeo, lMat); sc.add(lines);
+      var vi=0, cnt=0;
+      for (var i=0; i<N && cnt<N*4; i++) {
+        for (var j=i+1; j<N && cnt<N*4; j++) {
+          var dx=pos[i*3]-pos[j*3], dy=pos[i*3+1]-pos[j*3+1], dz=pos[i*3+2]-pos[j*3+2];
+          if (dx*dx+dy*dy+dz*dz < maxD) {
+            lPos[vi++]=pos[i*3]; lPos[vi++]=pos[i*3+1]; lPos[vi++]=pos[i*3+2];
+            lPos[vi++]=pos[j*3]; lPos[vi++]=pos[j*3+1]; lPos[vi++]=pos[j*3+2];
+            cnt++;
+          }
+        }
+      }
+      lGeo.setDrawRange(0, cnt*2); lGeo.attributes.position.needsUpdate = true;
+
+      function anim() {
+        swarmRaf = requestAnimationFrame(anim);
+        sc.rotation.y += 0.003; sc.rotation.x += 0.001;
+        r.render(sc, cam);
+      }
+      anim();
+    }
+
+    function stopSwarm() { if (swarmRaf) cancelAnimationFrame(swarmRaf); swarmRaf = null; }
+    function startSwarm() { initSwarm(); if (!swarmRaf) { var sc=swarmScene, cam=swarmCam, r=swarmRenderer; (function a(){ swarmRaf=requestAnimationFrame(a); sc.rotation.y+=0.003; sc.rotation.x+=0.001; r.render(sc,cam); })(); } }
+
+    // Resize handler
+    window.addEventListener('resize', function() {
+      if (swarmRenderer && overlay.classList.contains('active')) {
+        swarmCam.aspect = swarmEl.clientWidth / Math.max(swarmEl.clientHeight, 1);
+        swarmCam.updateProjectionMatrix();
+        swarmRenderer.setSize(swarmEl.clientWidth, swarmEl.clientHeight);
+      }
+    });
+
+    // ── Progress animation ──
+    var STATUS_STEPS = [
+      { at: 0,  icon: 'fa-brain fa-beat-fade', text: 'Analyzing report structure...' },
+      { at: 12, icon: 'fa-table-cells fa-fade', text: 'Filling empty table cells...' },
+      { at: 30, icon: 'fa-diagram-project fa-beat-fade', text: 'Mapping keyword clusters...' },
+      { at: 50, icon: 'fa-ranking-star fa-fade', text: 'Scoring priorities...' },
+      { at: 70, icon: 'fa-list-check fa-beat-fade', text: 'Building action plan...' },
+      { at: 88, icon: 'fa-file-export fa-fade', text: 'Finalizing export...' },
+    ];
+
+    var progressTimer = null, currentProgress = 0, abortCtrl = null;
+
+    function animateProgress(targetPct, durationMs) {
+      var start = currentProgress, startTime = Date.now();
+      clearInterval(progressTimer);
+      progressTimer = setInterval(function() {
+        var elapsed = Date.now() - startTime;
+        var t = Math.min(elapsed / durationMs, 1);
+        // Ease-out cubic
+        var eased = 1 - Math.pow(1 - t, 3);
+        currentProgress = start + (targetPct - start) * eased;
+        updateProgressUI(currentProgress);
+        if (t >= 1) clearInterval(progressTimer);
+      }, 50);
+    }
+
+    function updateProgressUI(pct) {
+      var bar = document.getElementById('aiProgressBar');
+      var pctEl = document.getElementById('aiProgressPct');
+      var statusEl = document.getElementById('aiExportStatus');
+      if (bar) bar.style.width = pct + '%';
+      if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+      // Update status text
+      var step = STATUS_STEPS[0];
+      for (var i = STATUS_STEPS.length - 1; i >= 0; i--) {
+        if (pct >= STATUS_STEPS[i].at) { step = STATUS_STEPS[i]; break; }
+      }
+      if (statusEl) statusEl.innerHTML = '<i class="fa-solid ' + step.icon + '"></i> ' + step.text;
+    }
+
+    function showAiModal() {
+      overlay.classList.add('active');
+      currentProgress = 0;
+      updateProgressUI(0);
+      startSwarm();
+      // Animate to 92% over ~60s (slowing down toward end)
+      animateProgress(25, 8000);
+      setTimeout(function() { animateProgress(55, 15000); }, 8000);
+      setTimeout(function() { animateProgress(78, 15000); }, 23000);
+      setTimeout(function() { animateProgress(92, 25000); }, 38000);
+    }
+
+    function hideAiModal() {
+      clearInterval(progressTimer);
+      stopSwarm();
+      overlay.classList.remove('active');
+    }
+
+    function finishAiModal() {
+      clearInterval(progressTimer);
+      currentProgress = 100;
+      updateProgressUI(100);
+      var statusEl = document.getElementById('aiExportStatus');
+      if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-check" style="color:#50c878;"></i> Export ready!';
+      setTimeout(hideAiModal, 800);
+    }
+
+    // Cancel button
+    document.getElementById('aiExportCancel').addEventListener('click', function() {
+      if (abortCtrl) abortCtrl.abort();
+      hideAiModal();
+    });
+
+    // ── Intercept AI export downloads ──
+    window._triggerAiExport = function(url) {
+      abortCtrl = new AbortController();
+      showAiModal();
+      fetch(url, { signal: abortCtrl.signal })
+        .then(function(resp) {
+          if (!resp.ok) throw new Error('Export failed: ' + resp.status);
+          var cd = resp.headers.get('content-disposition') || '';
+          var m = cd.match(/filename="?([^"]+)"?/);
+          var filename = m ? m[1] : 'export.md';
+          return resp.blob().then(function(blob) { return { blob: blob, filename: filename }; });
+        })
+        .then(function(result) {
+          finishAiModal();
+          setTimeout(function() {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(result.blob);
+            a.download = result.filename;
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }, 900);
+        })
+        .catch(function(err) {
+          if (err.name === 'AbortError') return;
+          hideAiModal();
+          alert('AI Smart Export failed: ' + err.message);
+        });
+    };
+  })();
+  </script>`;
+
   // ── Compose full HTML ──
-  return headHtml + '\n<body>\n' + panelHtml + '\n' + scriptHtml + '\n</body>\n</html>';
+  return headHtml + '\n<body>\n' + panelHtml + '\n' + scriptHtml + '\n' + aiModalHtml + '\n</body>\n</html>';
 }
 
 // ─── Multi-Project Dashboard Builder ──────────────────────────────────────────
@@ -6581,8 +6887,8 @@ function getTerritoryTreemapData(db, project, config) {
     });
 }
 
-function getTopicClusterData(project) {
-  // Load from topic-cluster-mapper.js output — try project-specific file first, then generic
+function getTopicClusterData(db, project) {
+  // Try pre-generated file first (from topic-cluster-mapper.js)
   const candidates = [
     join(__dirname, `topic-clusters-${project}.json`),
     join(__dirname, 'topic-clusters.json'),
@@ -6592,7 +6898,6 @@ function getTopicClusterData(project) {
     try {
       if (existsSync(path)) {
         const raw = JSON.parse(readFileSync(path, 'utf8'));
-        // Verify this data is for the right project (if it has a project field)
         if (raw.project && raw.project !== project) continue;
         const data = raw.dashboard_data || null;
         if (data) console.log(`  📊 Topic clusters loaded: ${data.length} clusters from ${path.split('/').pop()}`);
@@ -6603,8 +6908,149 @@ function getTopicClusterData(project) {
     }
   }
 
-  console.log(`  ⚠️  No topic-clusters file found for project: ${project}`);
-  return null;
+  // No file — auto-generate from DB (pure text scoring, no LLM)
+  return generateTopicClustersFromDb(db, project);
+}
+
+function generateTopicClustersFromDb(db, project) {
+  const CLUSTERS = [
+    { id: 'rpc', label: 'RPC & Node Infrastructure', seeds: ['rpc', 'node', 'endpoint', 'rpc node', 'rpc endpoint', 'json-rpc', 'jsonrpc', 'websocket', 'wss', 'connection', 'latency', 'uptime', 'reliability'] },
+    { id: 'dex', label: 'DEX & Swap', seeds: ['dex', 'swap', 'quote', 'amm', 'liquidity', 'pool', 'routing', 'slippage', 'token swap', 'dex api', 'swap api', 'jupiter', 'raydium', 'orca', 'gasless'] },
+    { id: 'data', label: 'Blockchain Data & Analytics', seeds: ['data', 'analytics', 'historical', 'indexer', 'index', 'stream', 'webhook', 'transaction data', 'on-chain', 'onchain', 'real-time', 'realtime', 'archive'] },
+    { id: 'validator', label: 'Validator & Staking', seeds: ['validator', 'stake', 'staking', 'delegation', 'epoch', 'rewards', 'apy', 'sol staking', 'validator node'] },
+    { id: 'api', label: 'API & Developer Tools', seeds: ['api', 'sdk', 'developer', 'documentation', 'quickstart', 'tutorial', 'integration', 'library', 'typescript', 'python', 'rust'] },
+    { id: 'trading', label: 'Trading & DeFi', seeds: ['trading', 'defi', 'bot', 'arbitrage', 'mev', 'sniper', 'frontrun', 'backrun', 'sandwich', 'jito', 'bundle', 'profit'] },
+    { id: 'pricing', label: 'Pricing & Plans', seeds: ['pricing', 'price', 'plan', 'tier', 'free', 'pro', 'enterprise', 'cost', 'credit', 'rate limit', 'quota'] },
+    { id: 'solana_ecosystem', label: 'Solana Ecosystem', seeds: ['solana', 'spl', 'token', 'program', 'account', 'transaction', 'block', 'slot', 'lamport', 'nft', 'metaplex'] },
+    { id: 'infrastructure', label: 'Infrastructure & Ops', seeds: ['infrastructure', 'bare metal', 'server', 'devops', 'monitoring', 'alerting', 'dashboard', 'status', 'sla', 'downtime'] },
+    { id: 'education', label: 'Education & Learning', seeds: ['learn', 'guide', 'tutorial', 'how to', 'getting started', 'beginner', 'explained', 'what is', 'introduction', 'course'] },
+    { id: 'ai', label: 'AI & Agents', seeds: ['ai', 'agent', 'skill', 'llm', 'gpt', 'claude', 'langchain', 'autonomous', 'agentic', 'artificial intelligence', 'machine learning'] },
+    { id: 'comparison', label: 'Comparisons & Alternatives', seeds: ['vs', 'versus', 'alternative', 'compare', 'comparison', 'better than', 'switch', 'migrate'] },
+  ];
+
+  const WEIGHTS = { title: 5, h1: 4, h2: 3, meta: 2, body: 1 };
+
+  // Check if project has crawl data
+  const pageCount = db.prepare(`
+    SELECT COUNT(*) as cnt FROM pages p
+    JOIN domains d ON p.domain_id = d.id
+    WHERE d.project = ? AND p.status_code = 200
+  `).get(project)?.cnt || 0;
+
+  if (pageCount === 0) return null;
+
+  // Load pages
+  const pages = db.prepare(`
+    SELECT p.id, p.url, p.word_count, p.click_depth,
+           d.domain, d.role,
+           e.title, e.meta_desc, e.h1
+    FROM pages p
+    JOIN domains d ON p.domain_id = d.id
+    LEFT JOIN extractions e ON e.page_id = p.id
+    WHERE d.project = ? AND p.status_code = 200
+    ORDER BY d.domain, p.click_depth
+  `).all(project);
+
+  // Load keywords per page
+  const keywordsByPage = new Map();
+  const allKeywords = db.prepare(`
+    SELECT k.page_id, k.keyword, k.location
+    FROM keywords k
+    JOIN pages p ON k.page_id = p.id
+    JOIN domains d ON p.domain_id = d.id
+    WHERE d.project = ?
+  `).all(project);
+  for (const row of allKeywords) {
+    if (!keywordsByPage.has(row.page_id)) keywordsByPage.set(row.page_id, []);
+    keywordsByPage.get(row.page_id).push(row);
+  }
+
+  // Load headings per page
+  const headingsByPage = new Map();
+  const allHeadings = db.prepare(`
+    SELECT h.page_id, h.text
+    FROM headings h
+    JOIN pages p ON h.page_id = p.id
+    JOIN domains d ON p.domain_id = d.id
+    WHERE d.project = ? AND h.level <= 3
+  `).all(project);
+  for (const row of allHeadings) {
+    if (!headingsByPage.has(row.page_id)) headingsByPage.set(row.page_id, []);
+    headingsByPage.get(row.page_id).push(row.text);
+  }
+
+  // Score each page
+  const clusterStats = {};
+  for (const c of CLUSTERS) {
+    clusterStats[c.id] = { label: c.label, pages: [], byDomain: {}, targetPages: [], competitorPages: [] };
+  }
+
+  for (const page of pages) {
+    const keywords = keywordsByPage.get(page.id) || [];
+    const headings = headingsByPage.get(page.id) || [];
+    const scores = {};
+    for (const c of CLUSTERS) scores[c.id] = 0;
+
+    // Score from keywords
+    for (const { keyword, location } of keywords) {
+      const kw = keyword.toLowerCase().trim();
+      const w = WEIGHTS[location] || 1;
+      for (const c of CLUSTERS) {
+        for (const seed of c.seeds) {
+          if (kw.includes(seed) || seed.includes(kw)) { scores[c.id] += w; break; }
+        }
+      }
+    }
+
+    // Score from headings
+    for (const text of headings) {
+      const t = text.toLowerCase();
+      for (const c of CLUSTERS) {
+        for (const seed of c.seeds) {
+          if (t.includes(seed)) { scores[c.id] += 3; break; }
+        }
+      }
+    }
+
+    // Assign to primary cluster
+    const primary = Object.entries(scores).sort((a, b) => b[1] - a[1]).filter(([, s]) => s > 0)[0];
+    if (primary) {
+      const cs = clusterStats[primary[0]];
+      cs.pages.push(page);
+      if (!cs.byDomain[page.domain]) cs.byDomain[page.domain] = 0;
+      cs.byDomain[page.domain]++;
+      if (page.role === 'target') cs.targetPages.push(page);
+      else cs.competitorPages.push(page);
+    }
+  }
+
+  // Build dashboard_data format
+  const dashboardData = CLUSTERS.map(cluster => {
+    const cs = clusterStats[cluster.id];
+    const domainCounts = cs.byDomain;
+    const dominant = Object.entries(domainCounts).sort((a, b) => b[1] - a[1])[0];
+    const wcs = cs.pages.map(p => p.word_count || 0).filter(Boolean);
+    const avgWc = wcs.length ? Math.round(wcs.reduce((a, b) => a + b, 0) / wcs.length) : 0;
+    return {
+      cluster: cluster.label,
+      cluster_id: cluster.id,
+      keywords: cs.pages.length,
+      totalFreq: cs.pages.length,
+      dominant: dominant ? { domain: dominant[0], freq: dominant[1] } : null,
+      domains: domainCounts,
+      target_pages: cs.targetPages.length,
+      competitor_pages: cs.competitorPages.length,
+      avg_word_count: avgWc,
+    };
+  }).filter(d => d.keywords > 0).sort((a, b) => b.totalFreq - a.totalFreq);
+
+  if (dashboardData.length > 0) {
+    console.log(`  📊 Topic clusters auto-generated: ${dashboardData.length} clusters from DB for ${project}`);
+  } else {
+    console.log(`  ⚠️  No topic clusters found for project: ${project} (no keyword data)`);
+  }
+
+  return dashboardData.length > 0 ? dashboardData : null;
 }
 
 function getLinkDnaData(db, project, config) {

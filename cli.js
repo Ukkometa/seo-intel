@@ -4840,44 +4840,59 @@ program
     let pageCount = 0, extracted = 0, failed = 0;
     const tag = chalk.cyan(`[${domain.split('.')[0]}]`);
 
-    for await (const page of crawlDomain(siteUrl, { maxPages, stealth: useStealth, tiered: true })) {
-      if (page._blocked) {
-        console.log(chalk.bold.red(`  ${tag} ⛔ BLOCKED: ${page._blockReason}`));
-        break;
-      }
+    try {
+      for await (const page of crawlDomain(siteUrl, { maxPages, stealth: useStealth, tiered: true })) {
+        if (page._blocked) {
+          console.log(chalk.bold.red(`  ${tag} ⛔ BLOCKED: ${page._blockReason}`));
+          break;
+        }
 
-      const pageRes = upsertPage(db, {
-        domainId, url: page.url, statusCode: page.status,
-        wordCount: page.wordCount, loadMs: page.loadMs,
-        isIndexable: page.isIndexable, clickDepth: page.depth ?? 0,
-        publishedDate: page.publishedDate || null, modifiedDate: page.modifiedDate || null,
-        contentHash: page.contentHash || null, title: page.title || null,
-        metaDesc: page.metaDesc || null, bodyText: page.fullBodyText || page.bodyText || null,
-      });
-      const pageId = pageRes?.id;
-
-      upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
-      insertHeadings(db, pageId, page.headings);
-      insertLinks(db, pageId, page.links);
-      if (page.parsedSchemas?.length) insertPageSchemas(db, pageId, page.parsedSchemas);
-
-      if (doExtract) {
-        process.stdout.write(chalk.gray(`  ${tag} [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 60)} → extracting...`));
         try {
-          const extractFn = await getExtractPage();
-          const extraction = await extractFn(page);
-          insertExtraction(db, { pageId, data: extraction });
-          insertKeywords(db, pageId, extraction.keywords);
-          process.stdout.write(chalk.green(` ✓\n`));
-          extracted++;
-        } catch (err) {
-          process.stdout.write(chalk.red(` ✗ ${err.message}\n`));
+          const pageRes = upsertPage(db, {
+            domainId, url: page.url, statusCode: page.status,
+            wordCount: page.wordCount, loadMs: page.loadMs,
+            isIndexable: page.isIndexable, clickDepth: page.depth ?? 0,
+            publishedDate: page.publishedDate || null, modifiedDate: page.modifiedDate || null,
+            contentHash: page.contentHash || null, title: page.title || null,
+            metaDesc: page.metaDesc || null, bodyText: page.fullBodyText || page.bodyText || null,
+          });
+          const pageId = pageRes?.id;
+
+          upsertTechnical(db, { pageId, hasCanonical: page.hasCanonical, hasOgTags: page.hasOgTags, hasSchema: page.hasSchema, hasRobots: page.hasRobots });
+          insertHeadings(db, pageId, page.headings);
+          insertLinks(db, pageId, page.links);
+          if (page.parsedSchemas?.length) insertPageSchemas(db, pageId, page.parsedSchemas);
+
+          if (doExtract) {
+            process.stdout.write(chalk.gray(`  ${tag} [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 60)} → extracting...`));
+            try {
+              const extractFn = await getExtractPage();
+              const extraction = await extractFn(page);
+              insertExtraction(db, { pageId, data: extraction });
+              insertKeywords(db, pageId, extraction.keywords);
+              process.stdout.write(chalk.green(` ✓\n`));
+              extracted++;
+            } catch (err) {
+              process.stdout.write(chalk.red(` ✗ ${err.message}\n`));
+              failed++;
+            }
+          } else {
+            process.stdout.write(chalk.gray(`  ${tag} [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 65)} ✓\n`));
+          }
+          pageCount++;
+        } catch (pageErr) {
+          console.log(chalk.yellow(`  ${tag} ⚠  Skipped ${page.url?.slice(0, 60) || 'unknown'}: ${pageErr.message}`));
           failed++;
         }
-      } else {
-        process.stdout.write(chalk.gray(`  ${tag} [${pageCount + 1}] d${page.depth ?? 0} ${page.url.slice(0, 65)} ✓\n`));
       }
-      pageCount++;
+    } catch (crawlErr) {
+      console.log(chalk.yellow(`\n  ⚠  Crawl stopped early: ${crawlErr.message}`));
+      if (pageCount === 0) {
+        console.log(chalk.red(`  ✗ Could not reach ${domain} — check the URL and try again.\n`));
+        try { unlinkSync(configPath); } catch { /* fine */ }
+        return;
+      }
+      console.log(chalk.dim(`  → Continuing with ${pageCount} pages already captured...\n`));
     }
 
     const crawlSec = ((Date.now() - scanStart) / 1000).toFixed(1);

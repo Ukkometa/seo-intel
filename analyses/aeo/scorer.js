@@ -123,7 +123,7 @@ function answerDensityScore(bodyText, wordCount) {
 }
 
 // ── Q&A proximity ──────────────────────────────────────────────────────────
-function qaProximityScore(headings, bodyText) {
+function qaProximityScore(headings, bodyText, schemaTypes) {
   if (!headings.length || !bodyText) return 0;
 
   const questionHeadings = headings.filter(h =>
@@ -138,8 +138,8 @@ function qaProximityScore(headings, bodyText) {
   const qRatio = questionHeadings.length / headings.filter(h => h.level >= 2).length;
   score += Math.min(qRatio * 60, 40);
 
-  // FAQ schema present? Huge bonus
-  score += 30;
+  // FAQ schema present? Huge bonus — only award if schema actually exists
+  if (Array.isArray(schemaTypes) && schemaTypes.includes('FAQPage')) score += 30;
 
   // Heading density (one H2/H3 per ~300 words is ideal)
   const h2h3Count = headings.filter(h => h.level >= 2 && h.level <= 3).length;
@@ -222,7 +222,7 @@ export function scorePage(page, headings, entities, schemaTypes, schemas, search
     entity_authority:   entityAuthorityScore(entities, headings, wordCount),
     structured_claims:  structuredClaimsScore(bodyText, headings),
     answer_density:     answerDensityScore(bodyText, wordCount),
-    qa_proximity:       qaProximityScore(headings, bodyText),
+    qa_proximity:       qaProximityScore(headings, bodyText, schemaTypes),
     freshness:          freshnessScore(page, schemas),
     schema_coverage:    schemaCoverageScore(schemaTypes),
   };

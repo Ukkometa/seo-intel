@@ -76,6 +76,9 @@ export function getTechnicalDataset(db, project) {
       p.word_count,
       p.click_depth,
       p.is_indexable,
+      p.title,
+      p.published_date,
+      p.modified_date,
       d.domain,
       d.role,
       COALESCE(e.meta_desc, '') AS meta_desc,
@@ -86,6 +89,17 @@ export function getTechnicalDataset(db, project) {
       COALESCE((SELECT COUNT(*) FROM page_schemas ps WHERE ps.page_id = p.id), 0) AS schema_count,
       COALESCE((SELECT COUNT(*) FROM page_schemas ps WHERE ps.page_id = p.id AND LOWER(ps.schema_type) = 'breadcrumblist'), 0) AS breadcrumb_count,
       COALESCE((SELECT COUNT(*) FROM headings h WHERE h.page_id = p.id AND h.level = 1), 0) AS h1_count,
+      COALESCE((SELECT COUNT(*) FROM headings h WHERE h.page_id = p.id AND h.level = 1), 0) > 1 AS has_multiple_h1,
+      COALESCE((SELECT COUNT(*) FROM page_schemas ps WHERE ps.page_id = p.id AND LOWER(ps.schema_type) IN ('faqpage', 'faq')), 0) AS faq_schema_count,
+      COALESCE((SELECT COUNT(*) FROM page_schemas ps WHERE ps.page_id = p.id AND LOWER(ps.schema_type) = 'howto'), 0) AS howto_schema_count,
+      COALESCE((
+        SELECT COUNT(*) FROM headings h
+        WHERE h.page_id = p.id AND h.level IN (2, 3)
+          AND (h.text LIKE 'what %' OR h.text LIKE 'how %' OR h.text LIKE 'why %'
+            OR h.text LIKE 'when %' OR h.text LIKE 'which %' OR h.text LIKE 'can %'
+            OR h.text LIKE 'does %' OR h.text LIKE 'is %' OR h.text LIKE 'are %'
+            OR h.text LIKE '%?')
+      ), 0) AS question_heading_count,
       COALESCE((
         SELECT COUNT(*)
         FROM links l

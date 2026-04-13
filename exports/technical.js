@@ -176,5 +176,133 @@ export function buildTechnicalActions(db, project) {
     }));
   }
 
+  // ── Title length issues ──────────────────────────────────────────────────
+  const titleTooLong = rows.filter(r =>
+    r.title && r.title.length > 65 && Number(r.status_code) < 400 && r.is_indexable
+  );
+  if (titleTooLong.length) {
+    actions.push(makeAction({
+      id: 'technical-title-too-long',
+      type: 'improve',
+      priority: inferPriorityFromCount(titleTooLong.length, { critical: 20, high: 8, medium: 3 }),
+      area: 'content',
+      title: `Shorten page titles on ${titleTooLong.length} pages exceeding 65 characters`,
+      why: 'Titles over 65 characters are truncated in SERPs, hiding your key message and reducing CTR.',
+      evidence: collectTop(titleTooLong.map(r => `${r.url} (${r.title.length} chars)`), 8),
+      implementationHints: [
+        'Keep titles under 60–65 characters to avoid SERP truncation.',
+        'Lead with the primary keyword and brand separator at the end.',
+      ],
+    }));
+  }
+
+  const titleTooShort = rows.filter(r =>
+    r.title && r.title.length < 30 && Number(r.status_code) < 400 && r.is_indexable
+  );
+  if (titleTooShort.length) {
+    actions.push(makeAction({
+      id: 'technical-title-too-short',
+      type: 'improve',
+      priority: inferPriorityFromCount(titleTooShort.length, { critical: 15, high: 6, medium: 2 }),
+      area: 'content',
+      title: `Expand thin page titles on ${titleTooShort.length} pages under 30 characters`,
+      why: 'Very short titles waste valuable SERP real estate and under-signal page relevance to search engines.',
+      evidence: collectTop(titleTooShort.map(r => `${r.url} ("${r.title}")`), 8),
+      implementationHints: [
+        'Include the primary keyword, secondary modifier, and brand in the title.',
+        'Target 50–60 characters for maximum SERP visibility.',
+      ],
+    }));
+  }
+
+  // ── Missing date metadata ────────────────────────────────────────────────
+  const missingDates = rows.filter(r =>
+    !r.published_date && !r.modified_date &&
+    (r.word_count || 0) >= 500 &&
+    Number(r.status_code) < 400 && r.is_indexable
+  );
+  if (missingDates.length) {
+    actions.push(makeAction({
+      id: 'technical-missing-dates',
+      type: 'improve',
+      priority: inferPriorityFromCount(missingDates.length, { critical: 20, high: 8, medium: 3 }),
+      area: 'schema',
+      title: `Add publish/modified dates to ${missingDates.length} content pages`,
+      why: 'Date metadata in schema and HTML signals freshness to AI models and search engines, boosting citability and freshness scoring.',
+      evidence: collectTop(missingDates.map(r => `${r.url} (${r.word_count} words)`), 8),
+      implementationHints: [
+        'Add datePublished and dateModified in Article/BlogPosting/NewsArticle schema JSON-LD.',
+        'Include <time datetime="..."> or meta date tags in the HTML head.',
+        'Keep dateModified updated on meaningful content revisions.',
+      ],
+    }));
+  }
+
+  // ── FAQ content without FAQPage schema ──────────────────────────────────
+  const faqContentNoSchema = rows.filter(r =>
+    r.question_heading_count >= 3 && !r.faq_schema_count &&
+    Number(r.status_code) < 400 && r.is_indexable
+  );
+  if (faqContentNoSchema.length) {
+    actions.push(makeAction({
+      id: 'technical-faq-content-no-schema',
+      type: 'add_schema',
+      priority: inferPriorityFromCount(faqContentNoSchema.length, { critical: 10, high: 4, medium: 2 }),
+      area: 'schema',
+      title: `Add FAQPage schema to ${faqContentNoSchema.length} pages with Q&A content`,
+      why: 'Pages with multiple question headings but no FAQPage schema miss FAQ rich results and lose AI citability score.',
+      evidence: collectTop(faqContentNoSchema.map(r => `${r.url} (${r.question_heading_count} question headings)`), 8),
+      implementationHints: [
+        'Wrap each question heading + answer paragraph in FAQPage JSON-LD with Question/Answer entities.',
+        'Keep answers under 300 words each — Google truncates longer ones in rich results.',
+      ],
+    }));
+  }
+
+  // ── HowTo content without HowTo schema ──────────────────────────────────
+  const howtoContentNoSchema = rows.filter(r => {
+    const title = String(r.title || '').toLowerCase();
+    const h1 = String(r.h1 || '').toLowerCase();
+    const hasHowToSignal = /\bhow to\b|\bstep[- ]by[- ]step\b|\bsetup guide\b|\binstall guide\b/.test(title) ||
+                           /\bhow to\b|\bstep[- ]by[- ]step\b|\bsetup guide\b|\binstall guide\b/.test(h1);
+    return hasHowToSignal && !r.howto_schema_count &&
+      Number(r.status_code) < 400 && r.is_indexable;
+  });
+  if (howtoContentNoSchema.length) {
+    actions.push(makeAction({
+      id: 'technical-howto-content-no-schema',
+      type: 'add_schema',
+      priority: inferPriorityFromCount(howtoContentNoSchema.length, { critical: 8, high: 3, medium: 1 }),
+      area: 'schema',
+      title: `Add HowTo schema to ${howtoContentNoSchema.length} step-by-step guide pages`,
+      why: 'How-to guides without HowTo schema miss rich results and rank lower for procedural queries.',
+      evidence: collectTop(howtoContentNoSchema.map(r => `${r.url}`), 8),
+      implementationHints: [
+        'Wrap numbered steps in HowTo JSON-LD with HowToStep entities.',
+        'Include tool, supply, and time/cost fields where applicable.',
+      ],
+    }));
+  }
+
+  // ── Multiple H1 headings ─────────────────────────────────────────────────
+  const multipleH1 = rows.filter(r =>
+    r.has_multiple_h1 && Number(r.status_code) < 400 && r.is_indexable
+  );
+  if (multipleH1.length) {
+    actions.push(makeAction({
+      id: 'technical-multiple-h1',
+      type: 'fix',
+      priority: inferPriorityFromCount(multipleH1.length, { critical: 15, high: 6, medium: 2 }),
+      area: 'content',
+      title: `Fix multiple H1 headings on ${multipleH1.length} pages`,
+      why: 'Multiple H1s dilute topical focus and create ambiguity about the primary page topic for search engines.',
+      evidence: collectTop(multipleH1.map(r => r.url), 10),
+      implementationHints: [
+        'Keep exactly one H1 that matches the page\'s primary keyword intent.',
+        'Demote secondary H1s to H2 or H3 as appropriate.',
+      ],
+    }));
+  }
+
   return sortActions(actions);
 }

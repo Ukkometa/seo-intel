@@ -43,7 +43,7 @@ function cardExportHtml(section, project) {
  */
 export function gatherProjectData(db, project, config) {
   const targetDomain = config.target.domain;
-  const competitorDomains = config.competitors.map(c => c.domain);
+  const competitorDomains = (config.competitors || []).map(c => c.domain);
   const allDomains = [targetDomain, ...competitorDomains];
 
   // Domain architecture needs the raw owned domains, so gather BEFORE merge
@@ -179,9 +179,18 @@ export function generateHtmlDashboard(db, project, config) {
  * @returns {string} Path to generated HTML file
  */
 export function generateMultiDashboard(db, configs) {
-  const allProjectData = configs.map(config =>
-    gatherProjectData(db, config.project, config)
-  );
+  const allProjectData = configs.flatMap(config => {
+    try {
+      return [gatherProjectData(db, config.project, config)];
+    } catch (err) {
+      console.error(`[dashboard] Error gathering data for project "${config.project}":`, err.message);
+      return [];
+    }
+  });
+
+  if (!allProjectData.length) {
+    throw new Error('No project data could be gathered — all projects failed.');
+  }
 
   const html = buildMultiHtmlTemplate(allProjectData);
   const outPath = join(__dirname, 'all-projects-dashboard.html');

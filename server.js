@@ -200,10 +200,15 @@ async function handleRequest(req, res) {
       // Load all configs that have crawl data
       const activeConfigs = [];
       for (const file of configFiles) {
-        const config = JSON.parse(readFileSync(join(configDir, file), 'utf8'));
-        const project = file.replace('.json', '');
-        const pageCount = db.prepare('SELECT COUNT(*) as c FROM pages p JOIN domains d ON d.id=p.domain_id WHERE d.project=?').get(project)?.c || 0;
-        if (pageCount > 0) activeConfigs.push(config);
+        try {
+          const config = JSON.parse(readFileSync(join(configDir, file), 'utf8'));
+          // Use config.project (the authoritative slug) with filename as fallback
+          const project = config.project || file.replace('.json', '');
+          const pageCount = db.prepare('SELECT COUNT(*) as c FROM pages p JOIN domains d ON d.id=p.domain_id WHERE d.project=?').get(project)?.c || 0;
+          if (pageCount > 0) activeConfigs.push({ ...config, project });
+        } catch (err) {
+          console.error(`[dashboard] Skipping malformed config ${file}:`, err.message);
+        }
       }
 
       if (!activeConfigs.length) {

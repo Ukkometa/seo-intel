@@ -73,13 +73,13 @@ function resolveExtractionRuntime(config) {
   const norm = h => String(h || '').trim().replace(/\/+$/, '');
 
   const candidates = [
-    { host: norm(primaryUrl), model: String(primaryModel).trim() || 'gemma4:e4b' },
+    { host: norm(primaryUrl), model: String(primaryModel).trim() || 'gemma4:e4b', type: 'ollama' },
   ];
 
   // Legacy single fallback — always use project-selected model, not OLLAMA_FALLBACK_MODEL
   const fallbackUrl = norm(process.env.OLLAMA_FALLBACK_URL || '');
   if (fallbackUrl && !candidates.some(c => c.host === fallbackUrl)) {
-    candidates.push({ host: fallbackUrl, model: String(primaryModel).trim() || 'gemma4:e4b' });
+    candidates.push({ host: fallbackUrl, model: String(primaryModel).trim() || 'gemma4:e4b', type: 'ollama' });
   }
 
   // OLLAMA_HOSTS — comma-separated LAN hosts from setup wizard
@@ -87,13 +87,22 @@ function resolveExtractionRuntime(config) {
     for (const h of process.env.OLLAMA_HOSTS.split(',')) {
       const host = norm(h);
       if (host && !candidates.some(c => c.host === host)) {
-        candidates.push({ host, model: String(primaryModel).trim() || 'gemma4:e4b' });
+        candidates.push({ host, model: String(primaryModel).trim() || 'gemma4:e4b', type: 'ollama' });
       }
     }
   }
 
   if (!candidates.some(candidate => candidate.host === localhost)) {
-    candidates.push({ host: localhost, model: String(primaryModel).trim() || 'gemma4:e4b' });
+    candidates.push({ host: localhost, model: String(primaryModel).trim() || 'gemma4:e4b', type: 'ollama' });
+  }
+
+  // LM Studio — added if LMSTUDIO_URL or LMSTUDIO_MODEL is set
+  const lmStudioUrl = norm(process.env.LMSTUDIO_URL || '');
+  const lmStudioModel = String(process.env.LMSTUDIO_MODEL || '').trim();
+  if (lmStudioUrl && !candidates.some(c => c.host === lmStudioUrl)) {
+    candidates.push({ host: lmStudioUrl, model: lmStudioModel, type: 'lmstudio' });
+  } else if (!lmStudioUrl && lmStudioModel && !candidates.some(c => c.host === 'http://localhost:1234')) {
+    candidates.push({ host: 'http://localhost:1234', model: lmStudioModel, type: 'lmstudio' });
   }
 
   const seen = new Set();
@@ -115,33 +124,49 @@ function applyExtractionRuntimeConfig(config) {
 // ── AI AVAILABILITY PREFLIGHT ────────────────────────────────────────────
 /**
  * Check if any AI extraction backend is reachable.
- * Tries: primary Ollama → fallback Ollama → returns false.
+ * Tries: primary Ollama → fallback Ollama → LM Studio → returns false.
  * Fast: 2s timeout per host, runs sequentially.
  */
 async function checkOllamaAvailability(config) {
   const candidates = resolveExtractionRuntime(config);
-  let sawReachableHost = false;
+  let sawOllamaHostNoModel = false;
 
   for (const candidate of candidates) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${candidate.host}/api/tags`, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const data = await res.json();
-        const models = (data.models || []).map(m => m.name);
-        sawReachableHost = true;
-        const hasModel = models.some(m => m && m.split(':')[0] === candidate.model.split(':')[0]);
-        if (hasModel) {
-          return true; // Ollama reachable + model available
+
+      if (candidate.type === 'lmstudio') {
+        // LM Studio: OpenAI-compatible models endpoint
+        const res = await fetch(`${candidate.host}/api/v1/models`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json().catch(() => ({ data: [] }));
+          const models = (data.data || []).map(m => m.id).filter(Boolean);
+          if (!candidate.model || models.some(id => id === candidate.model || id.endsWith('/' + candidate.model))) {
+            console.log(chalk.dim(`  LM Studio: ${candidate.host} ✓ (${models[0] || 'model loaded'})`));
+            return true;
+          }
+          console.log(chalk.yellow(`  ⚠️  LM Studio reachable but model "${candidate.model}" not loaded`));
+          console.log(chalk.dim(`  Loaded models: ${models.join(', ') || 'none'}`));
+        }
+      } else {
+        // Ollama
+        const res = await fetch(`${candidate.host}/api/tags`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json();
+          const models = (data.models || []).map(m => m.name);
+          sawOllamaHostNoModel = true;
+          const hasModel = models.some(m => m && m.split(':')[0] === candidate.model.split(':')[0]);
+          if (hasModel) return true;
         }
       }
     } catch { /* host unreachable, try next */ }
   }
 
-  if (sawReachableHost) {
-    const primary = candidates[0];
+  if (sawOllamaHostNoModel) {
+    const primary = candidates.find(c => c.type !== 'lmstudio') || candidates[0];
     console.log(chalk.yellow(`  ⚠️  Ollama is reachable but model "${primary?.model || 'gemma4:e4b'}" was not found on any live host`));
     console.log(chalk.dim(`  Run: ollama pull ${primary?.model || 'gemma4:e4b'}`));
   }
@@ -4780,7 +4805,7 @@ program
   .option('--pages <n>', 'Max pages to crawl', '100')
   .option('--no-ai', 'Skip AI-enriched export (deterministic only)')
   .option('--model <name>', 'Model for analysis + AI export (gemini, claude, gpt)', 'gemini')
-  .option('--no-stealth', 'Disable stealth browser mode')
+  .option('--stealth', 'Enable stealth browser mode (Playwright) for JS-heavy sites')
   .action(async (domainInput, opts) => {
     if (!requirePro('scan')) return;
 
@@ -4788,7 +4813,7 @@ program
     const domain = domainInput.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
     const projectSlug = '_scan-' + domain.replace(/[^a-z0-9]/gi, '-').toLowerCase();
     const siteUrl = defaultSiteUrl(domain);
-    const useStealth = opts.stealth !== false;
+    const useStealth = opts.stealth === true;
     const useAi = opts.ai !== false;
     const maxPages = Math.min(parseInt(opts.pages) || 100, capPages(9999));
 

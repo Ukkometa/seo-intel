@@ -2,6 +2,7 @@ import fetch from 'node-fetch';
 
 const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 const DEFAULT_OLLAMA_MODEL = 'gemma4:e4b';
+const DEFAULT_LMSTUDIO_URL = 'http://localhost:1234';
 const OLLAMA_CTX = parseInt(process.env.OLLAMA_CTX || '8192', 10);
 const OLLAMA_TIMEOUT_MS = parseInt(process.env.OLLAMA_TIMEOUT_MS || '60000', 10); // BUG-008: was 5000ms, too short for slow machines
 const OLLAMA_PREFLIGHT_TIMEOUT_MS = parseInt(process.env.OLLAMA_PREFLIGHT_TIMEOUT_MS || '2500', 10);
@@ -20,6 +21,86 @@ function modelMatches(available, target) {
   return available.split(':')[0] === target.split(':')[0];
 }
 
+// ── LM Studio support (OpenAI-compatible API) ──────────────────────────────
+
+/**
+ * Ping an LM Studio host. Uses GET /api/v1/models instead of Ollama's /api/tags.
+ */
+export async function pingLmStudioHost(host, model, timeoutMs = OLLAMA_PREFLIGHT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
+    if (!res.ok) {
+      return { host, model, reachable: false, modelAvailable: false, type: 'lmstudio',
+        error: `HTTP ${res.status} ${res.statusText}`.trim() };
+    }
+    const data = await res.json().catch(() => ({ data: [] }));
+    const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
+    const modelAvailable = !model || models.some(id => id === model || id.endsWith('/' + model));
+
+    return { host, model, reachable: true, modelAvailable, type: 'lmstudio',
+      error: modelAvailable ? null : `model ${model} not loaded in LM Studio` };
+  } catch (err) {
+    const message = err?.name === 'AbortError'
+      ? `timeout after ${timeoutMs}ms`
+      : (err?.message || 'unreachable');
+    return { host, model, reachable: false, modelAvailable: false, type: 'lmstudio', error: message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Call LM Studio chat completions API (OpenAI-compatible).
+ */
+async function callLmStudio(route, prompt) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${route.host}/api/v1/chat`, {
+      signal: controller.signal,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: route.model,
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: 1200,
+        stream: false,
+      }),
+    });
+
+    clearTimeout(timeout);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 300)}` : ''}`);
+    }
+
+    const data = await res.json();
+    if (data?.error) throw new Error(String(data.error?.message || data.error));
+
+    const content = data?.choices?.[0]?.message?.content || '';
+    if (!content.trim()) throw new Error('Empty response from LM Studio');
+
+    const stripped = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    const jsonText = extractLastJsonObject(stripped);
+    if (!jsonText) {
+      const repaired = repairJson(stripped);
+      if (repaired) return { parsed: repaired, source: route.label + '+repaired' };
+      throw new Error(`No JSON in LM Studio response (len=${stripped.length})`);
+    }
+    const parsed = parseJsonSafe(jsonText);
+    if (!parsed) throw new Error(`JSON parse failed (len=${jsonText.length})`);
+    return { parsed, source: route.label };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function getConfiguredOllamaRoutes() {
   const primaryUrl = normalizeHost(process.env.OLLAMA_URL || DEFAULT_OLLAMA_URL) || DEFAULT_OLLAMA_URL;
   const primaryModel = String(process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL).trim() || DEFAULT_OLLAMA_MODEL;
@@ -30,11 +111,11 @@ function getConfiguredOllamaRoutes() {
   const fallbackModel = primaryModel;
 
   const candidates = [
-    { label: 'primary', host: primaryUrl, model: primaryModel },
+    { label: 'primary', host: primaryUrl, model: primaryModel, type: 'ollama' },
   ];
 
   if (fallbackUrl && !candidates.some(r => r.host === normalizeHost(fallbackUrl))) {
-    candidates.push({ label: 'fallback', host: fallbackUrl, model: fallbackModel });
+    candidates.push({ label: 'fallback', host: fallbackUrl, model: fallbackModel, type: 'ollama' });
   }
 
   // Support OLLAMA_HOSTS — comma-separated list of additional LAN Ollama hosts
@@ -42,13 +123,23 @@ function getConfiguredOllamaRoutes() {
     for (const h of process.env.OLLAMA_HOSTS.split(',')) {
       const host = normalizeHost(h);
       if (host && !candidates.some(r => r.host === host)) {
-        candidates.push({ label: 'lan', host, model: primaryModel });
+        candidates.push({ label: 'lan', host, model: primaryModel, type: 'ollama' });
       }
     }
   }
 
+  // LM Studio support — add if LMSTUDIO_URL is set or default port 1234 is available
+  const lmStudioUrl = normalizeHost(process.env.LMSTUDIO_URL || '');
+  const lmStudioModel = String(process.env.LMSTUDIO_MODEL || '').trim();
+  if (lmStudioUrl && !candidates.some(r => r.host === lmStudioUrl)) {
+    candidates.push({ label: 'lmstudio', host: lmStudioUrl, model: lmStudioModel, type: 'lmstudio' });
+  } else if (!lmStudioUrl && lmStudioModel) {
+    // Model set but no URL — assume default LM Studio port
+    candidates.push({ label: 'lmstudio', host: DEFAULT_LMSTUDIO_URL, model: lmStudioModel, type: 'lmstudio' });
+  }
+
   if (!candidates.some(route => route.host === LOCALHOST_OLLAMA_URL)) {
-    candidates.push({ label: 'localhost', host: LOCALHOST_OLLAMA_URL, model: primaryModel });
+    candidates.push({ label: 'localhost', host: LOCALHOST_OLLAMA_URL, model: primaryModel, type: 'ollama' });
   }
 
   const seen = new Set();
@@ -117,7 +208,9 @@ async function ensureRuntimeHostState() {
 
   console.log('[extractor] preflight:');
   for (const route of routes) {
-    const status = await pingOllamaHost(route.host, route.model);
+    const status = route.type === 'lmstudio'
+      ? await pingLmStudioHost(route.host, route.model)
+      : await pingOllamaHost(route.host, route.model);
     console.log(formatPreflightStatus(status));
     if (status.reachable && status.modelAvailable) {
       activeRoutes.push({ ...route, failures: 0, removed: false });
@@ -324,7 +417,9 @@ JSON output:`;
     if (route.removed) continue;
 
     try {
-      const result = await callOllama(route, prompt);
+      const result = route.type === 'lmstudio'
+        ? await callLmStudio(route, prompt)
+        : await callOllama(route, prompt);
       parsed = result.parsed;
       source = result.source;
       route.failures = 0;

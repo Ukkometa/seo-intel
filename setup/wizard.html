@@ -1344,7 +1344,7 @@ input::placeholder {
     <!-- Ollama Hosts -->
     <div id="ollamaHostsPanel" style="margin-bottom:16px; padding:12px 14px; background:var(--bg-card); border:1px solid var(--border-card); border-radius:var(--radius);">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-        <span style="font-size:0.72rem; font-weight:600; color:var(--text-muted); letter-spacing:0.04em; text-transform:uppercase;">Ollama Hosts</span>
+        <span style="font-size:0.72rem; font-weight:600; color:var(--text-muted); letter-spacing:0.04em; text-transform:uppercase;">Extraction Hosts</span>
         <button class="btn btn-sm" onclick="addOllamaHost()" style="padding:3px 8px; font-size:0.6rem;"><i class="fa-solid fa-plus"></i> Add LAN Host</button>
       </div>
       <div id="ollamaHostList" style="display:flex; flex-direction:column; gap:6px;">
@@ -1359,14 +1359,14 @@ input::placeholder {
         <p id="pingResult" style="font-size:0.6rem; color:var(--text-muted); margin-top:4px;"></p>
       </div>
       <p style="font-size:0.58rem; color:var(--text-muted); margin-top:6px; line-height:1.4;">
-        Run Ollama on any machine in your network. SEO Intel auto-detects localhost and falls back through configured hosts.
+        Ollama (port 11434) or LM Studio (port 1234) on any machine. SEO Intel auto-detects both and falls back through configured hosts.
       </p>
     </div>
 
     <div class="model-columns">
       <div class="model-section" id="extractionSection">
         <h3><i class="fa-solid fa-robot"></i> Extraction Tier</h3>
-        <p class="section-note">Local Ollama model for structured data extraction during crawl</p>
+        <p class="section-note">Local model (Ollama or LM Studio) for structured data extraction during crawl</p>
         <div id="extractionModels">
           <!-- Populated by JS -->
         </div>
@@ -1399,7 +1399,7 @@ input::placeholder {
       </div>
       <div class="model-section" id="analysisSection">
         <h3><i class="fa-solid fa-brain"></i> Analysis Tier</h3>
-        <p class="section-note">Local Ollama model for competitive gap analysis (needs more VRAM than extraction)</p>
+        <p class="section-note">Local or cloud model for competitive gap analysis (needs more VRAM than extraction)</p>
         <div id="analysisModels">
           <!-- Populated by JS -->
         </div>
@@ -2245,13 +2245,15 @@ input::placeholder {
     list.innerHTML = allHosts.map(h => {
       const hostname = h.mode === 'local' ? 'localhost' : new URL(h.host).hostname;
       const port = new URL(h.host).port || '11434';
+      const isLmStudio = h.mode === 'lmstudio' || port === '1234';
       const dot = h.reachable ? 'color:var(--color-success)' : 'color:var(--color-danger); opacity:0.5';
       const status = h.reachable ? `${h.models.length} model(s)` : 'unreachable';
+      const typeLabel = isLmStudio ? '<span style="font-size:0.5rem; padding:1px 4px; border-radius:3px; background:rgba(180,160,255,0.12); color:#b4a0ff; margin-left:4px;">LM Studio</span>' : '';
       const active = h.host === state.systemStatus.ollama.host;
       return `
         <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:${active ? 'rgba(142,203,168,0.06)' : 'transparent'}; border:1px solid ${active ? 'rgba(142,203,168,0.15)' : 'var(--border-subtle)'}; border-radius:6px;">
           <i class="fa-solid fa-circle" style="font-size:0.45rem; ${dot}"></i>
-          <span style="font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary);">${hostname}:${port}</span>
+          <span style="font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary);">${hostname}:${port}</span>${typeLabel}
           <span style="font-size:0.6rem; color:var(--text-muted); margin-left:auto;">${status}</span>
           ${active ? '<span style="font-size:0.55rem; padding:1px 6px; border-radius:3px; background:rgba(142,203,168,0.12); color:#8ecba8;">active</span>' : ''}
           ${!h.reachable && h.mode !== 'local' ? `<button class="btn btn-sm" style="padding:1px 5px; font-size:0.5rem;" onclick="removeOllamaHost('${h.host}')"><i class="fa-solid fa-xmark"></i></button>` : ''}
@@ -3368,7 +3370,7 @@ input::placeholder {
       ['Project', slug],
       ['Target Domain', document.getElementById('cfgTargetUrl').value || '-'],
       ['Extraction', state.selectedExtraction || 'none'],
-      ['Analysis', state.selectedAnalysis || 'none'],
+      ['Analysis', (state.selectedAnalysis || 'none').replace(/^cloud:/, '')],
       ['Crawl Mode', state.crawlMode],
       ['Competitor Domains', getListValues('competitorList').length + ' configured'],
       ['Search Console', state.gscUploaded ? 'Connected' : 'Not configured'],

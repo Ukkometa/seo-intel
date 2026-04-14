@@ -1141,13 +1141,16 @@ function getOpenClawToken() {
   return null;
 }
 
-async function callOpenClaw(prompt, model = 'default') {
+async function callOpenClaw(prompt, model = 'openclaw') {
   const token = getOpenClawToken();
   if (!token) throw new Error('OpenClaw token not found');
 
   const timeoutMs = parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.GEMINI_TIMEOUT_MS || '120000', 10);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  // OpenClaw gateway expects 'openclaw' or 'openclaw/<agentId>'
+  const clawModel = (!model || model === 'default') ? 'openclaw' : model;
 
   try {
     const res = await fetch('http://127.0.0.1:18789/v1/chat/completions', {
@@ -1158,7 +1161,7 @@ async function callOpenClaw(prompt, model = 'default') {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: model === 'openclaw' ? 'default' : model,
+        model: clawModel,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
         max_tokens: 4000,
@@ -1207,7 +1210,7 @@ async function callAnalysisModel(prompt, model = 'gemini') {
     return result.stdout;
   } catch (err) {
     // Gemini CLI failed — try OpenClaw as last resort (if we haven't already)
-    const fallbackModel = process.env.OPENCLAW_ANALYSIS_MODEL || 'default';
+    const fallbackModel = process.env.OPENCLAW_ANALYSIS_MODEL || 'openclaw';
     if (normalizedModel !== 'gemini') {
       // Already tried OpenClaw above, show combined error
       const geminiMsg = err.message || '';

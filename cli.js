@@ -96,13 +96,11 @@ function resolveExtractionRuntime(config) {
     candidates.push({ host: localhost, model: String(primaryModel).trim() || 'gemma4:e4b', type: 'ollama' });
   }
 
-  // LM Studio — added if LMSTUDIO_URL or LMSTUDIO_MODEL is set
-  const lmStudioUrl = norm(process.env.LMSTUDIO_URL || '');
+  // LM Studio — always probe default port; env vars override URL/model
+  const lmStudioUrl = norm(process.env.LMSTUDIO_URL || '') || 'http://localhost:1234';
   const lmStudioModel = String(process.env.LMSTUDIO_MODEL || '').trim();
-  if (lmStudioUrl && !candidates.some(c => c.host === lmStudioUrl)) {
+  if (!candidates.some(c => c.host === lmStudioUrl)) {
     candidates.push({ host: lmStudioUrl, model: lmStudioModel, type: 'lmstudio' });
-  } else if (!lmStudioUrl && lmStudioModel && !candidates.some(c => c.host === 'http://localhost:1234')) {
-    candidates.push({ host: 'http://localhost:1234', model: lmStudioModel, type: 'lmstudio' });
   }
 
   const seen = new Set();
@@ -137,18 +135,35 @@ async function checkOllamaAvailability(config) {
       const timeout = setTimeout(() => controller.abort(), 2000);
 
       if (candidate.type === 'lmstudio') {
-        // LM Studio: OpenAI-compatible models endpoint
-        const res = await fetch(`${candidate.host}/api/v1/models`, { signal: controller.signal });
+        // LM Studio: try OpenAI-compatible models endpoint, then root ping
+        let res;
+        try {
+          res = await fetch(`${candidate.host}/api/v1/models`, { signal: controller.signal });
+        } catch {
+          // /api/v1/models failed — try bare GET (some LM Studio versions)
+          try {
+            const ctrl2 = new AbortController();
+            const t2 = setTimeout(() => ctrl2.abort(), 2000);
+            res = await fetch(`${candidate.host}/v1/models`, { signal: ctrl2.signal });
+            clearTimeout(t2);
+          } catch { /* unreachable */ }
+        }
         clearTimeout(timeout);
-        if (res.ok) {
+        if (res?.ok) {
           const data = await res.json().catch(() => ({ data: [] }));
-          const models = (data.data || []).map(m => m.id).filter(Boolean);
+          const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
+          // Accept any loaded model when no specific model was requested
           if (!candidate.model || models.some(id => id === candidate.model || id.endsWith('/' + candidate.model))) {
             console.log(chalk.dim(`  LM Studio: ${candidate.host} ✓ (${models[0] || 'model loaded'})`));
             return true;
           }
-          console.log(chalk.yellow(`  ⚠️  LM Studio reachable but model "${candidate.model}" not loaded`));
-          console.log(chalk.dim(`  Loaded models: ${models.join(', ') || 'none'}`));
+          if (models.length > 0) {
+            // Model mismatch but something is loaded — still usable
+            console.log(chalk.dim(`  LM Studio: ${candidate.host} ✓ (using ${models[0]})`));
+            return true;
+          }
+          console.log(chalk.yellow(`  ⚠️  LM Studio reachable but no models loaded`));
+          console.log(chalk.dim(`  Load a model in LM Studio to enable extraction`));
         }
       } else {
         // Ollama
@@ -505,9 +520,9 @@ program
     if (opts.extract !== false) {
       const ollamaAvailable = await checkOllamaAvailability(config);
       if (!ollamaAvailable) {
-        console.log(chalk.yellow('\n  ⚠️  No AI extraction available (Ollama unreachable, no API keys configured)'));
+        console.log(chalk.yellow('\n  ⚠️  No AI extraction available (Ollama/LM Studio unreachable, no API keys configured)'));
         console.log(chalk.white('  → Switching to ') + chalk.bold.green('crawl-only mode') + chalk.white(' — raw data will be collected without AI extraction'));
-        console.log(chalk.dim('  Tip: Install Ollama (ollama.com) + run `ollama pull gemma4:e4b` to enable local AI extraction\n'));
+        console.log(chalk.dim('  Tip: Install Ollama (ollama.com) or LM Studio (lmstudio.ai) to enable local AI extraction\n'));
         opts.extract = false;
       }
     }
@@ -1163,15 +1178,18 @@ async function callAnalysisModel(prompt, model = 'gemini') {
   const requestedModel = String(model || 'gemini').trim();
   const normalizedModel = requestedModel.toLowerCase();
 
+  // Non-Gemini model: try OpenClaw first, then fall back to Gemini CLI
   if (normalizedModel !== 'gemini') {
     try {
       return await callOpenClaw(prompt, requestedModel);
     } catch (err) {
-      console.error('[openclaw]', err.message);
-      return null;
+      console.warn(chalk.dim(`  [openclaw] ${err.message}`));
+      console.log(chalk.yellow(`  Falling back to Gemini CLI...\n`));
+      // Fall through to Gemini CLI below
     }
   }
 
+  // Try Gemini CLI
   const timeoutMs = parseInt(process.env.GEMINI_TIMEOUT_MS || '120000', 10);
   try {
     const result = spawnSync('gemini', ['-p', '-'], {
@@ -1188,7 +1206,17 @@ async function callAnalysisModel(prompt, model = 'gemini') {
 
     return result.stdout;
   } catch (err) {
+    // Gemini CLI failed — try OpenClaw as last resort (if we haven't already)
     const fallbackModel = process.env.OPENCLAW_ANALYSIS_MODEL || 'default';
+    if (normalizedModel !== 'gemini') {
+      // Already tried OpenClaw above, show combined error
+      const geminiMsg = err.message || '';
+      console.error(chalk.red('\n  ✗ Analysis failed — no model available\n'));
+      console.error(chalk.dim(`  Gemini: ${geminiMsg}`));
+      console.error(chalk.dim(`  OpenClaw: already tried (${requestedModel})`));
+      console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));
+      return null;
+    }
     try {
       console.warn(`[gemini] ${err.message}`);
       console.log(chalk.yellow(`Gemini CLI unavailable, retrying via OpenClaw (${fallbackModel})...\n`));
@@ -4853,7 +4881,7 @@ program
     let doExtract = true;
     const ollamaAvailable = await checkOllamaAvailability(config);
     if (!ollamaAvailable) {
-      console.log(chalk.yellow('  ⚠  No AI extraction available (Ollama unreachable)'));
+      console.log(chalk.yellow('  ⚠  No AI extraction available (Ollama/LM Studio unreachable)'));
       console.log(chalk.gray('  → Crawl-only mode — body text still captured for analysis'));
       console.log('');
       doExtract = false;

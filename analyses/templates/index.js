@@ -44,7 +44,7 @@ export async function runTemplatesAnalysis(project, opts = {}) {
   if (!config) throw new Error(`Project "${project}" not found. Run: seo-intel setup`);
 
   const targetDomain = config.target.domain;
-  const targetUrl = config.target.url || `https://${targetDomain}`;
+  const targetUrl = (config.target.url || `https://${targetDomain}`).replace(/\/+$/, '');
 
   log(`\n  Target: ${targetDomain}`);
 

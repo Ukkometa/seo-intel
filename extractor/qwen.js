@@ -30,18 +30,29 @@ export async function pingLmStudioHost(host, model, timeoutMs = OLLAMA_PREFLIGHT
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Try both /api/v1/models and /v1/models (LM Studio supports both paths)
+  const endpoints = [`${host}/api/v1/models`, `${host}/v1/models`];
+
   try {
-    const res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
-    if (!res.ok) {
+    let res;
+    for (const endpoint of endpoints) {
+      try {
+        res = await fetch(endpoint, { signal: controller.signal });
+        if (res.ok) break;
+      } catch { /* try next endpoint */ }
+    }
+    if (!res?.ok) {
       return { host, model, reachable: false, modelAvailable: false, type: 'lmstudio',
-        error: `HTTP ${res.status} ${res.statusText}`.trim() };
+        error: res ? `HTTP ${res.status} ${res.statusText}`.trim() : 'unreachable' };
     }
     const data = await res.json().catch(() => ({ data: [] }));
     const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
+    // Accept any loaded model when no specific model was requested
     const modelAvailable = !model || models.some(id => id === model || id.endsWith('/' + model));
 
-    return { host, model, reachable: true, modelAvailable, type: 'lmstudio',
-      error: modelAvailable ? null : `model ${model} not loaded in LM Studio` };
+    return { host, model, reachable: true, modelAvailable: modelAvailable || models.length > 0,
+      loadedModels: models, type: 'lmstudio',
+      error: modelAvailable ? null : (models.length > 0 ? null : 'no models loaded in LM Studio') };
   } catch (err) {
     const message = err?.name === 'AbortError'
       ? `timeout after ${timeoutMs}ms`
@@ -60,7 +71,7 @@ async function callLmStudio(route, prompt) {
   const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${route.host}/api/v1/chat`, {
+    const res = await fetch(`${route.host}/v1/chat/completions`, {
       signal: controller.signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -128,14 +139,11 @@ function getConfiguredOllamaRoutes() {
     }
   }
 
-  // LM Studio support — add if LMSTUDIO_URL is set or default port 1234 is available
-  const lmStudioUrl = normalizeHost(process.env.LMSTUDIO_URL || '');
+  // LM Studio support — always probe default port; env vars override URL/model
+  const lmStudioUrl = normalizeHost(process.env.LMSTUDIO_URL || '') || DEFAULT_LMSTUDIO_URL;
   const lmStudioModel = String(process.env.LMSTUDIO_MODEL || '').trim();
-  if (lmStudioUrl && !candidates.some(r => r.host === lmStudioUrl)) {
+  if (!candidates.some(r => r.host === lmStudioUrl)) {
     candidates.push({ label: 'lmstudio', host: lmStudioUrl, model: lmStudioModel, type: 'lmstudio' });
-  } else if (!lmStudioUrl && lmStudioModel) {
-    // Model set but no URL — assume default LM Studio port
-    candidates.push({ label: 'lmstudio', host: DEFAULT_LMSTUDIO_URL, model: lmStudioModel, type: 'lmstudio' });
   }
 
   if (!candidates.some(route => route.host === LOCALHOST_OLLAMA_URL)) {

@@ -15,6 +15,7 @@ export {
   checkOllamaLocal,
   checkOllamaRemote,
   checkOllamaAuto,
+  checkLmStudio,
   checkPlaywright,
   checkNpmDeps,
   checkEnvFile,

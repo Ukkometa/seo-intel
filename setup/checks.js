@@ -75,7 +75,32 @@ export async function checkOllamaRemote(host) {
   }
 }
 
-// ── Ollama auto-detect (local → custom hosts) ──────────────────────────────
+// ── LM Studio auto-detect ──────────────────────────────────────────────────
+
+export async function checkLmStudio(customUrl) {
+  const host = customUrl || process.env.LMSTUDIO_URL || 'http://localhost:1234';
+  const endpoints = [`${host}/api/v1/models`, `${host}/v1/models`];
+
+  for (const endpoint of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(endpoint, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!res.ok) continue;
+      const data = await res.json().catch(() => ({ data: [] }));
+      const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
+      return { reachable: true, models, host, endpoint };
+    } catch {
+      continue;
+    }
+  }
+
+  return { reachable: false, models: [], host };
+}
+
+// ── Ollama auto-detect (local → custom hosts → LM Studio) ────────────────
 
 export async function checkOllamaAuto(customHosts = []) {
   // 1. Try local
@@ -93,6 +118,12 @@ export async function checkOllamaAuto(customHosts = []) {
     allHosts.push({ host: remote.host, mode: 'remote', models: remote.models, reachable: remote.reachable });
   }
 
+  // 3. Try LM Studio auto-discovery
+  const lmStudio = await checkLmStudio();
+  if (lmStudio.reachable) {
+    allHosts.push({ host: lmStudio.host, mode: 'lmstudio', models: lmStudio.models, reachable: true });
+  }
+
   // Pick best available host (first with models)
   const best = allHosts.find(h => h.reachable && h.models.length > 0);
 
@@ -106,10 +137,11 @@ export async function checkOllamaAuto(customHosts = []) {
       models: allModels,
       installed: local.installed,
       allHosts,
+      lmStudio,
     };
   }
 
-  // 3. Local installed but not running or no models
+  // 4. Local installed but not running or no models
   if (local.installed) {
     return {
       available: false,
@@ -118,6 +150,20 @@ export async function checkOllamaAuto(customHosts = []) {
       models: [],
       installed: true,
       allHosts,
+      lmStudio,
+    };
+  }
+
+  // 5. LM Studio reachable but no models loaded
+  if (lmStudio.reachable) {
+    return {
+      available: false,
+      mode: 'lmstudio-no-models',
+      host: lmStudio.host,
+      models: [],
+      installed: false,
+      allHosts,
+      lmStudio,
     };
   }
 
@@ -128,6 +174,7 @@ export async function checkOllamaAuto(customHosts = []) {
     models: [],
     installed: false,
     allHosts,
+    lmStudio,
   };
 }
 
@@ -418,7 +465,7 @@ export async function fullSystemCheck(options = {}) {
     hasAnalysisKey,
     summary: {
       canCrawl: node.meetsMinimum && playwright.installed,
-      canExtract: ollama.available,
+      canExtract: ollama.available || ollama.lmStudio?.reachable,
       canAnalyze: hasAnalysisKey,
       canGenerateHtml: node.meetsMinimum,
       hasGscData: gsc.hasData,

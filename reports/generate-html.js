@@ -2361,6 +2361,13 @@ function buildHtmlTemplate(data, opts = {}) {
         return;
       }
 
+      // Serve is not a terminal command — the server is already running
+      if (command === 'serve') {
+        appendLine('Server is already running (you are connected to it).', 'stdout');
+        appendLine('To restart: stop the server and run seo-intel serve again.', 'stdout');
+        return;
+      }
+
       if (!isServed) {
         appendLine('', 'cmd');
         appendLine('Not connected to server. Run in your terminal:', 'error');
@@ -2375,7 +2382,12 @@ function buildHtmlTemplate(data, opts = {}) {
       status.style.color = 'var(--color-warning)';
 
       const params = new URLSearchParams({ command });
-      if (proj) params.set('project', proj);
+      // scan uses domain param; all other commands use project
+      if (command === 'scan') {
+        if (proj) params.set('domain', proj);
+      } else {
+        if (proj) params.set('project', proj);
+      }
       if (extra?.scope) params.set('scope', extra.scope);
       if (extra?.stealth) params.set('stealth', 'true');
       if (extra?.format) params.set('format', extra.format);
@@ -2383,7 +2395,7 @@ function buildHtmlTemplate(data, opts = {}) {
       var stealthFlag = extra?.stealth ? ' --stealth' : '';
       appendLine('$ seo-intel ' + command + (proj ? ' ' + proj : '') + stealthFlag + (extra?.scope ? ' --scope ' + extra.scope : ''), 'cmd');
 
-      var isCrawlOrExtract = (command === 'crawl' || command === 'extract');
+      var isCrawlOrExtract = (command === 'crawl' || command === 'extract' || command === 'scan');
 
       eventSource = new EventSource('/api/terminal?' + params.toString());
       eventSource.onmessage = function(e) {

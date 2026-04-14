@@ -421,10 +421,14 @@ export function getSchemasByProject(db, project) {
 }
 
 export function getCompetitorSummary(db, project) {
+  // target + owned rows are merged into a single 'target' row.
+  // This handles the common case where the target domain (e.g. dgents.ai) redirects
+  // to www.dgents.ai, which gets crawled as an owned subdomain — the parallel crawl
+  // race means pages end up under 'owned', leaving the target with 0 pages.
   return db.prepare(`
     SELECT
       d.domain,
-      d.role,
+      CASE WHEN d.role IN ('target', 'owned') THEN 'target' ELSE d.role END AS role,
       COUNT(DISTINCT p.id) as page_count,
       AVG(p.word_count) as avg_word_count,
       GROUP_CONCAT(DISTINCT e.product_type) as product_types,
@@ -434,7 +438,9 @@ export function getCompetitorSummary(db, project) {
     JOIN pages p ON p.domain_id = d.id
     LEFT JOIN extractions e ON e.page_id = p.id
     WHERE d.project = ?
-    GROUP BY d.domain, d.role
+    GROUP BY
+      CASE WHEN d.role IN ('target', 'owned') THEN 'target-group' ELSE d.domain END,
+      CASE WHEN d.role IN ('target', 'owned') THEN 'target' ELSE d.role END
   `).all(project);
 }
 

@@ -1128,7 +1128,7 @@ ${md}`;
     const ALLOWED = ['crawl', 'extract', 'analyze', 'export-actions', 'competitive-actions',
       'suggest-usecases', 'html', 'status', 'brief', 'keywords', 'report', 'guide',
       'schemas', 'headings-audit', 'orphans', 'entities', 'friction', 'shallow', 'decay', 'export', 'templates',
-      'aeo', 'blog-draft', 'gap-intel', 'watch'];
+      'aeo', 'blog-draft', 'gap-intel', 'watch', 'scan'];
 
     if (!command || !ALLOWED.includes(command)) {
       json(res, 400, { error: `Invalid command. Allowed: ${ALLOWED.join(', ')}` });
@@ -1137,8 +1137,20 @@ ${md}`;
 
     // Build args
     const args = ['cli.js', command];
-    if (project && command !== 'status' && command !== 'html') args.push(project);
-    if (params.get('stealth') === 'true') args.push('--stealth');
+
+    // scan takes a domain (not a project slug) — validate and route separately
+    if (command === 'scan') {
+      const domain = (params.get('domain') || project || '').trim();
+      if (!domain || !/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(domain)) {
+        json(res, 400, { error: 'scan requires a valid domain (e.g. dgents.ai)' });
+        return;
+      }
+      args.push(domain);
+      if (params.get('stealth') === 'true') args.push('--stealth');
+    } else {
+      if (project && command !== 'status' && command !== 'html') args.push(project);
+      if (params.get('stealth') === 'true') args.push('--stealth');
+    }
     if (params.get('scope')) args.push('--scope', params.get('scope'));
     if (params.get('format')) args.push('--format', params.get('format'));
     if (params.get('topic')) args.push('--topic', params.get('topic'));
@@ -1179,7 +1191,7 @@ ${md}`;
       res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
     };
 
-    const isLongRunning = ['crawl', 'extract'].includes(command);
+    const isLongRunning = ['crawl', 'extract', 'scan'].includes(command);
 
     send('start', { command, project, args: args.slice(1) });
 

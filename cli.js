@@ -135,21 +135,10 @@ async function checkOllamaAvailability(config) {
       const timeout = setTimeout(() => controller.abort(), 2000);
 
       if (candidate.type === 'lmstudio') {
-        // LM Studio: try OpenAI-compatible models endpoint, then root ping
-        let res;
-        try {
-          res = await fetch(`${candidate.host}/api/v1/models`, { signal: controller.signal });
-        } catch {
-          // /api/v1/models failed — try bare GET (some LM Studio versions)
-          try {
-            const ctrl2 = new AbortController();
-            const t2 = setTimeout(() => ctrl2.abort(), 2000);
-            res = await fetch(`${candidate.host}/v1/models`, { signal: ctrl2.signal });
-            clearTimeout(t2);
-          } catch { /* unreachable */ }
-        }
+        // LM Studio: GET /api/v1/models
+        const res = await fetch(`${candidate.host}/api/v1/models`, { signal: controller.signal });
         clearTimeout(timeout);
-        if (res?.ok) {
+        if (res.ok) {
           const data = await res.json().catch(() => ({ data: [] }));
           const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
           // Accept any loaded model when no specific model was requested

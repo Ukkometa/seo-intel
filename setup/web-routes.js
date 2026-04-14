@@ -312,9 +312,28 @@ async function handlePingOllama(req, res) {
     const host = url.searchParams.get('host');
     if (!host) { jsonResponse(res, { error: 'Missing host param' }, 400); return; }
 
-    const { checkOllamaRemote } = await import('./checks.js');
-    const result = await checkOllamaRemote(host);
-    jsonResponse(res, result);
+    const { checkOllamaRemote, checkLmStudio } = await import('./checks.js');
+
+    // Try Ollama first, then LM Studio if port suggests it or Ollama fails
+    const port = new URL(host).port;
+    if (port === '1234') {
+      // Port 1234 = LM Studio default
+      const lmResult = await checkLmStudio(host);
+      jsonResponse(res, { ...lmResult, host, mode: 'lmstudio' });
+    } else {
+      const result = await checkOllamaRemote(host);
+      if (result.reachable) {
+        jsonResponse(res, result);
+      } else {
+        // Ollama unreachable — try LM Studio as fallback
+        const lmResult = await checkLmStudio(host);
+        if (lmResult.reachable) {
+          jsonResponse(res, { ...lmResult, host, mode: 'lmstudio' });
+        } else {
+          jsonResponse(res, result); // return original Ollama failure
+        }
+      }
+    }
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);
   }

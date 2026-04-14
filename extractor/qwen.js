@@ -30,20 +30,11 @@ export async function pingLmStudioHost(host, model, timeoutMs = OLLAMA_PREFLIGHT
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Try both /api/v1/models and /v1/models (LM Studio supports both paths)
-  const endpoints = [`${host}/api/v1/models`, `${host}/v1/models`];
-
   try {
-    let res;
-    for (const endpoint of endpoints) {
-      try {
-        res = await fetch(endpoint, { signal: controller.signal });
-        if (res.ok) break;
-      } catch { /* try next endpoint */ }
-    }
-    if (!res?.ok) {
+    const res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
+    if (!res.ok) {
       return { host, model, reachable: false, modelAvailable: false, type: 'lmstudio',
-        error: res ? `HTTP ${res.status} ${res.statusText}`.trim() : 'unreachable' };
+        error: `HTTP ${res.status} ${res.statusText}`.trim() };
     }
     const data = await res.json().catch(() => ({ data: [] }));
     const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
@@ -71,7 +62,7 @@ async function callLmStudio(route, prompt) {
   const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${route.host}/v1/chat/completions`, {
+    const res = await fetch(`${route.host}/api/v1/chat`, {
       signal: controller.signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

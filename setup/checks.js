@@ -79,25 +79,20 @@ export async function checkOllamaRemote(host) {
 
 export async function checkLmStudio(customUrl) {
   const host = customUrl || process.env.LMSTUDIO_URL || 'http://localhost:1234';
-  const endpoints = [`${host}/api/v1/models`, `${host}/v1/models`];
 
-  for (const endpoint of endpoints) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(endpoint, { signal: controller.signal });
-      clearTimeout(timeout);
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
+    clearTimeout(timeout);
 
-      if (!res.ok) continue;
-      const data = await res.json().catch(() => ({ data: [] }));
-      const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
-      return { reachable: true, models, host, endpoint };
-    } catch {
-      continue;
-    }
+    if (!res.ok) return { reachable: false, models: [], host };
+    const data = await res.json().catch(() => ({ data: [] }));
+    const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
+    return { reachable: true, models, host };
+  } catch {
+    return { reachable: false, models: [], host };
   }
-
-  return { reachable: false, models: [], host };
 }
 
 // ── Ollama auto-detect (local → custom hosts → LM Studio) ────────────────
@@ -112,15 +107,33 @@ export async function checkOllamaAuto(customHosts = []) {
   }
 
   // 2. Try custom/LAN hosts (check ALL, not just first)
+  //    Detect LM Studio hosts by port (1234) or failed Ollama ping
   for (const host of customHosts) {
     if (host === 'http://localhost:11434') continue; // already checked
-    const remote = await checkOllamaRemote(host);
-    allHosts.push({ host: remote.host, mode: 'remote', models: remote.models, reachable: remote.reachable });
+    let port;
+    try { port = new URL(host).port; } catch { port = ''; }
+
+    if (port === '1234') {
+      // Port 1234 → LM Studio
+      const lm = await checkLmStudio(host);
+      allHosts.push({ host, mode: 'lmstudio', models: lm.models, reachable: lm.reachable });
+    } else {
+      const remote = await checkOllamaRemote(host);
+      if (remote.reachable) {
+        allHosts.push({ host: remote.host, mode: 'remote', models: remote.models, reachable: true });
+      } else {
+        // Ollama failed — try LM Studio as fallback
+        const lm = await checkLmStudio(host);
+        allHosts.push({ host, mode: lm.reachable ? 'lmstudio' : 'remote', models: lm.reachable ? lm.models : [], reachable: lm.reachable });
+      }
+    }
   }
 
-  // 3. Try LM Studio auto-discovery
-  const lmStudio = await checkLmStudio();
-  if (lmStudio.reachable) {
+  // 3. Try LM Studio auto-discovery (localhost + env var)
+  const lmStudioUrl = process.env.LMSTUDIO_URL || 'http://localhost:1234';
+  const alreadyChecked = allHosts.some(h => h.host === lmStudioUrl);
+  const lmStudio = alreadyChecked ? (allHosts.find(h => h.host === lmStudioUrl && h.mode === 'lmstudio') || { reachable: false, models: [] }) : await checkLmStudio();
+  if (!alreadyChecked && lmStudio.reachable) {
     allHosts.push({ host: lmStudio.host, mode: 'lmstudio', models: lmStudio.models, reachable: true });
   }
 

@@ -4830,9 +4830,38 @@ program
     if (!requirePro('scan')) return;
 
     // ── Parse domain ──
-    const domain = domainInput.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
-    const projectSlug = '_scan-' + domain.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const siteUrl = defaultSiteUrl(domain);
+    const domainRaw = domainInput.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+    const projectSlug = '_scan-' + domainRaw.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+
+    // Resolve the actual reachable URL (handles www redirects and bare-domain failures)
+    let domain = domainRaw;
+    let siteUrl = defaultSiteUrl(domain);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const probe = await fetch(siteUrl, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
+      clearTimeout(timer);
+      const finalUrl = new URL(probe.url);
+      if (finalUrl.hostname !== domain) {
+        console.log(chalk.dim(`  Resolved: ${domain} → ${finalUrl.hostname}`));
+        domain = finalUrl.hostname.replace(/^www\./, '') === domainRaw ? domainRaw : finalUrl.hostname;
+        siteUrl = finalUrl.origin;
+      }
+    } catch {
+      // Bare domain unreachable — try www variant
+      const wwwUrl = `https://www.${domainRaw}`;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const probe = await fetch(wwwUrl, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
+        clearTimeout(timer);
+        if (probe.ok || probe.status < 400) {
+          console.log(chalk.dim(`  ${domainRaw} unreachable, using www.${domainRaw}`));
+          siteUrl = wwwUrl;
+          domain = `www.${domainRaw}`;
+        }
+      } catch { /* www also unreachable — proceed with original, crawler will report error */ }
+    }
     const useStealth = opts.stealth === true;
     const useAi = opts.ai !== false;
     const maxPages = Math.min(parseInt(opts.pages) || 100, capPages(9999));

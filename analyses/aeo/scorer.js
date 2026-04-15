@@ -201,6 +201,59 @@ function classifyAiIntent(headings, bodyText, searchIntent) {
   return intents;
 }
 
+// ── Rich Result Probability Predictor ──────────────────────────────────────
+
+/**
+ * Estimate probability of achieving rich results based on page signals.
+ * Returns per-type probability (FAQ, HowTo, Article) and overall best chance.
+ *
+ * @param {object[]} headings
+ * @param {string} bodyText
+ * @param {string[]} schemaTypes - current schema on page
+ * @param {number} wordCount
+ * @returns {object} { faq, howto, article, best: { type, probability } }
+ */
+export function richResultProbability(headings, bodyText, schemaTypes, wordCount) {
+  const text = (bodyText || '').toLowerCase();
+
+  // ── FAQ Rich Result ──
+  const questionHeadings = headings.filter(h => h.level >= 2 && h.level <= 3 && QUESTION_RE.test(h.text));
+  let faq = 0;
+  if (schemaTypes.includes('FAQPage')) faq += 45;
+  if (questionHeadings.length >= 3) faq += 25;
+  else if (questionHeadings.length >= 1) faq += 10;
+  if (wordCount >= 500) faq += 10;
+  if (wordCount >= 1500) faq += 5;
+  const paras = text.split(/\n\s*\n/).filter(p => p.trim()).length;
+  if (paras >= 3 && wordCount / paras < 150) faq += 15;
+  faq = Math.min(faq, 95);
+
+  // ── HowTo Rich Result ──
+  let howto = 0;
+  if (schemaTypes.includes('HowTo')) howto += 45;
+  if (IMPL_RE.test(text)) howto += 20;
+  const steps = (text.match(/(?:^|\n)\s*(?:\d+[.)]\s|step\s+\d)/gm) || []).length;
+  if (steps >= 3) howto += 20;
+  else if (steps >= 1) howto += 8;
+  if (wordCount >= 300) howto += 10;
+  howto = Math.min(howto, 95);
+
+  // ── Article Rich Result ──
+  const articleSchemas = ['Article', 'TechArticle', 'BlogPosting', 'NewsArticle'];
+  let article = 0;
+  if (schemaTypes.some(t => articleSchemas.includes(t))) article += 35;
+  if (wordCount >= 800) article += 20;
+  else if (wordCount >= 400) article += 10;
+  if (headings.filter(h => h.level === 2).length >= 2) article += 15;
+  if (schemaTypes.includes('BreadcrumbList')) article += 10;
+  article = Math.min(article, 95);
+
+  const results = { faq, howto, article };
+  const best = Object.entries(results).sort((a, b) => b[1] - a[1])[0];
+
+  return { ...results, best: { type: best[0], probability: best[1] } };
+}
+
 // ── Main scorer ────────────────────────────────────────────────────────────
 
 /**
@@ -212,7 +265,7 @@ function classifyAiIntent(headings, bodyText, searchIntent) {
  * @param {string[]} schemaTypes - schema type strings present on page
  * @param {object[]} schemas - full page_schemas rows
  * @param {string} searchIntent - from extraction
- * @returns {object} { score, breakdown, aiIntents, tier }
+ * @returns {object} { score, breakdown, aiIntents, tier, richResult }
  */
 export function scorePage(page, headings, entities, schemaTypes, schemas, searchIntent) {
   const bodyText = page.body_text || '';
@@ -242,6 +295,7 @@ export function scorePage(page, headings, entities, schemaTypes, schemas, search
   );
 
   const aiIntents = classifyAiIntent(headings, bodyText, searchIntent);
+  const richResult = richResultProbability(headings, bodyText, schemaTypes, wordCount);
 
   // Tier classification
   let tier;
@@ -250,5 +304,5 @@ export function scorePage(page, headings, entities, schemaTypes, schemas, search
   else if (score >= 35) tier = 'needs_work';
   else tier = 'poor';
 
-  return { score, breakdown, aiIntents, tier };
+  return { score, breakdown, aiIntents, tier, richResult };
 }

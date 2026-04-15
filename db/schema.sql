@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS extractions (
   tech_stack       TEXT,             -- JSON array
   schema_types     TEXT,             -- JSON array (Article, Product, FAQ, etc.)
   search_intent    TEXT,             -- 'Informational' | 'Navigational' | 'Commercial' | 'Transactional'
+  intent_scores    TEXT,             -- JSON object: {"commercial":70,"informational":20,"comparison":10}
   primary_entities TEXT,             -- JSON array of 3-7 core concept strings
   extracted_at     INTEGER NOT NULL
 );

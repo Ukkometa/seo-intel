@@ -25,6 +25,7 @@ export function getDb(dbPath = './seo-intel.db') {
   try { _db.exec('ALTER TABLE pages ADD COLUMN meta_desc TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE pages ADD COLUMN body_text TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE analyses ADD COLUMN technical_gaps TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE extractions ADD COLUMN intent_scores TEXT'); } catch { /* already exists */ }
 
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
@@ -327,14 +328,15 @@ export function insertExtraction(db, { pageId, data }) {
   return db.prepare(`
     INSERT OR REPLACE INTO extractions
       (page_id, title, meta_desc, h1, product_type, pricing_tier, cta_primary,
-       tech_stack, schema_types, search_intent, primary_entities, extracted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       tech_stack, schema_types, search_intent, intent_scores, primary_entities, extracted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     pageId, data.title, data.meta_desc, data.h1,
     data.product_type, data.pricing_tier, data.cta_primary,
     JSON.stringify(data.tech_stack || []),
     JSON.stringify(data.schema_types || []),
     data.search_intent || 'Informational',
+    JSON.stringify(data.intent_scores || {}),
     JSON.stringify(data.primary_entities || []),
     Date.now()
   );

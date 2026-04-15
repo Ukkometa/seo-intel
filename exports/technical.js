@@ -1,5 +1,5 @@
 import { collectTop, inferPriorityFromCount, makeAction, sortActions } from './heuristics.js';
-import { getTechnicalDataset } from './queries.js';
+import { getTechnicalDataset, getKeywordsForSchemaDeficientPages } from './queries.js';
 
 export function buildTechnicalActions(db, project) {
   const rows = getTechnicalDataset(db, project);
@@ -244,6 +244,14 @@ export function buildTechnicalActions(db, project) {
     Number(r.status_code) < 400 && r.is_indexable
   );
   if (faqContentNoSchema.length) {
+    // Enrich with affected keywords to show SERP impact
+    const faqPageIds = faqContentNoSchema.map(r => r.id);
+    const faqKeywords = getKeywordsForSchemaDeficientPages(db, project, faqPageIds);
+    const faqImpact = faqKeywords
+      .filter(k => k.location === 'h2' || k.location === 'h1')
+      .slice(0, 5)
+      .map(k => `"${k.keyword}" on ${k.url.replace(/^https?:\/\/[^/]+/, '')} → low People Also Ask chance without FAQ schema`);
+
     actions.push(makeAction({
       id: 'technical-faq-content-no-schema',
       type: 'add_schema',
@@ -252,6 +260,7 @@ export function buildTechnicalActions(db, project) {
       title: `Add FAQPage schema to ${faqContentNoSchema.length} pages with Q&A content`,
       why: 'Pages with multiple question headings but no FAQPage schema miss FAQ rich results and lose AI citability score.',
       evidence: collectTop(faqContentNoSchema.map(r => `${r.url} (${r.question_heading_count} question headings)`), 8),
+      impact: faqImpact.length ? faqImpact : undefined,
       implementationHints: [
         'Wrap each question heading + answer paragraph in FAQPage JSON-LD with Question/Answer entities.',
         'Keep answers under 300 words each — Google truncates longer ones in rich results.',
@@ -269,6 +278,13 @@ export function buildTechnicalActions(db, project) {
       Number(r.status_code) < 400 && r.is_indexable;
   });
   if (howtoContentNoSchema.length) {
+    const howtoPageIds = howtoContentNoSchema.map(r => r.id);
+    const howtoKeywords = getKeywordsForSchemaDeficientPages(db, project, howtoPageIds);
+    const howtoImpact = howtoKeywords
+      .filter(k => k.location === 'title' || k.location === 'h1')
+      .slice(0, 5)
+      .map(k => `"${k.keyword}" → missing HowTo rich result (step-by-step carousel)`);
+
     actions.push(makeAction({
       id: 'technical-howto-content-no-schema',
       type: 'add_schema',
@@ -277,6 +293,7 @@ export function buildTechnicalActions(db, project) {
       title: `Add HowTo schema to ${howtoContentNoSchema.length} step-by-step guide pages`,
       why: 'How-to guides without HowTo schema miss rich results and rank lower for procedural queries.',
       evidence: collectTop(howtoContentNoSchema.map(r => `${r.url}`), 8),
+      impact: howtoImpact.length ? howtoImpact : undefined,
       implementationHints: [
         'Wrap numbered steps in HowTo JSON-LD with HowToStep entities.',
         'Include tool, supply, and time/cost fields where applicable.',

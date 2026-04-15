@@ -129,6 +129,24 @@ export function getTechnicalDataset(db, project) {
   `).all(project);
 }
 
+/**
+ * Get keywords associated with pages missing a specific schema type.
+ * Used to show "Missing FAQ Schema → Low PAA chance for query X".
+ */
+export function getKeywordsForSchemaDeficientPages(db, project, pageIds) {
+  if (!pageIds.length) return [];
+  const placeholders = pageIds.map(() => '?').join(',');
+  return db.prepare(`
+    SELECT k.keyword, k.location, k.page_id, p.url,
+           e.search_intent
+    FROM keywords k
+    JOIN pages p ON p.id = k.page_id
+    LEFT JOIN extractions e ON e.page_id = p.id
+    WHERE k.page_id IN (${placeholders})
+    ORDER BY k.page_id, k.location
+  `).all(...pageIds);
+}
+
 export function getSchemaCoverage(db, project, vsDomain = null) {
   const params = [project];
   let competitorFilter = '';

@@ -4836,6 +4836,7 @@ program
     // Resolve the actual reachable URL (handles www redirects and bare-domain failures)
     let domain = domainRaw;
     let siteUrl = defaultSiteUrl(domain);
+    let wwwRedirectMissing = false;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8000);
@@ -4857,8 +4858,10 @@ program
         clearTimeout(timer);
         if (probe.ok || probe.status < 400) {
           console.log(chalk.dim(`  ${domainRaw} unreachable, using www.${domainRaw}`));
+          console.log(chalk.yellow(`  ⚠  Missing redirect: ${domainRaw} should 301 to www.${domainRaw}`));
           siteUrl = wwwUrl;
           domain = `www.${domainRaw}`;
+          wwwRedirectMissing = true;
         }
       } catch { /* www also unreachable — proceed with original, crawler will report error */ }
     }
@@ -5048,7 +5051,7 @@ program
 
     // Inline the deterministic markdown builder from server.js
     const { buildScanMarkdown } = await import('./lib/scan-export.js');
-    let md = buildScanMarkdown(dash, projectSlug, domain);
+    let md = buildScanMarkdown(dash, projectSlug, domain, { wwwRedirectMissing, bareDomain: domainRaw });
 
     // AI enrichment
     if (useAi) {

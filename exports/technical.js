@@ -321,5 +321,40 @@ export function buildTechnicalActions(db, project) {
     }));
   }
 
+  // ── Homepage links to external sites (nav leak) ──────────────────────
+  // Flag when homepage has external links in nav-like positions (anchor text
+  // suggests navigation: short text like "Deck", "Docs", "Blog" etc.)
+  const homepage = rows.find(r => {
+    const path = new URL(r.url).pathname;
+    return (path === '/' || path === '') && Number(r.status_code) < 400;
+  });
+  if (homepage) {
+    const navAnchors = ['deck', 'docs', 'blog', 'about', 'home', 'pricing', 'features', 'faq', 'team', 'contact', 'app', 'dashboard', 'whitepaper', 'roadmap', 'litepaper'];
+    const externalNavLinks = db.prepare(`
+      SELECT l.target_url, l.anchor_text
+      FROM links l
+      WHERE l.source_id = ? AND l.is_internal = 0
+        AND LENGTH(l.anchor_text) > 0 AND LENGTH(l.anchor_text) < 20
+    `).all(homepage.id)
+      .filter(l => navAnchors.some(n => l.anchor_text.toLowerCase().includes(n)));
+
+    if (externalNavLinks.length) {
+      actions.push(makeAction({
+        id: 'technical-nav-links-external',
+        type: 'fix',
+        priority: 'high',
+        area: 'structure',
+        title: `${externalNavLinks.length} navigation link(s) on homepage point to external sites`,
+        why: 'Nav-level links to external domains leak PageRank and confuse users expecting to stay on-site. Use internal landing pages or relative paths instead.',
+        evidence: externalNavLinks.map(l => `"${l.anchor_text}" → ${l.target_url}`),
+        implementationHints: [
+          'Replace external nav links with internal pages (e.g. /deck instead of Google Docs link).',
+          'If the content must be external, use a landing page wrapper with canonical.',
+          'Ensure the logo/brand link always points to the homepage.',
+        ],
+      }));
+    }
+  }
+
   return sortActions(actions);
 }

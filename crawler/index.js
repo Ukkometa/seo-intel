@@ -263,6 +263,10 @@ export async function* crawlDomain(startUrl, opts = {}) {
   // ── Sitemap-first: seed queue from sitemap.xml (section-aware) ──
   try {
     const sitemapUrls = await fetchSitemap(startUrl);
+    // Report full sitemap inventory to caller (for DB persistence / audit diff)
+    if (sitemapUrls.length > 0 && typeof opts.onSitemapDiscovered === 'function') {
+      try { await opts.onSitemapDiscovered(sitemapUrls); } catch { /* ignore */ }
+    }
     if (sitemapUrls.length > 0) {
       // Apply section budgets if tiered crawling is enabled
       const budgeted = tiered ? applySectionBudgets(sitemapUrls, maxPages) : sitemapUrls;
@@ -452,9 +456,36 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
   status = res?.status() || 0;
   const loadMs = Date.now() - t0;
 
+  // ── Final URL after redirects ──
+  let finalUrl = null;
+  try { finalUrl = page.url() || null; } catch { /* ignore */ }
+
+  // ── Redirect chain (walk request.redirectedFrom() backwards) ──
+  const redirectChain = [];
+  try {
+    let req = res?.request();
+    const chain = [];
+    while (req) {
+      const prev = req.redirectedFrom?.();
+      if (!prev) break;
+      const prevRes = await prev.response().catch(() => null);
+      chain.push({ url: prev.url(), status: prevRes?.status() ?? null });
+      req = prev;
+    }
+    // chain is in reverse order (closest redirect first); reverse for chronological
+    redirectChain.push(...chain.reverse());
+  } catch { /* ignore */ }
+
+  // ── X-Robots-Tag header ──
+  let xRobotsTag = null;
+  try {
+    const headers = res?.headers?.() || {};
+    xRobotsTag = headers['x-robots-tag'] || null;
+  } catch { /* ignore */ }
+
   // ── Return status for backoff logic (don't silently drop 4xx) ──
   if (status === 429 || status === 503 || status === 403) {
-    return { url, depth, status, loadMs, wordCount: 0, isIndexable: false, title: '', metaDesc: '', headings: [], links: [], bodyText: '', schemaTypes: [], vitals: {}, publishedDate: null, modifiedDate: null, contentHash: null };
+    return { url, depth, status, loadMs, wordCount: 0, isIndexable: false, title: '', metaDesc: '', headings: [], links: [], bodyText: '', schemaTypes: [], vitals: {}, publishedDate: null, modifiedDate: null, contentHash: null, finalUrl, redirectChain, xRobotsTag };
   }
   if (status >= 400) return null;
 
@@ -507,7 +538,9 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
   const wordCount = await page.$eval('body', el => el.innerText.split(/\s+/).filter(Boolean).length).catch(() => 0);
 
   const robotsMeta = await page.$eval('meta[name="robots"]', el => el.content).catch(() => '');
-  const isIndexable = !robotsMeta.toLowerCase().includes('noindex');
+  const metaNoindex = robotsMeta.toLowerCase().includes('noindex');
+  const headerNoindex = (xRobotsTag || '').toLowerCase().includes('noindex');
+  const isIndexable = !(metaNoindex || headerNoindex);
   const hasCanonical = await page.$('link[rel="canonical"]').then(el => !!el).catch(() => false);
   const hasOgTags = await page.$('meta[property^="og:"]').then(el => !!el).catch(() => false);
 
@@ -576,6 +609,7 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
     hasCanonical, hasOgTags,
     hasRobots: !!robotsMeta,
     hasSchema: schemaTypes.length > 0,
+    finalUrl, redirectChain, xRobotsTag,
   };
 }
 

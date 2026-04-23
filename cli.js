@@ -39,6 +39,7 @@ import {
   getCompetitorSummary, getKeywordMatrix, getHeadingStructure,
   getPageHash, getSchemasByProject,
   upsertInsightsFromAnalysis, upsertInsightsFromKeywords,
+  upsertSitemapUrls,
 } from './db/db.js';
 import { generateMultiDashboard } from './reports/generate-html.js';
 import { buildTechnicalActions } from './exports/technical.js';
@@ -567,6 +568,10 @@ program
         stealth: !!opts.stealth,
         tiered: opts.tiered !== false,
         strictHost: !!opts.domain, // BUG-006: enforce exact hostname when --domain is set
+        onSitemapDiscovered: (urls) => {
+          try { upsertSitemapUrls(db, domainId, urls.map(u => u.url), `${site.url}/sitemap.xml`); }
+          catch (e) { console.warn(`[sitemap] inventory save failed: ${e.message}`); }
+        },
       };
 
       for await (const page of crawlDomain(site.url, crawlOpts)) {
@@ -597,6 +602,9 @@ program
           title: page.title || null,
           metaDesc: page.metaDesc || null,
           bodyText: page.fullBodyText || page.bodyText || null,
+          finalUrl: page.finalUrl || null,
+          redirectChain: page.redirectChain || null,
+          xRobotsTag: page.xRobotsTag || null,
         });
         const pageId = pageRes?.id;
 
@@ -1314,7 +1322,12 @@ program
     let pageCount = 0;
     let skipped = 0;
     let blocked = false;
-    for await (const page of crawlDomain(next.url)) {
+    for await (const page of crawlDomain(next.url, {
+      onSitemapDiscovered: (urls) => {
+        try { upsertSitemapUrls(db, domainId, urls.map(u => u.url), `${next.url}/sitemap.xml`); }
+        catch (e) { console.warn(`[sitemap] inventory save failed: ${e.message}`); }
+      },
+    })) {
       // ── Handle blocked pages from backoff system ──
       if (page._blocked) {
         blocked = true;
@@ -1336,6 +1349,9 @@ program
         title: page.title || null,
         metaDesc: page.metaDesc || null,
         bodyText: page.fullBodyText || page.bodyText || null,
+        finalUrl: page.finalUrl || null,
+        redirectChain: page.redirectChain || null,
+        xRobotsTag: page.xRobotsTag || null,
       });
       const pageId = pageRes?.id;
 
@@ -2468,6 +2484,73 @@ program
 
     console.log(chalk.bold.green(`\n✅ Full audit saved: ${outPath}`));
     console.log(chalk.gray('   Feed this to Gemini: "Find the gaps in each heading structure above."\n'));
+  });
+
+// ── TECHNICAL AUDIT (extended-data) ───────────────────────────────────────
+program
+  .command('tech-audit <project>')
+  .description('Technical SEO audit from crawled data (titles, meta, noindex, redirects, sitemap diff)')
+  .option('--domain <domain>', 'Audit a single domain (defaults to all target domains)')
+  .option('--head', 'Also run HEAD checks against sitemap URLs (network-heavy)')
+  .option('--concurrency <n>', 'Parallel HEAD requests when --head is set', '6')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    const { runTechnicalAudit } = await import('./analysis/technical-audit.js');
+    const isJson = opts.format === 'json';
+    const db = getDb();
+
+    const domainRows = opts.domain
+      ? [{ domain: opts.domain }]
+      : db.prepare("SELECT domain FROM domains WHERE project = ? AND role IN ('target','owned')").all(project);
+
+    if (!domainRows.length) {
+      if (isJson) console.log(JSON.stringify({ command: 'tech-audit', project, error: 'no target domains', domains: [] }));
+      else console.log(chalk.yellow(`No target domains found for project ${project}.`));
+      return;
+    }
+
+    const results = [];
+    for (const { domain } of domainRows) {
+      const res = await runTechnicalAudit(db, {
+        project,
+        domain,
+        runSitemapHead: !!opts.head,
+        sitemapConcurrency: parseInt(opts.concurrency) || 6,
+      });
+      results.push({ domain, ...res });
+    }
+
+    if (isJson) {
+      console.log(JSON.stringify({ command: 'tech-audit', project, timestamp: new Date().toISOString(), domains: results }));
+      return;
+    }
+
+    for (const r of results) {
+      console.log(chalk.bold.cyan(`\n🔧 Technical audit — ${r.domain}`));
+      if (r.gated) {
+        console.log(chalk.gray('   (extended-data gate closed — upgrade to unlock technical audits)'));
+        continue;
+      }
+      if (r.error) { console.log(chalk.red(`  ✗ ${r.error}`)); continue; }
+
+      const { stats, findings } = r;
+      const sev = stats.findings_by_severity || {};
+      console.log(chalk.gray(`   ${stats.pages} pages · ${stats.sitemap_urls} sitemap URLs · ${stats.findings_total} findings`));
+      console.log(chalk.gray(`   ${chalk.red(sev.error || 0)} errors · ${chalk.yellow(sev.warn || 0)} warnings · ${chalk.blue(sev.info || 0)} info`));
+      if (stats.sitemap_head) {
+        const sh = stats.sitemap_head;
+        console.log(chalk.gray(`   sitemap HEAD — ${sh.ok} ok · ${sh.redirected} 3xx · ${sh.broken} 4xx/5xx · ${sh.errored} errors`));
+      }
+
+      const order = { error: 0, warn: 1, info: 2 };
+      const sorted = [...findings].sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3));
+      for (const f of sorted.slice(0, 40)) {
+        const icon = f.severity === 'error' ? chalk.red('✗') : f.severity === 'warn' ? chalk.yellow('⚠') : chalk.blue('ℹ');
+        const target = f.url ? f.url.replace(/https?:\/\/[^/]+/, '') : '';
+        console.log(`  ${icon} ${chalk.bold(f.type)} ${chalk.gray(target)} — ${f.details}`);
+      }
+      if (sorted.length > 40) console.log(chalk.gray(`  … +${sorted.length - 40} more`));
+    }
   });
 
 // ── ORPHAN ENTITIES ───────────────────────────────────────────────────────
@@ -4918,7 +5001,13 @@ program
     const tag = chalk.cyan(`[${domain.split('.')[0]}]`);
 
     try {
-      for await (const page of crawlDomain(siteUrl, { maxPages, stealth: useStealth, tiered: true })) {
+      for await (const page of crawlDomain(siteUrl, {
+        maxPages, stealth: useStealth, tiered: true,
+        onSitemapDiscovered: (urls) => {
+          try { upsertSitemapUrls(db, domainId, urls.map(u => u.url), `${siteUrl}/sitemap.xml`); }
+          catch (e) { console.warn(`[sitemap] inventory save failed: ${e.message}`); }
+        },
+      })) {
         if (page._blocked) {
           console.log(chalk.bold.red(`  ${tag} ⛔ BLOCKED: ${page._blockReason}`));
           break;
@@ -4932,6 +5021,7 @@ program
             publishedDate: page.publishedDate || null, modifiedDate: page.modifiedDate || null,
             contentHash: page.contentHash || null, title: page.title || null,
             metaDesc: page.metaDesc || null, bodyText: page.fullBodyText || page.bodyText || null,
+            finalUrl: page.finalUrl || null, redirectChain: page.redirectChain || null, xRobotsTag: page.xRobotsTag || null,
           });
           const pageId = pageRes?.id;
 

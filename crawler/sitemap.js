@@ -101,3 +101,47 @@ function extractTagContent(xml, tagName) {
   }
   return results;
 }
+
+/**
+ * HEAD-check a single URL without following redirects.
+ * Returns { status, location } — location is the Location header when 3XX.
+ * Never throws — errors return { status: 0, error: msg }.
+ */
+export async function headCheck(url, { timeoutMs = 8000 } = {}) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'manual',
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'SEOIntelBot/1.0' },
+    }).finally(() => clearTimeout(t));
+    return {
+      status: res.status,
+      location: res.headers.get('location') || null,
+    };
+  } catch (err) {
+    return { status: 0, error: err.message };
+  }
+}
+
+/**
+ * Run HEAD checks against an array of sitemap URL rows in parallel (capped).
+ * Accepts [{ id, url }]. Invokes onResult(row, result) per check.
+ */
+export async function headCheckAll(rows, { concurrency = 6, onResult } = {}) {
+  const queue = [...rows];
+  const worker = async () => {
+    while (queue.length) {
+      const row = queue.shift();
+      if (!row) break;
+      const result = await headCheck(row.url);
+      if (onResult) {
+        try { await onResult(row, result); } catch { /* swallow */ }
+      }
+    }
+  };
+  const workers = Array.from({ length: Math.min(concurrency, rows.length) }, () => worker());
+  await Promise.all(workers);
+}

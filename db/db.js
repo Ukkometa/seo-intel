@@ -24,6 +24,9 @@ export function getDb(dbPath = './seo-intel.db') {
   try { _db.exec('ALTER TABLE pages ADD COLUMN title TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE pages ADD COLUMN meta_desc TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE pages ADD COLUMN body_text TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE pages ADD COLUMN final_url TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE pages ADD COLUMN redirect_chain TEXT'); } catch { /* already exists */ }
+  try { _db.exec('ALTER TABLE pages ADD COLUMN x_robots_tag TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE analyses ADD COLUMN technical_gaps TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE extractions ADD COLUMN intent_scores TEXT'); } catch { /* already exists */ }
 
@@ -280,12 +283,13 @@ function normalizePageUrl(rawUrl) {
   } catch { return rawUrl; }
 }
 
-export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable, clickDepth = 0, publishedDate = null, modifiedDate = null, contentHash = null, title = null, metaDesc = null, bodyText = null }) {
+export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, isIndexable, clickDepth = 0, publishedDate = null, modifiedDate = null, contentHash = null, title = null, metaDesc = null, bodyText = null, finalUrl = null, redirectChain = null, xRobotsTag = null }) {
   url = normalizePageUrl(url);
   const now = Date.now();
+  const redirectChainJson = redirectChain ? JSON.stringify(redirectChain) : null;
   db.prepare(`
-    INSERT INTO pages (domain_id, url, crawled_at, first_seen_at, status_code, word_count, load_ms, is_indexable, click_depth, published_date, modified_date, content_hash, title, meta_desc, body_text)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO pages (domain_id, url, crawled_at, first_seen_at, status_code, word_count, load_ms, is_indexable, click_depth, published_date, modified_date, content_hash, title, meta_desc, body_text, final_url, redirect_chain, x_robots_tag)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(url) DO UPDATE SET
       crawled_at     = excluded.crawled_at,
       status_code    = excluded.status_code,
@@ -297,8 +301,11 @@ export function upsertPage(db, { domainId, url, statusCode, wordCount, loadMs, i
       content_hash   = excluded.content_hash,
       title          = excluded.title,
       meta_desc      = excluded.meta_desc,
-      body_text      = excluded.body_text
-  `).run(domainId, url, now, now, statusCode, wordCount, loadMs, isIndexable ? 1 : 0, clickDepth, publishedDate, modifiedDate, contentHash, title || null, metaDesc || null, bodyText || null);
+      body_text      = excluded.body_text,
+      final_url      = excluded.final_url,
+      redirect_chain = excluded.redirect_chain,
+      x_robots_tag   = excluded.x_robots_tag
+  `).run(domainId, url, now, now, statusCode, wordCount, loadMs, isIndexable ? 1 : 0, clickDepth, publishedDate, modifiedDate, contentHash, title || null, metaDesc || null, bodyText || null, finalUrl || null, redirectChainJson, xRobotsTag || null);
   // first_seen_at is NOT in the ON CONFLICT UPDATE — it stays from original INSERT
   return db.prepare('SELECT id FROM pages WHERE url = ?').get(url);
 }
@@ -546,6 +553,41 @@ export function getTemplateSamples(db, groupId) {
   ).all(groupId);
 }
 
+// ── Sitemap URL inventory ─────────────────────────────────────────────────
+
+export function upsertSitemapUrls(db, domainId, urls, sitemapSource = null) {
+  if (!urls || !urls.length) return 0;
+  const now = Date.now();
+  const stmt = db.prepare(`
+    INSERT INTO sitemap_urls (domain_id, url, sitemap_source, discovered_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(domain_id, url) DO UPDATE SET
+      sitemap_source = COALESCE(excluded.sitemap_source, sitemap_urls.sitemap_source),
+      discovered_at = excluded.discovered_at
+  `);
+  db.exec('BEGIN');
+  try {
+    for (const u of urls) {
+      const normalized = normalizePageUrl(u);
+      stmt.run(domainId, normalized, sitemapSource, now);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return urls.length;
+}
+
+export function getSitemapUrlsForDomain(db, domainId) {
+  return db.prepare(
+    'SELECT * FROM sitemap_urls WHERE domain_id = ?'
+  ).all(domainId);
+}
+
+export function updateSitemapHeadResult(db, id, { status, location }) {
+  db.prepare(
+    'UPDATE sitemap_urls SET head_status = ?, head_location = ?, head_checked_at = ? WHERE id = ?'
+  ).run(status ?? null, location ?? null, Date.now(), id);
+}
+
 // ── Domain sync / prune ───────────────────────────────────────────────────
 
 /**
@@ -583,6 +625,9 @@ export function pruneStaleDomains(db, project, configDomains) {
         try { db.prepare(`DELETE FROM citability_scores WHERE page_id IN (${placeholders})`).run(...pageIds); } catch { /* table may not exist */ }
         db.prepare(`DELETE FROM pages WHERE domain_id = ?`).run(id);
       }
+
+      // Sitemap URLs for this domain
+      try { db.prepare('DELETE FROM sitemap_urls WHERE domain_id = ?').run(id); } catch { /* table may not exist */ }
 
       // Template groups for this domain
       db.prepare(

@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.23 (2026-04-23)
+
+### Technical Audit — extended-data checks
+- New `seo-intel tech-audit <project>` command — runs technical SEO validation off the crawl DB
+- Findings: title length, meta description length, noindex detection (meta + `X-Robots-Tag`), redirect chains, indexable-but-not-in-sitemap, redirect-target cross-reference
+- `--head` pass runs bounded-concurrency HEAD checks against sitemap URLs (flags 3XX / 4XX)
+- Gated under the `extended-data` banner — same tier surface as other audit extensions
+
+### Crawler — new signal capture
+- Captures final URL after redirects (`page.url()`)
+- Walks the Playwright redirect chain and persists it as JSON
+- Reads `X-Robots-Tag` response header (no-index detection now covers meta **and** header)
+- Sitemap URLs discovered during crawl are persisted to a new `sitemap_urls` table
+
+### Schema
+- `pages` table gains `final_url`, `redirect_chain`, `x_robots_tag` (additive `ALTER TABLE`, safe on existing DBs)
+- New `sitemap_urls` table for the HEAD-check inventory pass
+
+### Accumulated since last changelog (1.5.3–1.5.22)
+- LM Studio extraction backend + auto-discovery
+- Scan command auto-resolves `www` when bare domain is unreachable
+- Intelligence modules: intent scores, schema impact, rich-result probability
+- Nav-link detection for external sites + missing-www redirect warning
+- Solo audit prompt rewrite — no more hallucinated competitors
+- Scan/serve/dashboard resilience fixes
+
 ## 1.5.2 (2026-04-11)
 
 ### Unified Export

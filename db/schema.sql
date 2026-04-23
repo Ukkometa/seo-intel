@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS pages (
   title          TEXT,               -- page <title>
   meta_desc      TEXT,               -- meta description
   body_text      TEXT,               -- cleaned body text for extraction (stored at crawl time)
+  final_url      TEXT,               -- URL after redirects (page.url() post-nav)
+  redirect_chain TEXT,               -- JSON array of [{url, status}] hops, empty array if none
+  x_robots_tag   TEXT,               -- X-Robots-Tag response header value (raw)
   FOREIGN KEY (domain_id) REFERENCES domains(id)
 );
 
@@ -194,6 +197,21 @@ CREATE TABLE IF NOT EXISTS citability_scores (
 );
 
 CREATE INDEX IF NOT EXISTS idx_citability_page ON citability_scores(page_id);
+
+-- Sitemap URL inventory (one row per URL declared in a sitemap)
+CREATE TABLE IF NOT EXISTS sitemap_urls (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  domain_id      INTEGER NOT NULL REFERENCES domains(id),
+  url            TEXT NOT NULL,
+  sitemap_source TEXT,                         -- which sitemap file this came from
+  discovered_at  INTEGER NOT NULL,
+  head_status    INTEGER,                      -- HTTP status from HEAD check (null until audit runs)
+  head_location  TEXT,                         -- Location header when redirected
+  head_checked_at INTEGER,
+  UNIQUE(domain_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sitemap_urls_domain ON sitemap_urls(domain_id);
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain_id);

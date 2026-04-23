@@ -302,6 +302,38 @@ function validateDB() {
     pass(`${schemas.c} schema.org entries stored`);
   } catch { warn('page_schemas table not found (schema parser may not run on free tier)'); }
 
+  // ── Extended-data columns (final_url, redirect_chain, x_robots_tag) ─────
+  // Only asserted if the schema has them — keeps old seo-intel npm versions green.
+  const pageCols = new Set(db.prepare('PRAGMA table_info(pages)').all().map(c => c.name));
+  const extendedCols = ['final_url', 'redirect_chain', 'x_robots_tag'];
+  const hasExtendedCols = extendedCols.every(c => pageCols.has(c));
+  if (hasExtendedCols) {
+    const withFinalUrl = db.prepare(
+      `SELECT COUNT(*) as c FROM pages WHERE domain_id IN (${placeholders}) AND final_url IS NOT NULL`
+    ).get(...ids).c;
+    if (withFinalUrl > 0) pass(`${withFinalUrl}/${pages.length} pages captured final_url`);
+    else fail('No pages captured final_url — crawler regression');
+
+    // redirect_chain should be present (may be '[]') on pages that loaded successfully
+    const redirectRows = db.prepare(
+      `SELECT redirect_chain FROM pages WHERE domain_id IN (${placeholders}) AND redirect_chain IS NOT NULL`
+    ).all(...ids);
+    pass(`${redirectRows.length} page(s) have redirect_chain JSON`);
+  } else {
+    warn('Extended-data columns not present (older seo-intel — expected on CI until release)');
+  }
+
+  // Sitemap inventory — fire test serves /sitemap.xml with 6 URLs
+  try {
+    const sitemapCount = db.prepare(
+      `SELECT COUNT(*) as c FROM sitemap_urls WHERE domain_id IN (${placeholders})`
+    ).get(...ids).c;
+    if (sitemapCount >= 5) pass(`${sitemapCount} sitemap URLs persisted (≥5 expected)`);
+    else fail(`Only ${sitemapCount} sitemap URLs in DB — expected ≥5`);
+  } catch {
+    warn('sitemap_urls table not present (older seo-intel — expected on CI until release)');
+  }
+
   db.close();
 }
 

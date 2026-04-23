@@ -10,7 +10,7 @@ description: >
   Includes gap-intel for topic/content gap analysis between your site and competitors.
 ---
 
-# SEO Intel (v1.5.21)
+# SEO Intel (v1.5.23)
 
 Local SEO competitive intelligence — crawl your site + competitors, extract structure and semantic signals, then use OpenClaw to reason over the data and drive real implementation.
 
@@ -158,6 +158,7 @@ seo-intel suggest-usecases <project>                   # Suggest missing pages/d
 ```bash
 seo-intel schemas <project>           # Schema coverage audit
 seo-intel headings-audit <project>    # H1-H6 structure analysis
+seo-intel tech-audit <project>        # Technical audit — titles, meta, noindex, redirects, sitemap diff (extended-data)
 seo-intel orphans <project>           # Orphan page/entity detection
 seo-intel entities <project>          # Entity/topic mapping
 seo-intel friction <project>          # Intent/CTA friction detection
@@ -231,6 +232,28 @@ seo-intel watch <project> --format json  # Structured JSON output
 **Severity classes:** `critical`, `warning`, `notice`
 
 **Agent use:** Run `watch` after every crawl to detect regressions early. If the health score drops, investigate critical/warning events before spending cycles on higher-order analysis.
+
+## Technical Audit — Extended-Data Validation (v1.5.23)
+
+Reads signals captured during crawl and produces concrete findings. Extended-data feature — requires Solo tier.
+
+```bash
+seo-intel tech-audit <project>                # Audit all domains in project
+seo-intel tech-audit <project> --domain site.com
+seo-intel tech-audit <project> --head         # Also HEAD-check sitemap URLs
+seo-intel tech-audit <project> --format json
+```
+
+**Finding types:**
+- `title_missing`, `title_too_long` (>60 chars)
+- `meta_desc_missing`, `meta_desc_too_long` (warn >160, error >320)
+- `noindex_header` — `X-Robots-Tag: noindex` detected
+- `redirect_chain` — 1+ hop before final URL (warn at 2+)
+- `indexable_missing_from_sitemap` — 200 + indexable page not declared in sitemap
+- `redirect_targets_summary` — review canonicals pointing to redirect targets
+- `sitemap_redirect`, `sitemap_broken` — only with `--head`
+
+Signals captured during crawl: `final_url`, `redirect_chain` (JSON), `x_robots_tag`. Sitemap inventory persisted in `sitemap_urls`.
 
 ## Blog Draft — AEO-Optimised Content Generation (v1.3.0)
 

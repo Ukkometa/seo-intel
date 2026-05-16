@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.24 (2026-05-16)
+
+### Dashboard — projects with owned subdomains + sitemap data no longer vanish
+- Fixed: clicking **Analyse** (or any dashboard refresh) made projects with crawled sitemaps disappear from the panel list. The render-time "merge owned subdomains into target" pass deleted `domains` rows without first clearing the new `sitemap_urls` FK, hit `FOREIGN KEY constraint failed`, and the project was silently dropped from the rendered HTML.
+- The merge now clears `sitemap_urls` for owned subdomains inside the savepoint (rollback at end of render still restores everything — on-disk data is never mutated).
+- Wrapped the merge in try/catch so the savepoint always releases — future tables that add a `domain_id` FK can't poison subsequent renders.
+- Fixed: `getSchemaBreakdown` crashed on extractions whose `schema_types` JSON contained a nested array (e.g. `[..., ["SoftwareApplication","WebAPI"], ...]`). Now flattens one level and skips non-string entries instead of throwing.
+
 ## 1.5.23 (2026-04-23)
 
 ### Technical Audit — extended-data checks

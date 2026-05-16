@@ -61,17 +61,28 @@ export function gatherProjectData(db, project, config) {
   const hasOwned = ownedDomains.length > 0;
   if (hasOwned) {
     db.prepare('SAVEPOINT owned_merge').run();
-    const targetDomainId = db.prepare(
-      `SELECT id FROM domains WHERE project = ? AND domain = ?`
-    ).get(project, targetDomain)?.id;
-    if (targetDomainId) {
-      for (const ownedDomain of ownedDomains) {
-        const ownedRow = db.prepare(`SELECT id FROM domains WHERE project = ? AND domain = ?`).get(project, ownedDomain);
-        if (ownedRow && ownedRow.id !== targetDomainId) {
-          db.prepare(`UPDATE pages SET domain_id = ? WHERE domain_id = ?`).run(targetDomainId, ownedRow.id);
-          db.prepare(`DELETE FROM domains WHERE id = ?`).run(ownedRow.id);
+    try {
+      const targetDomainId = db.prepare(
+        `SELECT id FROM domains WHERE project = ? AND domain = ?`
+      ).get(project, targetDomain)?.id;
+      if (targetDomainId) {
+        for (const ownedDomain of ownedDomains) {
+          const ownedRow = db.prepare(`SELECT id FROM domains WHERE project = ? AND domain = ?`).get(project, ownedDomain);
+          if (ownedRow && ownedRow.id !== targetDomainId) {
+            db.prepare(`UPDATE pages SET domain_id = ? WHERE domain_id = ?`).run(targetDomainId, ownedRow.id);
+            // Clear FK-bearing rows for the owned subdomain inside the savepoint so
+            // DELETE FROM domains doesn't trip the FOREIGN KEY constraint. Rollback
+            // at the end of gather restores everything.
+            db.prepare(`DELETE FROM sitemap_urls WHERE domain_id = ?`).run(ownedRow.id);
+            db.prepare(`DELETE FROM domains WHERE id = ?`).run(ownedRow.id);
+          }
         }
       }
+    } catch (e) {
+      // Always release the savepoint so a partial merge can't poison the next render.
+      try { db.prepare('ROLLBACK TO owned_merge').run(); } catch {}
+      try { db.prepare('RELEASE owned_merge').run(); } catch {}
+      throw e;
     }
   }
 
@@ -6695,8 +6706,12 @@ function getSchemaBreakdown(db, project) {
   for (const r of rows) {
     let types = [];
     try { types = JSON.parse(r.schema_types); } catch {}
+    if (!Array.isArray(types)) continue;
     if (!schemas[r.domain]) schemas[r.domain] = { role: r.role, types: new Set() };
-    for (const t of types) {
+    // Flatten one level — extractor occasionally produces nested arrays like
+    // [..., ["SoftwareApplication","WebAPI"], ...]. Skip anything that isn't a string.
+    for (const t of types.flat()) {
+      if (typeof t !== 'string') continue;
       const key = t.trim();
       if (key.length < 2) continue;
       schemas[r.domain].types.add(key);

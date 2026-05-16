@@ -4,10 +4,10 @@ import { spawn } from 'child_process';
 import { dirname, join, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { checkForUpdates, getUpdateInfo } from './lib/updater.js';
+import { readProgress, PROGRESS_FILE } from './lib/progress.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const PROGRESS_FILE = join(__dirname, '.extraction-progress.json');
 const REPORTS_DIR = join(__dirname, 'reports');
 
 
@@ -99,23 +99,6 @@ const MIME = {
   '.csv': 'text/csv; charset=utf-8',
   '.zip': 'application/zip',
 };
-
-// ── Read progress with PID liveness check (mirrors cli.js) ──
-function readProgress() {
-  try {
-    if (!existsSync(PROGRESS_FILE)) return null;
-    const data = JSON.parse(readFileSync(PROGRESS_FILE, 'utf8'));
-    if (data.status === 'running' && data.pid) {
-      try { process.kill(data.pid, 0); } catch (e) {
-        if (e.code === 'ESRCH') {
-          data.status = 'crashed';
-          data.crashed_at = data.updated_at;
-        }
-      }
-    }
-    return data;
-  } catch { return null; }
-}
 
 // ── Parse JSON body from request ──
 function readBody(req) {

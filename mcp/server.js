@@ -21,12 +21,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod/v4';
 import { readFileSync, readdirSync, existsSync } from 'fs';
+import { spawn } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { getDb } from '../db/db.js';
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
+import { readProgress } from '../lib/progress.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -233,11 +235,83 @@ server.registerTool(
   }
 );
 
+// ── Tool: run_crawl (free) ────────────────────────────────────────────────
+server.registerTool(
+  'run_crawl',
+  {
+    description: [
+      'Trigger a background crawl for an existing project. Spawns the crawl as a detached subprocess and returns immediately — the crawl will keep running even if this MCP server exits. Use get_crawl_status to monitor progress, or call get_intel/get_pages once the crawl completes to see results.',
+      '',
+      'Conflict guard: refuses to start if any seo-intel job is already running. Free tier — crawl page limits still apply (configurable via setup / Solo license unlocks unlimited).',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Existing project slug. Use list_projects to discover.'),
+      stealth: z.boolean().optional().describe('Enable stealth browser mode for JS-heavy or anti-bot sites'),
+      max_pages: z.number().int().positive().optional().describe('Override max pages per domain'),
+    },
+  },
+  async ({ project, stealth, max_pages }) => {
+    const configPath = join(CONFIG_DIR, `${project}.json`);
+    if (!existsSync(configPath)) {
+      const available = listConfigProjects().map(p => p.project).join(', ') || '(none configured)';
+      return {
+        content: [{ type: 'text', text: `Project "${project}" not found. Available: ${available}. Use list_projects to discover, or run \`seo-intel setup\` to add a new project.` }],
+        isError: true,
+      };
+    }
+    const progress = readProgress();
+    if (progress?.status === 'running') {
+      return {
+        content: [{ type: 'text', text: `A seo-intel job is already running (command="${progress.command}", project="${progress.project}", pid=${progress.pid}). Call get_crawl_status to monitor, or wait for it to finish before starting another.` }],
+        isError: true,
+      };
+    }
+
+    const args = ['cli.js', 'crawl', project];
+    if (stealth) args.push('--stealth');
+    if (max_pages) args.push('--max-pages', String(max_pages));
+
+    const child = spawn(process.execPath, args, {
+      cwd: ROOT,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+
+    const result = {
+      started: true,
+      pid: child.pid,
+      project,
+      command: `node ${args.join(' ')}`,
+      hint: 'Crawl is running detached. Call get_crawl_status to check progress (updates every few seconds), or call get_intel(project, for=raw) in a minute or two to see new data.',
+    };
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      structuredContent: result,
+    };
+  }
+);
+
+// ── Tool: get_crawl_status (free) ─────────────────────────────────────────
+server.registerTool(
+  'get_crawl_status',
+  {
+    description: 'Read the current state of the most recent seo-intel job (crawl/extract/analyze/etc). Returns status: running | completed | crashed | stopped | idle, plus project/command/pid/timestamps when available. Use this after run_crawl to monitor progress. Free tier.',
+  },
+  async () => {
+    const progress = readProgress() || { status: 'idle', note: 'No seo-intel job has been recorded since startup. Use run_crawl to start one.' };
+    return {
+      content: [{ type: 'text', text: JSON.stringify(progress, null, 2) }],
+      structuredContent: progress,
+    };
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. Tools: list_projects, get_intel, get_pages, list_keywords, get_headings.`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. Tools: list_projects, get_intel, get_pages, list_keywords, get_headings, run_crawl, get_crawl_status.`);
 }
 
 main().catch(err => {

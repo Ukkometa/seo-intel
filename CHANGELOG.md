@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.28 (2026-05-17)
+
+### MCP — agents can now trigger crawls and watch progress
+The MCP server gains its first **active** tools — agents move from read-only to actually doing work on the user's machine.
+
+- **`run_crawl(project, stealth?, max_pages?)`** — spawn a crawl as a detached subprocess. Returns immediately with `{ started, pid, command, hint }`. Free tier — crawl page limits still apply (Solo unlocks unlimited). Refuses to start if any seo-intel job is already running (conflict guard mirrors the existing HTTP `/api/crawl` behaviour).
+- **`get_crawl_status()`** — read the most recent job's progress: status (`running` / `completed` / `crashed` / `stopped` / `idle`), command, project, pid, timestamps. PID liveness is verified — a "running" job whose process died gets re-tagged as `crashed`.
+
+A natural session now looks like: agent calls `run_crawl(carbium)` → polls `get_crawl_status()` every minute → once `completed`, calls `get_intel(carbium, for=raw)` and `get_pages(carbium)` to see new data. Free tier, end to end.
+
+### Internal — shared progress reader
+`server.js` and `mcp/server.js` now both read job state from `lib/progress.js` (the canonical implementation, with PID liveness detection). Eliminates a duplicate `readProgress()` and ensures any future progress-file schema changes propagate automatically.
+
 ## 1.5.27 (2026-05-16)
 
 ### MCP — three new free-tier read tools

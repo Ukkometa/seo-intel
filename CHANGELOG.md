@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.26 (2026-05-16)
+
+### New — MCP server (`seo-intel-mcp`)
+- SEO Intel now ships a Model Context Protocol server. Any MCP-capable AI host (Claude Code, Cursor, Cline, Continue, Zed) can call seo-intel's local SQLite intelligence as native tools — no API keys to manage, no remote servers to host, all data stays on your machine.
+- Install for Claude Code: `claude mcp add seo-intel "npx seo-intel-mcp"`
+- Stdio transport — the host spawns the server as a subprocess; zero infrastructure.
+- Tools shipped in this release:
+  - `list_projects` (**free**) — every configured project on this machine + crawled page count
+  - `get_intel(project, for?)` — wraps `seo-intel intel`. `for=raw` is free; `for=audit|blog|competitor` require an SEO Intel Solo license. When unlicensed, returns a clean MCP error with the upgrade message instead of silent failure.
+- Both tools return structured JSON the agent's LLM can chain — e.g. an agent can call `list_projects` then `get_intel(project=X, for=raw)` and analyse the raw inventory with its own flagship model, no extra prompting needed.
+- New dependency: `@modelcontextprotocol/sdk ^1.29.0`.
+
 ## 1.5.25 (2026-05-16)
 
 ### New — `seo-intel intel <project>` — canonical agent-facing entry point

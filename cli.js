@@ -1415,6 +1415,47 @@ program
     process.exit(0);
   });
 
+// ── INTEL (canonical agent-facing entry point) ─────────────────────────────
+// Returns structured intelligence about a project. Same function backs MCP +
+// future surfaces. Free tier gets `raw`; paid slices are license-gated.
+program
+  .command('intel <project>')
+  .description('Structured project intelligence for AI agents (raw=free; audit/blog/competitor=paid)')
+  .option('--for <slice>', 'Slice: raw | audit | blog | competitor', 'raw')
+  .option('--format <fmt>', 'Output format: json | md', 'json')
+  .action(async (project, opts) => {
+    const isJson = opts.format === 'json';
+    const { getIntel, intelToMarkdown, FREE_SLICES, INTEL_SLICES } = await import('./lib/intel.js');
+
+    if (!INTEL_SLICES.includes(opts.for)) {
+      const msg = `Unknown slice "${opts.for}". Available: ${INTEL_SLICES.join(', ')}`;
+      if (isJson) { console.log(JSON.stringify({ error: msg })); process.exit(1); }
+      console.error(chalk.red(msg)); process.exit(1);
+    }
+
+    // Free slices skip the gate; paid slices use the standard requirePro pattern.
+    if (!FREE_SLICES.includes(opts.for)) {
+      if (!requirePro(`intel-${opts.for}`)) return;
+    }
+
+    // Validate project exists (loadConfig will throw with a helpful message otherwise)
+    loadConfig(project);
+    const db = getDb();
+
+    try {
+      const envelope = getIntel(db, project, { for: opts.for });
+      if (isJson) {
+        console.log(JSON.stringify(envelope, null, 2));
+      } else {
+        console.log(intelToMarkdown(envelope));
+      }
+    } catch (err) {
+      if (isJson) { console.log(JSON.stringify({ error: err.message })); process.exit(1); }
+      console.error(chalk.red('intel failed: ') + err.message);
+      process.exit(1);
+    }
+  });
+
 // ── STATUS ─────────────────────────────────────────────────────────────────
 program
   .command('status')

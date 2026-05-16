@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.25 (2026-05-16)
+
+### New — `seo-intel intel <project>` — canonical agent-facing entry point
+- Returns structured project intelligence as JSON or markdown — the single source of truth that upcoming MCP server, dashboard, and prompt-copy modal will all wrap (one function, four surfaces).
+- Slices:
+  - `--for=raw` (**free**) — page/keyword/heading/schema/sitemap inventory per domain. Pipe into your own AI agent for self-service analysis.
+  - `--for=audit` (paid) — citability scores + active insights ledger
+  - `--for=blog` (paid) — keyword gaps + long tails + drafting hints
+  - `--for=competitor` (paid) — competitor summary + keyword matrix + positioning
+- `--format=json` for agents; `--format=md` for humans / agent context windows
+- Paid slices use the existing `requirePro()` gate — free users see a standard upgrade message; paid users get the data.
+- New library: `lib/intel.js` exports `getIntel(db, project, opts)` + `intelToMarkdown(envelope)` for reuse from any surface.
+
 ## 1.5.24 (2026-05-16)
 
 ### Dashboard — projects with owned subdomains + sitemap data no longer vanish

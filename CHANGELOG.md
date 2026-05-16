@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.27 (2026-05-16)
+
+### MCP — three new free-tier read tools
+The MCP server (`seo-intel-mcp`) now exposes individual records, not just summaries. AI agents can drill from inventory into actual pages, keywords, and heading structures without leaving the agent chat.
+
+- **`get_pages(project, role?, limit?, offset?)`** — paginated page list with url, title, word count, status, click depth, and domain role. Filterable by role (target / owned / competitor). Returns total count for pagination math.
+- **`list_keywords(project, domain?, limit?)`** — top extracted keywords grouped by domain + location (title / h1 / h2 / meta / body). Use to surface what each site is targeting before running gap analysis.
+- **`get_headings(project, url, limit?)`** — heading structure (H1–H6) for a specific page. Returns ordered `{ level, text }` list. Useful for content-architecture comparisons between target and competitor pages.
+
+All three are **free tier** — no license required. Pairs naturally with the existing `list_projects` and `get_intel(raw)` to give AI agents a complete free-tier read surface: list projects → inspect inventory → drill into pages → read headings → analyze with the agent's own flagship LLM.
+
+Errors are returned as proper MCP `isError: true` responses with helpful guidance (e.g. `get_headings` on an unknown URL points the agent at `get_pages`).
+
 ## 1.5.26 (2026-05-16)
 
 ### New — MCP server (`seo-intel-mcp`)

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.29 (2026-05-17)
+
+### MCP — `ingest_insight` closes the loop (agents become collaborators, not consumers)
+The MCP server now accepts write-back. An agent can read your raw data, do its own analysis with its own flagship LLM, and persist findings into the Intelligence Ledger — surviving across sessions, surfacing in the dashboard, deduplicating against future runs.
+
+- **`ingest_insight(project, type, data, agent_name?)`** — **free tier**. The agent's LLM did the analysis; we just provide storage. Allowed types mirror what `analyze` writes: `keyword_gap`, `long_tail`, `quick_win`, `new_page`, `content_gap`, `technical_gap`, `positioning`.
+- **Dedup contract**: same `(project, type, fingerprint)` returns the existing row with `deduped: true` and bumps `last_seen` — no duplicate accumulation across sessions.
+- **Provenance**: source is stored as `agent:<name>` (e.g. `agent:claude-opus-4-7`) when `agent_name` is supplied, else just `agent`. Also stamped into the `data` JSON blob as `_source` for downstream consumers that only read `data`.
+- **Schema**: idempotent `ALTER TABLE insights ADD COLUMN source TEXT DEFAULT 'cli'` — existing rows backfill to `'cli'`; analyze-time writes stay as `'cli'`; agent writes flip to `'agent:*'`. Safe on existing DBs.
+
+### Logo
+- Updated product logo to the sharp / soft-corners v1 variant. Size dropped 1.46 MB → 953 KB. Dashboard favicon + npm package both pick up the new asset.
+
 ## 1.5.28 (2026-05-17)
 
 ### MCP — agents can now trigger crawls and watch progress

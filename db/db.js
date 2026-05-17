@@ -29,6 +29,7 @@ export function getDb(dbPath = './seo-intel.db') {
   try { _db.exec('ALTER TABLE pages ADD COLUMN x_robots_tag TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE analyses ADD COLUMN technical_gaps TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE extractions ADD COLUMN intent_scores TEXT'); } catch { /* already exists */ }
+  try { _db.exec("ALTER TABLE insights ADD COLUMN source TEXT DEFAULT 'cli'"); } catch { /* already exists */ }
 
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
@@ -223,6 +224,59 @@ export function upsertInsightsFromKeywords(db, project, keywordsReport) {
     db.exec('ROLLBACK');
     console.error('[db] keyword insight upsert failed:', e.message);
   }
+}
+
+// ── Agent-ingested insight (write-back from MCP) ────────────────────────────
+
+export const AGENT_INSIGHT_TYPES = ['keyword_gap', 'long_tail', 'quick_win', 'new_page', 'content_gap', 'technical_gap', 'positioning'];
+
+/**
+ * Insert a single insight on behalf of an external agent (e.g. via MCP).
+ * Uses the same dedup contract as analyze-time inserts (UNIQUE on
+ * project + type + fingerprint), so an agent repeating the same finding
+ * across sessions updates `last_seen` instead of duplicating rows.
+ *
+ * Returns { ok, id, fingerprint, deduped } — `deduped: true` when the row
+ * already existed and we only refreshed last_seen.
+ */
+export function insertAgentInsight(db, { project, type, data, agentName }) {
+  if (!AGENT_INSIGHT_TYPES.includes(type)) {
+    return { ok: false, error: `Unsupported type "${type}". Allowed: ${AGENT_INSIGHT_TYPES.join(', ')}` };
+  }
+  if (!project) return { ok: false, error: 'project is required' };
+  if (!data || typeof data !== 'object') return { ok: false, error: 'data must be an object' };
+
+  const fingerprint = _insightFingerprint(type, data);
+  if (!fingerprint) {
+    return { ok: false, error: `data is missing the identifier field this type needs (see _insightFingerprint in db/db.js for the per-type contract)` };
+  }
+
+  const source = agentName ? `agent:${agentName}` : 'agent';
+  const ts = Date.now();
+
+  // Stash provenance inside the data blob too — survives if/when the source
+  // column is ever queried separately, but also keeps it visible to consumers
+  // that only read `data`.
+  const enriched = { ...data, _source: source, _ingested_at: new Date(ts).toISOString() };
+
+  const existing = db.prepare(
+    'SELECT id FROM insights WHERE project = ? AND type = ? AND fingerprint = ?'
+  ).get(project, type, fingerprint);
+
+  db.prepare(`
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, source)
+    VALUES (?, ?, 'active', ?, ?, ?, NULL, ?, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      data = excluded.data,
+      source = excluded.source
+  `).run(project, type, fingerprint, ts, ts, JSON.stringify(enriched), source);
+
+  const row = db.prepare(
+    'SELECT id FROM insights WHERE project = ? AND type = ? AND fingerprint = ?'
+  ).get(project, type, fingerprint);
+
+  return { ok: true, id: row.id, fingerprint, deduped: !!existing, source, last_seen: ts };
 }
 
 // ── Read active insights (accumulated across all runs) ──────────────────────

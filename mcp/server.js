@@ -25,7 +25,7 @@ import { spawn } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
-import { getDb } from '../db/db.js';
+import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES } from '../db/db.js';
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
 import { readProgress } from '../lib/progress.js';
@@ -307,11 +307,68 @@ server.registerTool(
   }
 );
 
+// ── Tool: ingest_insight (free — write-back closes the loop) ──────────────
+server.registerTool(
+  'ingest_insight',
+  {
+    description: [
+      'Persist an agent-generated insight into the SEO Intel Intelligence Ledger so it shows up in the dashboard and survives across sessions. Free tier — the agent\'s own LLM did the analysis; we just provide storage.',
+      '',
+      'Dedup contract: same (project, type, fingerprint) updates `last_seen` instead of creating a duplicate row. So an agent rediscovering the same finding across sessions cleanly bumps the timestamp.',
+      '',
+      'Allowed types (mirror what the cloud `analyze` command writes):',
+      '  keyword_gap     data: { keyword, ... }       fingerprint = keyword',
+      '  long_tail       data: { phrase, ... }        fingerprint = phrase',
+      '  quick_win       data: { page, issue, ... }   fingerprint = page::issue',
+      '  new_page        data: { target_keyword | title, ... }',
+      '  content_gap     data: { topic, ... }         fingerprint = topic',
+      '  technical_gap   data: { gap, ... }           fingerprint = gap',
+      '  positioning     data: { ...free-form... }    one slot per project',
+      '',
+      'data must include the identifier field above; otherwise the tool returns an error.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug'),
+      type: z.enum(AGENT_INSIGHT_TYPES).describe('Insight type from the allowed set'),
+      data: z.record(z.any()).describe('Insight payload — JSON object. Must include the identifier field for the chosen type.'),
+      agent_name: z.string().optional().describe('Optional provenance tag (e.g. "claude-opus-4-7"). Stored as source="agent:<name>".'),
+    },
+  },
+  async ({ project, type, data, agent_name }) => {
+    try {
+      const db = getDb();
+      const result = insertAgentInsight(db, { project, type, data, agentName: agent_name });
+      if (!result.ok) {
+        return { content: [{ type: 'text', text: `seo-intel ingest error: ${result.error}` }], isError: true };
+      }
+      const payload = {
+        ok: true,
+        project,
+        type,
+        insight_id: result.id,
+        fingerprint: result.fingerprint,
+        deduped: result.deduped,
+        source: result.source,
+        last_seen: new Date(result.last_seen).toISOString(),
+        hint: result.deduped
+          ? 'Insight already existed; last_seen refreshed.'
+          : 'New insight persisted. It will appear in the dashboard ledger and in get_intel(for=audit).',
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+        structuredContent: payload,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. Tools: list_projects, get_intel, get_pages, list_keywords, get_headings, run_crawl, get_crawl_status.`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. Tools: list_projects, get_intel, get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight.`);
 }
 
 main().catch(err => {

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.30 (2026-05-17)
+
+### MCP — paid analysis tools (the full Solo surface for AI agents)
+Solo subscribers can now reach the full analysis layer from any MCP host, not just the dashboard. Four new tools, all paid, all wrap existing `analyses/*` modules — same library-first pattern.
+
+- **`run_citability_audit(project, include_competitors?)`** — Run AEO scoring across all crawled pages (6 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage). Persists scores to `citability_scores` and upserts `citability_gap` insights into the ledger. Pure function — fast, no LLM calls. Returns target/competitor page counts, average score, top 20 low-score pages.
+- **`get_competitor_positioning(project)`** — Latest positioning analysis (from analyze runs or agent ingests) + per-competitor crawl stats (page counts, keyword counts, last crawl). The strategic narrative + the raw coverage in one envelope.
+- **`prescore_draft(draft_md)`** — Pre-publish AEO scorer for agent-written content. Same scorer the dashboard uses; takes markdown (frontmatter-aware) and returns 0–100 score, tier, signal breakdown, AI intents. Includes revision hints for sub-60 drafts. Pair with `draft_blog_prompt` for a write→score→revise loop.
+- **`draft_blog_prompt(project, topic?, lang?, content_type?)`** — Assemble an AEO-aware prompt seeded with the project's keyword gaps, citability gaps, entities, brand voice, and competitor heading patterns. The agent's own flagship LLM (Opus 4.7 / GPT-4o / Gemini) writes the draft. Supports `en` and `fi`. Topic optional — if omitted, prompt asks the LLM to pick the highest-leverage topic from gap data.
+
+**MCP surface now:** 12 tools total — 8 free (read raw data, trigger crawls, persist findings) + 4 paid (`get_intel` audit/blog/competitor slices, `run_citability_audit`, `get_competitor_positioning`, `prescore_draft`, `draft_blog_prompt`). Paid tools share a unified gate message that surfaces the Ahrefs/Semrush price comparison.
+
+A Solo agent session now looks like: `run_citability_audit` → `get_competitor_positioning` → `draft_blog_prompt(topic)` → agent's LLM writes the draft → `prescore_draft(output)` → revise if < 60 → `ingest_insight` to persist the gap that motivated the draft. Closed loop, all via MCP, no dashboard required.
+
+### Deferred
+- `run_gap_intel` (Ollama-based, long-running) — deferred to v1.5.31 where it'll use the detached-spawn pattern from `run_crawl`.
+
 ## 1.5.29 (2026-05-17)
 
 ### MCP — `ingest_insight` closes the loop (agents become collaborators, not consumers)

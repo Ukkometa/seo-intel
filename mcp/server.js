@@ -25,10 +25,28 @@ import { spawn } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
-import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES } from '../db/db.js';
+import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getCompetitorSummary } from '../db/db.js';
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
 import { readProgress } from '../lib/progress.js';
+
+import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
+import { prescore } from '../analyses/blog-draft/prescorer.js';
+import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function paidGate(toolName) {
+  return {
+    content: [{ type: 'text', text: `The "${toolName}" tool requires SEO Intel Solo (€19.99/mo — vs Ahrefs ~$129/mo or Semrush ~$140/mo). Free tier already covers list_projects, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight. Activate at https://ukkometa.fi/en/seo-intel/ — set SEO_INTEL_LICENSE=SI-xxxx-xxxx-xxxx-xxxx in your env.` }],
+    isError: true,
+  };
+}
+
+function loadProjectConfig(project) {
+  const p = join(CONFIG_DIR, `${project}.json`);
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -364,11 +382,168 @@ server.registerTool(
   }
 );
 
+// ── Tool: run_citability_audit (PAID) ─────────────────────────────────────
+server.registerTool(
+  'run_citability_audit',
+  {
+    description: 'Run AEO citability scoring across all crawled pages (6 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage). Persists scores to citability_scores and upserts citability_gap insights into the ledger. Pure function — fast, no LLM calls. Paid tier.',
+    inputSchema: {
+      project: z.string(),
+      include_competitors: z.boolean().optional().describe('Score competitor pages too (default true)'),
+    },
+  },
+  async ({ project, include_competitors = true }) => {
+    if (!isPro()) return paidGate('run_citability_audit');
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const results = runAeoAnalysis(db, project, { includeCompetitors: include_competitors, log: () => {} });
+      persistAeoScores(db, results);
+      upsertCitabilityInsights(db, project, results.target);
+      const competitorPageCount = [...results.competitors.values()].reduce((a, list) => a + list.length, 0);
+      const avgTargetScore = results.target.length
+        ? Math.round(results.target.reduce((s, p) => s + p.score, 0) / results.target.length)
+        : 0;
+      const lowScorePages = results.target
+        .filter(p => p.score < 40)
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 20)
+        .map(p => ({ url: p.url, score: p.score, tier: p.tier }));
+      const summary = {
+        ok: true,
+        project,
+        target_pages_scored: results.target.length,
+        competitor_pages_scored: competitorPageCount,
+        avg_target_score: avgTargetScore,
+        low_score_target_pages: lowScorePages,
+        hint: 'Scores persisted to DB. Call get_intel(project, for=audit) to see the full citability matrix + insights ledger.',
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+        structuredContent: summary,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: get_competitor_positioning (PAID) ───────────────────────────────
+server.registerTool(
+  'get_competitor_positioning',
+  {
+    description: 'Return the latest positioning analysis for a project + per-competitor crawl stats. Combines the positioning insight from the ledger (from `analyze` or agent ingests) with raw competitor coverage (page counts, keyword counts, last crawl). Paid tier.',
+    inputSchema: {
+      project: z.string(),
+    },
+  },
+  async ({ project }) => {
+    if (!isPro()) return paidGate('get_competitor_positioning');
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const insights = getActiveInsights(db, project);
+      const competitorSummary = getCompetitorSummary(db, project);
+      const out = {
+        project,
+        positioning: insights.positioning,  // null if never analysed
+        competitor_summary: competitorSummary,
+        last_insight_at: insights.generated_at ? new Date(insights.generated_at).toISOString() : null,
+        hint: insights.positioning ? 'Positioning is from the most recent analyze run or agent ingest.' : 'No positioning insight yet — run `seo-intel analyze <project>` or ingest one via ingest_insight(type=positioning).',
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+        structuredContent: out,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: prescore_draft (PAID) ───────────────────────────────────────────
+server.registerTool(
+  'prescore_draft',
+  {
+    description: 'Run the AEO scorer on a markdown draft before publishing. Returns the same 6-signal breakdown the dashboard uses (entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage) plus the overall 0-100 score and tier (excellent / good / fair / poor). Use this as a pre-publish gate when drafting via draft_blog_prompt — score < 60 means revise. Paid tier.',
+    inputSchema: {
+      draft_md: z.string().describe('Full markdown of the draft, including YAML frontmatter if present. The scorer extracts headings, word count, schema_type from frontmatter, etc.'),
+    },
+  },
+  async ({ draft_md }) => {
+    if (!isPro()) return paidGate('prescore_draft');
+    try {
+      const score = prescore(draft_md);
+      const out = {
+        ok: true,
+        score: score.score,
+        tier: score.tier,
+        signals: score.signals,
+        ai_intents: score.ai_intents,
+        hint: score.score >= 60
+          ? 'Draft scores well. Safe to publish.'
+          : 'Below 60 — consider strengthening: add FAQ schema for Q&A proximity, increase entity authority via named experts/citations, shorten paragraphs for answer density, add structured claims (numbers/dates).',
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+        structuredContent: out,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: draft_blog_prompt (PAID) ────────────────────────────────────────
+server.registerTool(
+  'draft_blog_prompt',
+  {
+    description: 'Generate an AEO-aware blog draft prompt seeded with full project context — keyword gaps, citability gaps, top entities, brand voice notes, competitor heading patterns. The agent\'s own LLM writes the draft using this prompt. Pair with prescore_draft for a write→score→revise loop. Paid tier.',
+    inputSchema: {
+      project: z.string(),
+      topic: z.string().optional().describe('Specific topic to draft about. If omitted, the prompt asks the LLM to pick the highest-leverage topic from the gap data.'),
+      lang: z.enum(['en', 'fi']).optional().describe('Output language (default en)'),
+      content_type: z.enum(['blog', 'article', 'guide']).optional().describe('Content type framing (default blog)'),
+    },
+  },
+  async ({ project, topic, lang = 'en', content_type = 'blog' }) => {
+    if (!isPro()) return paidGate('draft_blog_prompt');
+    const config = loadProjectConfig(project);
+    if (!config) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const context = gatherBlogDraftContext(db, project, topic);
+      const prompt = buildBlogDraftPrompt(context, { config, lang, topic, contentType: content_type });
+      const out = {
+        project,
+        topic: topic || '(LLM to pick from gap data)',
+        lang,
+        content_type,
+        prompt_length_chars: prompt.length,
+        prompt,
+        hint: 'Pass `prompt` to your flagship LLM (Opus 4.7 / GPT-4o / etc) to generate the draft. Then run prescore_draft on the output to AEO-score before publishing.',
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+        structuredContent: out,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. Tools: list_projects, get_intel, get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight.`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 12 tools — free: list_projects, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight; paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt.`);
 }
 
 main().catch(err => {

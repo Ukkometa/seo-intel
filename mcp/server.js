@@ -539,11 +539,147 @@ server.registerTool(
   }
 );
 
+// ── Tool: export_intel (firehose; free tables + paid tables) ──────────────
+const FREE_EXPORT_TABLES = ['pages', 'keywords', 'headings', 'links', 'technical', 'sitemap_urls'];
+const PAID_EXPORT_TABLES = ['extractions', 'analyses', 'page_schemas', 'citability_scores', 'insights'];
+const ALL_EXPORT_TABLES = [...FREE_EXPORT_TABLES, ...PAID_EXPORT_TABLES];
+
+const EXPORT_TABLE_QUERIES = {
+  pages: `SELECT p.url, d.domain, d.role, p.status_code, p.word_count, p.load_ms, p.is_indexable, p.click_depth, p.published_date, p.modified_date, p.title, p.meta_desc, p.final_url, p.x_robots_tag
+          FROM pages p JOIN domains d ON d.id = p.domain_id WHERE d.project = ? ORDER BY d.role, d.domain, p.click_depth`,
+  keywords: `SELECT k.keyword, k.location, p.url, d.domain, d.role FROM keywords k JOIN pages p ON p.id = k.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? ORDER BY k.keyword`,
+  headings: `SELECT h.level, h.text, p.url, d.domain FROM headings h JOIN pages p ON p.id = h.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? ORDER BY p.url, h.level`,
+  links: `SELECT l.target_url, l.anchor_text, l.is_internal, p.url as source_url, d.domain FROM links l JOIN pages p ON p.id = l.source_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? ORDER BY l.is_internal DESC, d.domain`,
+  technical: `SELECT t.has_canonical, t.has_og_tags, t.has_schema, t.is_mobile_ok, t.has_sitemap, t.has_robots, t.core_web_vitals, p.url, d.domain FROM technical t JOIN pages p ON p.id = t.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ?`,
+  sitemap_urls: `SELECT s.url, s.sitemap_source, s.head_status, s.head_location, s.discovered_at, d.domain FROM sitemap_urls s JOIN domains d ON d.id = s.domain_id WHERE d.project = ?`,
+  extractions: `SELECT e.title, e.meta_desc, e.h1, e.product_type, e.pricing_tier, e.cta_primary, e.tech_stack, e.schema_types, e.search_intent, e.primary_entities, e.intent_scores, p.url, d.domain FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ?`,
+  analyses: `SELECT generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps FROM analyses WHERE project = ? ORDER BY generated_at DESC`,
+  page_schemas: `SELECT ps.schema_type, ps.name, ps.description, ps.rating, ps.rating_count, ps.price, ps.currency, ps.author, ps.date_published, p.url, d.domain FROM page_schemas ps JOIN pages p ON p.id = ps.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? ORDER BY ps.schema_type`,
+  citability_scores: `SELECT cs.url, cs.score, cs.tier, cs.entity_authority, cs.structured_claims, cs.answer_density, cs.qa_proximity, cs.freshness, cs.schema_coverage, cs.ai_intents, cs.scored_at, p.title, d.domain, d.role FROM citability_scores cs JOIN pages p ON p.id = cs.page_id JOIN domains d ON d.id = p.domain_id WHERE d.project = ? ORDER BY cs.score`,
+  insights: `SELECT id, type, status, fingerprint, first_seen, last_seen, source, data FROM insights WHERE project = ? ORDER BY last_seen DESC`,
+};
+
+const DEFAULT_MAX_ROWS_PER_TABLE = 1000;
+const MAX_MAX_ROWS_PER_TABLE = 50000;
+
+function buildExportNotice({ tokens, bytes, free, paidRequested, paidExcluded, anyTruncated, maxRowsPerTable }) {
+  const tooBig = tokens > 50000;
+  const upgradeBlurb = free
+    ? `\n\n📦 Tables NOT in this response (require SEO Intel Solo, €19.99/mo — vs Ahrefs ~$129/mo): ${PAID_EXPORT_TABLES.join(', ')}.\n   These are the AI-derived layers: per-page entity/intent/schema extraction, full analysis history, structured @type inventory, citability scores, and the Intelligence Ledger.\n   For pre-parsed digests instead of raw rows, the Solo tools return ready-to-use analysis: run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt.`
+    : `\n\nYou have Solo. Paid tables in this export: ${(paidRequested || []).join(', ') || '(none requested)'}.`;
+
+  const sizeLine = tooBig
+    ? `\n\n⚠️  HEAVY EXPORT: ${tokens.toLocaleString()} estimated tokens (~${(bytes / 1024 / 1024).toFixed(1)} MB). This WILL blow up a typical agent's context budget.`
+    : `\n\nSize: ${tokens.toLocaleString()} estimated tokens (~${(bytes / 1024).toFixed(0)} KB).`;
+
+  const truncLine = anyTruncated
+    ? `\n\n✂️  TRUNCATED: some tables hit the per-table row cap (currently ${maxRowsPerTable.toLocaleString()}). Check the per-table \`counts\` map — \`truncated: true\` means there are more rows. To pull more, re-call with \`max_rows_per_table: <N up to ${MAX_MAX_ROWS_PER_TABLE.toLocaleString()}>\` or \`tables: ["specific_one"]\`.`
+    : '';
+
+  return {
+    level: tooBig || anyTruncated ? 'critical' : 'important',
+    message: [
+      '🛑 DO NOT INGEST THIS RESPONSE WHOLESALE INTO YOUR CONTEXT.',
+      '',
+      'This is a raw structured-data firehose — designed for tooling, not direct LLM consumption. Recommended ways to handle it:',
+      '  1. Write it to a file via your shell tool (e.g. `... > intel.json`), then query selectively with jq / sqlite-utils / a small Python script.',
+      '  2. For pre-digested intelligence, call get_intel(for=audit|blog|competitor) — same data, summarized.',
+      '  3. For specific record lookups, use the targeted tools: get_pages, get_headings, list_keywords, get_competitor_positioning.',
+    ].join('\n') + sizeLine + truncLine + upgradeBlurb,
+    token_estimate: tokens,
+    size_bytes: bytes,
+    max_rows_per_table: maxRowsPerTable,
+    truncated: anyTruncated,
+    tables_paid_excluded: paidExcluded,
+  };
+}
+
+server.registerTool(
+  'export_intel',
+  {
+    description: [
+      'Bulk export of raw structured intelligence — pages, keywords, headings, links, technical, sitemap URLs (free), plus extractions, analyses, schemas, citability scores, and insights (Solo). Mirrors `seo-intel export --full <project>` as a single MCP call.',
+      '',
+      '⚠️ FIREHOSE WARNING: this is raw rows, not summaries. For carbium-sized projects it can be 5–10 MB / 200k+ tokens. The response includes a `notice` field telling the agent how to handle it (pipe to file, use other tools, or upgrade). Agents SHOULD NOT paste the response wholesale into their context — read the `notice` first, then either query selectively or save to a file.',
+      '',
+      'For pre-parsed AI-ready intel, prefer: get_intel(for=audit|blog|competitor), run_citability_audit, get_competitor_positioning, draft_blog_prompt.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string(),
+      tables: z.array(z.enum(ALL_EXPORT_TABLES)).optional().describe(`Tables to include. Free: ${FREE_EXPORT_TABLES.join(', ')}. Paid (Solo only): ${PAID_EXPORT_TABLES.join(', ')}. Omit to get the free subset.`),
+      max_rows_per_table: z.number().int().positive().max(MAX_MAX_ROWS_PER_TABLE).optional().describe(`Cap on rows returned per table — safety valve against OOM on large projects (default ${DEFAULT_MAX_ROWS_PER_TABLE}, max ${MAX_MAX_ROWS_PER_TABLE}). When truncated, the per-table counts map shows total + returned so you know what's missing.`),
+    },
+  },
+  async ({ project, tables, max_rows_per_table }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    const requested = tables && tables.length ? tables : FREE_EXPORT_TABLES;
+    const paidRequested = requested.filter(t => PAID_EXPORT_TABLES.includes(t));
+    if (paidRequested.length && !isPro()) {
+      return paidGate(`export_intel (paid tables: ${paidRequested.join(', ')})`);
+    }
+    const maxRows = max_rows_per_table || DEFAULT_MAX_ROWS_PER_TABLE;
+    try {
+      const db = getDb();
+      const domains = db.prepare('SELECT domain, role, last_crawled FROM domains WHERE project=? ORDER BY role, domain').all(project);
+      const data = {};
+      const counts = {};
+      let anyTruncated = false;
+      for (const table of requested) {
+        try {
+          // Two-step: count first, then fetch with LIMIT. Cheaper than .all() then .slice() for huge tables.
+          const countRow = db.prepare(`SELECT COUNT(*) AS n FROM (${EXPORT_TABLE_QUERIES[table]}) AS sub`).get(project);
+          const total = countRow?.n || 0;
+          const rows = db.prepare(`${EXPORT_TABLE_QUERIES[table]} LIMIT ?`).all(project, maxRows);
+          const truncated = total > rows.length;
+          if (truncated) anyTruncated = true;
+          data[table] = rows;
+          counts[table] = { total, returned: rows.length, truncated };
+        } catch (e) {
+          data[table] = { error: e.message };
+          counts[table] = { total: 0, returned: 0, truncated: false, error: e.message };
+        }
+      }
+      const free = !isPro();
+      const dataJson = JSON.stringify(data);
+      const tokenEstimate = Math.ceil(dataJson.length / 4);
+      const sizeBytes = Buffer.byteLength(dataJson, 'utf8');
+      const notice = buildExportNotice({
+        tokens: tokenEstimate,
+        bytes: sizeBytes,
+        free,
+        paidRequested,
+        paidExcluded: free ? PAID_EXPORT_TABLES : undefined,
+        anyTruncated,
+        maxRowsPerTable: maxRows,
+      });
+      const envelope = {
+        project,
+        exported_at: new Date().toISOString(),
+        seo_intel_version: VERSION,
+        tier: free ? 'free' : 'paid',
+        tables_included: requested,
+        counts,
+        domains,
+        notice,
+        data,
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
+        structuredContent: envelope,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 12 tools — free: list_projects, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight; paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt.`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 13 tools — free: list_projects, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free-tier subset); paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt, export_intel (paid tables).`);
 }
 
 main().catch(err => {

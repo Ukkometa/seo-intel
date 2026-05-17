@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.5.31 (2026-05-17)
+
+### MCP — `export_intel` ships the full data layer to AI agents
+The biggest gap closed: agents can now grab seo-intel's entire structured intelligence in a single call. Mirrors `seo-intel export --full <project>` as an MCP tool, with a sharp safety valve and an explicit "do not blind-ingest" notice.
+
+- **`export_intel(project, tables?, max_rows_per_table?)`** — bulk JSON export. Free tables: `pages, keywords, headings, links, technical, sitemap_urls`. Paid (Solo) tables: `extractions, analyses, page_schemas, citability_scores, insights`. Per-table row cap (default 1000, max 50000) so big projects can't OOM Node on `JSON.stringify`.
+- **The notice field is the design point.** Every response includes a top-level `notice` with `level: important|critical`, token estimate, byte size, and a clear instruction set: *"🛑 DO NOT INGEST THIS RESPONSE WHOLESALE. (1) write to file and query with jq/sqlite-utils, (2) use get_intel(for=audit|blog|competitor) for digests, (3) for pre-parsed analysis upgrade to Solo."* Free users see the list of paid tables they're missing + the Solo tool names that return digests instead of raw rows.
+- Truncation is first-class: `counts: { pages: { total: 3422, returned: 1000, truncated: true } }`. Notice flips to `critical` whenever any table truncates, with the explicit "re-call with `max_rows_per_table: <N>` or `tables: ['specific_one']`" guidance.
+- Verified: carbium full free export = 1.2 MB / 314k tokens with 6 tables truncated — still fits the safety valve, won't crash Node. Free-tier `analyses` request → clean paid gate. Small slices (e.g. `tables: ['technical']` on risunouto) → tiny notice, no truncation.
+
+**The strategy this lands:** free tier offers the firehose with explicit guardrails ("hiccup with tokens or pay €20"). Paid tools (`run_citability_audit`, `get_competitor_positioning`, `prescore_draft`, `draft_blog_prompt`, `get_intel(for=audit|blog|competitor)`) return *digested, AI-ready* output — the value-add for Solo subscribers vs raw-data parsing on the client side.
+
+**MCP surface: 13 tools total** — 9 free (including export_intel for free-table subset) + 5 paid (including export_intel for paid tables).
+
 ## 1.5.30 (2026-05-17)
 
 ### MCP — paid analysis tools (the full Solo surface for AI agents)

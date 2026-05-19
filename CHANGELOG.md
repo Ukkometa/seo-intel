@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.32 (2026-05-19)
+
+### Docs — `skill/SKILL.md` rewritten for AI agent discovery
+- Updated YAML frontmatter description: now leads with "Local SEO data layer for AI agents" and enumerates the 13 MCP tools by name so MCP hosts surface them when matching a user query.
+- New top-level **"MCP Server — Native AI Agent Integration"** section right after install: full free / paid tool tables, three agent session patterns (free closed loop, Solo strategic loop, bulk firehose), and an explicit instruction about `export_intel.notice` so agents don't blind-ingest large responses.
+- Header reframed: `OpenClaw-recommended` → `local SEO data layer for AI agents` with two consumer paths (MCP and CLI) called out. Free vs Solo tier is now explicit, with the Ahrefs price comparison front-and-center.
+- Pipeline table extended: `seo-intel intel` CLI primitive + `npx seo-intel-mcp` stdio entry, both with the right tier gating.
+
+Skill files at ukkometa.fi (`/seo-intel/llms.txt`, `llms-ctx.txt`, `skill.md`) inherit this on next site deploy per the publishing pipeline.
+
 ## 1.5.31 (2026-05-17)
 
 ### MCP — `export_intel` ships the full data layer to AI agents

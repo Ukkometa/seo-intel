@@ -31,6 +31,20 @@ export function getDb(dbPath = './seo-intel.db') {
   try { _db.exec('ALTER TABLE extractions ADD COLUMN intent_scores TEXT'); } catch { /* already exists */ }
   try { _db.exec("ALTER TABLE insights ADD COLUMN source TEXT DEFAULT 'cli'"); } catch { /* already exists */ }
 
+  // Problem status tracking (v1.5.35) — agents/users mark items as fixed/wont_fix/snoozed
+  _db.exec(`
+    CREATE TABLE IF NOT EXISTS problem_status (
+      problem_id  TEXT PRIMARY KEY,                      -- matches lib/problems.js makeId() output
+      project     TEXT NOT NULL,
+      status      TEXT NOT NULL,                         -- fixed | wont_fix | snoozed
+      marked_at   INTEGER NOT NULL,
+      marked_by   TEXT,                                  -- 'agent:<name>' | 'cli' | 'dashboard'
+      note        TEXT,
+      expires_at  INTEGER                                -- for snoozed; NULL for fixed/wont_fix
+    );
+    CREATE INDEX IF NOT EXISTS idx_problem_status_project ON problem_status(project, status);
+  `);
+
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
 

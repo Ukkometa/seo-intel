@@ -29,7 +29,7 @@ import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getC
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
 import { readProgress } from '../lib/progress.js';
-import { getProblems, getProblemCounts, PROBLEM_CATEGORIES } from '../lib/problems.js';
+import { getProblems, getProblemCounts, markProblemStatus, getActiveStatusMap, PROBLEM_CATEGORIES, PROBLEM_STATUSES } from '../lib/problems.js';
 
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
 import { prescore } from '../analyses/blog-draft/prescorer.js';
@@ -731,9 +731,10 @@ server.registerTool(
       category: z.enum(PROBLEM_CATEGORIES).optional().describe('Filter to one category'),
       limit: z.number().int().positive().max(500).optional().describe('Max problems to return (default 50)'),
       max_fix_difficulty: z.number().int().min(1).max(5).optional().describe('Cap on fix_difficulty — useful for picking quick wins (set to 2 for "easy" only)'),
+      include_marked: z.boolean().optional().describe('Include problems already marked fixed/wont_fix/snoozed (default false — they are hidden). Useful for auditing what has been suppressed.'),
     },
   },
-  async ({ project, severity, category, limit = 50, max_fix_difficulty }) => {
+  async ({ project, severity, category, limit = 50, max_fix_difficulty, include_marked }) => {
     if (!loadProjectConfig(project)) {
       return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
     }
@@ -744,6 +745,7 @@ server.registerTool(
         severity, category, limit,
         maxFixDifficulty: max_fix_difficulty,
         includePaid,
+        includeMarked: !!include_marked,
       });
       const counts = getProblemCounts(db, project, { includePaid });
       const out = {
@@ -765,11 +767,74 @@ server.registerTool(
   }
 );
 
+// ── Tool: mark_problem_status (free — closes the loop) ────────────────────
+server.registerTool(
+  'mark_problem_status',
+  {
+    description: [
+      "Mark a problem (from list_problems) as fixed, wont_fix, or snoozed. Subsequent list_problems calls will hide it unless the underlying source data re-surfaces it. Free tier — agents need this to confirm 'I fixed it' on subjective problems (positioning, content_gap) whose source data won't auto-clear on re-crawl.",
+      "",
+      "Statuses:",
+      "  fixed     — done. Hide permanently. (If the same problem_id resurfaces from a future crawl, the mark is ignored and it shows again — i.e. the mark is per-instance not per-fingerprint.)",
+      "  wont_fix  — accepted/ignored. Hide permanently.",
+      "  snoozed   — hide for N days (require `snooze_days`). After that the problem re-appears in list_problems.",
+      "",
+      "Re-marking the same problem_id with a different status updates the existing record. To un-hide, re-mark with status='fixed' and snooze_days=0, then re-mark with 'snoozed' / snooze_days=0 — actually simpler: call list_problems(include_marked=true) to see hidden ones and mark them again.",
+    ].join("\n"),
+    inputSchema: {
+      problem_id: z.string().describe('The `id` field from a list_problems result, e.g. "links::orphan::abc1234567"'),
+      project: z.string().describe('Must match the project the problem belongs to'),
+      status: z.enum(PROBLEM_STATUSES).describe('fixed | wont_fix | snoozed'),
+      snooze_days: z.number().int().positive().max(365).optional().describe('Required when status=snoozed. Max 365.'),
+      agent_name: z.string().optional().describe('Provenance — stored as marked_by'),
+      note: z.string().optional().describe('Optional context, e.g. "added internal link from homepage"'),
+    },
+  },
+  async ({ problem_id, project, status, snooze_days, agent_name, note }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const result = markProblemStatus(db, {
+        problemId: problem_id,
+        project,
+        status,
+        markedBy: agent_name ? `agent:${agent_name}` : 'agent',
+        note,
+        snoozeDays: snooze_days,
+      });
+      if (!result.ok) {
+        return { content: [{ type: 'text', text: `seo-intel mark error: ${result.error}` }], isError: true };
+      }
+      const payload = {
+        ok: true,
+        problem_id,
+        project,
+        status,
+        marked_at: new Date(result.marked_at).toISOString(),
+        expires_at: result.expires_at ? new Date(result.expires_at).toISOString() : null,
+        hint: status === 'fixed'
+          ? 'Marked fixed. Hidden from list_problems. Re-call list_problems to confirm.'
+          : status === 'wont_fix'
+          ? 'Marked wont_fix. Permanently hidden. To un-hide: call this tool again with a different status.'
+          : `Snoozed until ${new Date(result.expires_at).toISOString()}. Will re-appear in list_problems after that.`,
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+        structuredContent: payload,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 14 tools — free: list_projects (with nag), list_problems, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free-tier subset); paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt, export_intel (paid tables), and list_problems unlocks paid categories.`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 15 tools — free: list_projects (with nag), list_problems, mark_problem_status, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free-tier subset); paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt, export_intel (paid tables), and list_problems unlocks paid categories.`);
 }
 
 main().catch(err => {

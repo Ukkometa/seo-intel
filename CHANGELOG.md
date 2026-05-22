@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.35 (2026-05-22)
+
+### MCP — `mark_problem_status` closes the Problems loop
+Agents can now confirm fixes and dismiss problems they've handled. Without this tool, subjective problems (positioning, content gaps) would keep re-appearing in `list_problems` even after the agent had addressed them.
+
+- **`mark_problem_status(problem_id, project, status, snooze_days?, agent_name?, note?)`** — **free tier**. Status: `fixed` | `wont_fix` | `snoozed`. Snoozed requires `snooze_days` (1-365). Re-marking the same problem_id updates the existing record.
+- **`list_problems` gains `include_marked: boolean`** — by default marked problems are hidden; set true to audit what's been suppressed (each row gains a `status: 'active' | 'fixed' | 'wont_fix' | 'snoozed'` field).
+- **`problem_counts` in `list_projects` honor marks** — when an agent marks 12 of 26 orphans as fixed, the nag immediately drops to 14. The "warm fuzzy" of clearing things.
+
+Schema: idempotent `CREATE TABLE IF NOT EXISTS problem_status` migration in `getDb()`. Stores `problem_id` (matches `list_problems` output), project, status, marked_at, marked_by (e.g. `agent:claude-opus-4-7`), note, expires_at (for snoozes). Indexed by `(project, status)`.
+
+Verified end-to-end: mark a real orphan → count drops 26→25 → re-list with `include_marked` reveals it with `status: 'fixed'`. Smoke 10/10. MCP surface: 15 tools.
+
 ## 1.5.34 (2026-05-22)
 
 ### MCP — Problems as the entry surface ("what should I fix?")

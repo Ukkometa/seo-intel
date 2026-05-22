@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.34 (2026-05-22)
+
+### MCP — Problems as the entry surface ("what should I fix?")
+The single biggest UX shift in the agent flow. Two new touchpoints turn `list_projects` into a passive nag layer and `list_problems` into the canonical "fix-able findings" tool.
+
+- **`list_problems(project, severity?, category?, limit?, max_fix_difficulty?)`** — severity-sorted, agent-fixable problem list. Every item returns `{id, severity, category, tier, title, description, affected_urls, evidence, fix_template, verification, first_seen, last_seen, fix_difficulty}`. The `fix_template` is the design point — it gives a coding agent a concrete next step (file/URL, what to change, how to verify).
+  - **Free categories**: `tech` (HTTP 4xx/5xx), `indexability` (robots header conflicts), `links` (orphan pages), `schema` (missing structured data on substantive pages).
+  - **Paid categories**: `citability` (low AEO scores from `citability_scores`), `content` / `keyword` / `positioning` (mapped from Intelligence Ledger).
+  - Sorting: severity (critical → warn → info), then fix_difficulty (1=trivial → 5=deep work), then last_seen DESC.
+- **`list_projects` now nags.** Every project response includes `problem_counts`, `stale_days`, and a `nag` string that flags critical/warn counts and stale crawls. Solo users see paid-tier counts; free users see free-tier counts only (no teasing). Example output: `risunouto: 26 warn · crawl 42d stale. Call list_problems('risunouto') to see them.`
+- **New library: `lib/problems.js`** — `getProblems(db, project, opts)` + `getProblemCounts(db, project, opts)` are the unifying primitive. Six collectors today (4 free + 2 paid); future patches add more (decay targets, friction points, mark_problem_status, schema-vs-competitor diffs).
+
+The agent loop this unlocks: `list_projects` → see the nag → `list_problems(project, severity='critical')` → fix the highest-leverage one → `run_crawl(project)` → re-call `list_problems` to verify it cleared. Closed loop, no dashboard required.
+
+**MCP surface: 14 tools.** Next patches: `mark_problem_status` (v1.5.35) + native notification daemon (v1.5.36) + dashboard Problems tab as landing (v1.5.37).
+
 ## 1.5.33 (2026-05-19)
 
 ### Dashboard — visual brief foundation (intel-blue tokens + component utilities)

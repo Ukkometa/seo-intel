@@ -29,6 +29,7 @@ import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getC
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
 import { readProgress } from '../lib/progress.js';
+import { getProblems, getProblemCounts, PROBLEM_CATEGORIES } from '../lib/problems.js';
 
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
 import { prescore } from '../analyses/blog-draft/prescorer.js';
@@ -69,19 +70,50 @@ function listConfigProjects() {
 }
 
 // ── Tool: list_projects (free) ────────────────────────────────────────────
+// Designed as the natural entry point. Returns per-project pending problem
+// counts so that every interaction with the agent surfaces stale audits —
+// the "freemium nag" pattern. Solo users see paid-tier problem counts too.
 server.registerTool(
   'list_projects',
   {
-    description: 'List all SEO Intel projects configured on this machine, each with its target domain and crawled page count. Use this first to discover which projects are available before calling get_intel. Free tier — no license required.',
+    description: 'List all SEO Intel projects on this machine with crawled-page counts AND pending problem counts. Use this as the entry point for every SEO conversation — the response includes a `nag` field per project flagging stale crawls or unresolved critical issues. After noticing the nag, the next natural tool is list_problems(project). Free tier — no license required (Solo users see paid-tier problem counts in addition to free ones).',
   },
   async () => {
     const db = getDb();
     const configs = listConfigProjects();
+    const includePaid = isPro();
+    const now = Date.now();
     const out = configs.map(c => {
       const row = db.prepare(
-        'SELECT COUNT(*) AS n FROM pages p JOIN domains d ON d.id=p.domain_id WHERE d.project=?'
+        'SELECT COUNT(*) AS n, MAX(d.last_crawled) AS last_crawled FROM pages p JOIN domains d ON d.id=p.domain_id WHERE d.project=?'
       ).get(c.project);
-      return { ...c, pages: row?.n || 0 };
+      const pages = row?.n || 0;
+      const lastCrawl = row?.last_crawled || null;
+      const staleDays = lastCrawl ? Math.floor((now - lastCrawl) / 86_400_000) : null;
+      let counts = null;
+      let nag = null;
+      if (pages > 0) {
+        try {
+          counts = getProblemCounts(db, c.project, { includePaid });
+          const reasons = [];
+          if (counts.critical > 0) reasons.push(`${counts.critical} CRITICAL`);
+          if (counts.warn > 0) reasons.push(`${counts.warn} warn`);
+          if (staleDays !== null && staleDays >= 7) reasons.push(`crawl ${staleDays}d stale`);
+          if (reasons.length) {
+            nag = `${reasons.join(' · ')}. Call list_problems('${c.project}') to see them${counts.critical > 0 ? ', then fix the criticals first' : ''}.`;
+          }
+        } catch { /* problems collector failed (e.g. fresh DB) — silent */ }
+      }
+      return {
+        project: c.project,
+        target: c.target,
+        pages,
+        last_crawled: lastCrawl ? new Date(lastCrawl).toISOString() : null,
+        stale_days: staleDays,
+        problem_counts: counts,
+        nag,
+        problems_tier: includePaid ? 'paid' : 'free',
+      };
     });
     return {
       content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
@@ -675,11 +707,69 @@ server.registerTool(
   }
 );
 
+// ── Tool: list_problems (the "what should I fix?" entry tool) ─────────────
+// This is the canonical Problems surface. Returns severity-sorted, agent-
+// fixable findings with affected_urls, fix_template, verification. Free
+// categories: tech, indexability, links, schema. Paid adds: citability,
+// content, keyword, positioning.
+server.registerTool(
+  'list_problems',
+  {
+    description: [
+      "List concrete, fixable SEO problems for a project — severity-sorted, with everything an AI coding agent needs to remediate (affected_urls, fix_template, verification). This is the primary 'what should I work on?' tool: call list_projects first to see the nag/counts, then call list_problems here.",
+      "",
+      "Free tier categories: tech (HTTP errors), indexability (robots conflicts), links (orphan pages), schema (missing structured data).",
+      "Paid tier adds: citability (low AEO scores), content/keyword/positioning gaps from the Intelligence Ledger.",
+      "",
+      "Each problem returns {id, severity, category, tier, title, description, affected_urls, evidence, fix_template, verification, first_seen, last_seen, fix_difficulty}. fix_difficulty: 1=trivial → 5=deep work.",
+      "",
+      "Typical agent loop: list_projects → list_problems(project, severity='critical') → fix highest-leverage one → run_crawl(project) → list_problems again to verify it cleared.",
+    ].join("\n"),
+    inputSchema: {
+      project: z.string(),
+      severity: z.enum(['critical', 'warn', 'info']).optional().describe('Filter to one severity'),
+      category: z.enum(PROBLEM_CATEGORIES).optional().describe('Filter to one category'),
+      limit: z.number().int().positive().max(500).optional().describe('Max problems to return (default 50)'),
+      max_fix_difficulty: z.number().int().min(1).max(5).optional().describe('Cap on fix_difficulty — useful for picking quick wins (set to 2 for "easy" only)'),
+    },
+  },
+  async ({ project, severity, category, limit = 50, max_fix_difficulty }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const includePaid = isPro();
+      const problems = getProblems(db, project, {
+        severity, category, limit,
+        maxFixDifficulty: max_fix_difficulty,
+        includePaid,
+      });
+      const counts = getProblemCounts(db, project, { includePaid });
+      const out = {
+        project,
+        tier: includePaid ? 'paid' : 'free',
+        counts,
+        returned: problems.length,
+        filters: { severity: severity || 'any', category: category || 'any', max_fix_difficulty: max_fix_difficulty || null },
+        upsell: includePaid ? null : 'Solo unlocks citability, content_gap, keyword_gap, positioning categories. Currently showing free-tier categories only (tech, indexability, links, schema). Upgrade at https://ukkometa.fi/en/seo-intel/',
+        problems,
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+        structuredContent: out,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 13 tools — free: list_projects, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free-tier subset); paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt, export_intel (paid tables).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 14 tools — free: list_projects (with nag), list_problems, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free-tier subset); paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt, export_intel (paid tables), and list_problems unlocks paid categories.`);
 }
 
 main().catch(err => {

@@ -314,25 +314,27 @@ async function handlePingOllama(req, res) {
 
     const { checkOllamaRemote, checkLmStudio } = await import('./checks.js');
 
-    // Try Ollama first, then LM Studio if port suggests it or Ollama fails
-    const port = new URL(host).port;
-    if (port === '1234') {
-      // Port 1234 = LM Studio default
-      const lmResult = await checkLmStudio(host);
+    // Probe BOTH engines in parallel. Whichever responds, that's the engine.
+    // Don't gate on port — users can run Ollama on 1234 or LM Studio on 11434
+    // (and many do, e.g. when avoiding port conflicts on shared dev boxes).
+    const [ollamaResult, lmResult] = await Promise.all([
+      checkOllamaRemote(host).catch(() => ({ reachable: false, models: [], host })),
+      checkLmStudio(host).catch(() => ({ reachable: false, models: [], host })),
+    ]);
+
+    if (ollamaResult.reachable) {
+      jsonResponse(res, { ...ollamaResult, mode: 'ollama' });
+    } else if (lmResult.reachable) {
       jsonResponse(res, { ...lmResult, host, mode: 'lmstudio' });
     } else {
-      const result = await checkOllamaRemote(host);
-      if (result.reachable) {
-        jsonResponse(res, result);
-      } else {
-        // Ollama unreachable — try LM Studio as fallback
-        const lmResult = await checkLmStudio(host);
-        if (lmResult.reachable) {
-          jsonResponse(res, { ...lmResult, host, mode: 'lmstudio' });
-        } else {
-          jsonResponse(res, result); // return original Ollama failure
-        }
-      }
+      // Neither engine responded — return a useful error.
+      const port = (() => { try { return new URL(host).port; } catch { return ''; } })();
+      jsonResponse(res, {
+        reachable: false,
+        host,
+        probed: { ollama: `${host}/api/tags`, lmstudio: `${host}/api/v1/models` },
+        hint: `Neither Ollama (port ${port || '11434'} expected) nor LM Studio (port ${port || '1234'} expected) responded at ${host}. Common causes: (1) the engine is bound to 127.0.0.1 only — re-bind to 0.0.0.0 to allow LAN access, (2) firewall blocking inbound port ${port || 'N'}, (3) wrong port. Verify from the LM Studio Developer tab / 'ollama serve' output.`,
+      });
     }
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);

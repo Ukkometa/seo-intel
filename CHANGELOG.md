@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.36 (2026-05-23)
+
+### Setup — LM Studio detection works for LAN hosts (fixes "unreachable" false negative)
+The wizard's host-ping logic was gated on port number — only checked LM Studio if port was exactly 1234, only checked Ollama if anything else. That broke for any non-default setup. **Now probes both engines in parallel for every host** regardless of port.
+
+- **`/api/setup/ping-ollama`** runs `checkOllamaRemote` and `checkLmStudio` in parallel via `Promise.all`. Whichever responds wins. Order: Ollama preferred when both respond (preserves existing behaviour for ambiguous setups).
+- Success message now identifies the engine: *"Connected to LM Studio — 5 model(s) found"* vs *"Connected to Ollama — 3 model(s) found"*.
+- Unreachable error returns a structured `hint` with three common causes (bind to 127.0.0.1 only, firewall, wrong port) — much more useful than the old "check IP, port, and that Ollama is running" message.
+- Wizard surfaces the `hint` directly via HTML-escaped error text. No more misleading "Ollama is running on that machine" when the user is running LM Studio.
+
+The "EXTRACTION HOSTS" section copy already mentioned both engines correctly — only the per-ping result message and the backend gating needed fixing. Existing localhost auto-detection (the green `localhost:1234 active` row in the screenshot) was unaffected.
+
 ## 1.5.35 (2026-05-22)
 
 ### MCP — `mark_problem_status` closes the Problems loop

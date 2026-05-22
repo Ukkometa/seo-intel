@@ -2274,7 +2274,9 @@ input::placeholder {
     let host = input.value.trim();
     if (!host) return;
 
-    // Auto-add protocol and port
+    // Auto-add protocol. Don't auto-add a default port — LM Studio uses 1234,
+    // Ollama uses 11434. If the user pasted without a port, default to Ollama's
+    // 11434 but the probe will also try LM Studio at 1234 if Ollama fails.
     if (!host.startsWith('http')) host = 'http://' + host;
     if (!host.includes(':', host.indexOf('//') + 2)) host += ':11434';
 
@@ -2285,8 +2287,9 @@ input::placeholder {
     try {
       const res = await API.get(`/api/setup/ping-ollama?host=${encodeURIComponent(host)}`);
       if (res.reachable) {
-        result.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Connected — ${res.models.length} model(s) found</span>`;
-        // Append to comma-separated OLLAMA_HOSTS in .env
+        const engine = res.mode === 'lmstudio' ? 'LM Studio' : 'Ollama';
+        result.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Connected to ${engine} — ${res.models.length} model(s) found</span>`;
+        // Append to comma-separated OLLAMA_HOSTS in .env (legacy name covers both engines)
         const currentHosts = (state.systemStatus?.env?.raw?.OLLAMA_HOSTS || '').split(',').map(h => h.trim()).filter(Boolean);
         if (!currentHosts.includes(host)) currentHosts.push(host);
         await API.post('/api/setup/save-env', { key: 'OLLAMA_HOSTS', value: currentHosts.join(',') });
@@ -2298,7 +2301,9 @@ input::placeholder {
         // Reload models with new host
         loadModels();
       } else {
-        result.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-xmark"></i> Unreachable — check IP, port, and that Ollama is running on that machine</span>`;
+        // Better diagnostic — backend now returns a `hint` with common-cause guidance
+        const hint = res.hint || `Check IP, port, and that Ollama (port 11434) or LM Studio (port 1234) is running on that machine and bound to a network interface (not just 127.0.0.1).`;
+        result.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-xmark"></i> Unreachable — ${escapeHtml(hint)}</span>`;
       }
     } catch (err) {
       result.innerHTML = `<span style="color:var(--color-danger);"><i class="fa-solid fa-xmark"></i> ${err.message}</span>`;
@@ -2306,6 +2311,11 @@ input::placeholder {
     btn.disabled = false;
     btn.innerHTML = '<i class="fa-solid fa-satellite-dish"></i> Ping';
   };
+
+  // Light HTML escape so backend-supplied hint strings can't break out
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
   window.removeOllamaHost = async function(host) {
     // Remove single host from comma-separated OLLAMA_HOSTS

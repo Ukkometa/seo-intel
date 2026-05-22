@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.37 (2026-05-23)
+
+### Notify — native macOS / Linux notifications for pending problems
+The "subtle nudge" delivery channel agreed in the v1.5.34 brainstorm. Users don't have to remember to open the dashboard; the OS reminds them when there's work to do.
+
+- **New CLI:** `seo-intel notify [project]` — scans configured projects (or one if specified), fires a native notification per project with critical/warn/info problem counts. Cron-friendly: no interactive output, never blocks, never throws. Pass `--open` to also open the dashboard URL after notifying.
+- **macOS:** uses built-in `osascript` (Notification Center). Glass sound fires when any project has critical issues; quiet otherwise. No third-party deps (no `terminal-notifier` etc).
+- **Linux:** uses `notify-send` (libnotify, ships with GNOME/KDE/XFCE). Falls through to console if not installed.
+- **Windows/unknown:** console-prints the notification so cron logs still capture it.
+- **New library:** `lib/notify.js` exports `notify({ title, message, subtitle?, sound? })` + `openUrl(url)`. Reusable from any future module (e.g. a Site Watch hook firing notifications on regressions).
+
+**Suggested cron entry** (macOS): `0 9 * * * cd /path/to/seo-intel && node cli.js notify` — fires at 9am every day for every project with pending issues.
+
+**Verified live:** 4 notifications fired correctly during testing (carbium 190 warn · 51 info; dgents 11 warn · 1 info; risunouto 26 warn · 11 info; ukkometa 55 warn · 20 info). All four landed in macOS Notification Center.
+
 ## 1.5.36 (2026-05-23)
 
 ### Setup — LM Studio detection works for LAN hosts (fixes "unreachable" false negative)

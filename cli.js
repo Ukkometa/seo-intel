@@ -1456,6 +1456,61 @@ program
     }
   });
 
+// ── NOTIFY (native OS notification for pending problems) ───────────────────
+// Designed to run on cron/launchd. Subtle nudge to push the user back into
+// the dashboard. macOS via osascript, Linux via notify-send, no deps.
+program
+  .command('notify [project]')
+  .description('Fire native macOS/Linux notification for projects with pending problems. Cron-friendly. Pass a project to limit; omit to scan all configured projects.')
+  .option('--open', 'Also open the dashboard URL when a notification fires')
+  .option('--all', 'Notify even when no problems exist (useful for testing)')
+  .option('--port <port>', 'Dashboard port for --open (default 3000)', '3000')
+  .action(async (project, opts) => {
+    const { notify, openUrl } = await import('./lib/notify.js');
+    const { getProblemCounts } = await import('./lib/problems.js');
+    const db = getDb();
+
+    // Resolve project list: explicit arg → single project; otherwise all configs with data
+    const configDir = join(__dirname, 'config');
+    const { readFileSync, readdirSync, existsSync } = await import('node:fs');
+    let projects = [];
+    if (project) {
+      try { loadConfig(project); projects = [{ project }]; }
+      catch (e) { console.error(chalk.red(e.message)); process.exit(1); }
+    } else if (existsSync(configDir)) {
+      projects = readdirSync(configDir)
+        .filter(f => f.endsWith('.json') && f !== 'example.json' && !f.startsWith('setup'))
+        .map(f => {
+          try { const c = JSON.parse(readFileSync(join(configDir, f), 'utf8')); return { project: c.project || f.replace('.json', '') }; }
+          catch { return null; }
+        })
+        .filter(Boolean);
+    }
+
+    let fired = 0;
+    const pro = isPro();
+    for (const { project: p } of projects) {
+      let counts;
+      try { counts = getProblemCounts(db, p, { includePaid: pro }); }
+      catch { continue; }
+      const score = counts.critical * 10 + counts.warn; // weighted: 1 critical = 10 warns
+      if (score === 0 && !opts.all) continue;
+      const title = `SEO Intel — ${p}`;
+      const message = counts.critical > 0
+        ? `${counts.critical} CRITICAL · ${counts.warn} warn pending`
+        : `${counts.warn} warn · ${counts.info} info pending`;
+      notify({ title, message, subtitle: 'Click the dashboard to fix', sound: counts.critical > 0 ? 'Glass' : false });
+      fired++;
+      console.log(chalk.dim(`  📣 ${p}: ${message}`));
+    }
+    if (opts.open && fired > 0) {
+      const url = `http://localhost:${opts.port}/`;
+      openUrl(url);
+      console.log(chalk.dim(`  → opened ${url}`));
+    }
+    if (fired === 0) console.log(chalk.dim('  ✓ No projects need attention.'));
+  });
+
 // ── STATUS ─────────────────────────────────────────────────────────────────
 program
   .command('status')

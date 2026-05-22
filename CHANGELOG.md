@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.5.33 (2026-05-19)
+
+### Dashboard — visual brief foundation (intel-blue tokens + component utilities)
+First step toward the v1.6 marketing-video polish. **Purely additive** — every existing dashboard card looks identical; new tokens and component classes are in place for subsequent patches to opt in page-by-page.
+
+- **Intel-blue palette** (alongside existing gold/purple accents — never mixed in the same component):
+  `--intel-blue: #3b82f6`, plus `--intel-blue-soft`, `--intel-blue-faint`, `--intel-blue-border`, `--intel-blue-glow`.
+- **Signal palette** for citability / health scores:
+  `--signal-good: #4ade80`, `--signal-warn: #f5c842`, `--signal-bad: #f47b5d`.
+- **Surface aliases** under brief-friendly names: `--surface-page`, `--surface-card`, `--surface-off`, `--surface-border`.
+- **`--font-mono` now defined** — previously referenced in 6 places but never declared, falling through to nothing. Now properly resolves to JetBrains Mono → SF Mono → Fira Code. Mono fields (version stamps, code snippets, numeric tables) instantly look sharper without any markup change.
+- **Component utility classes** (opt-in, prefixed `.vb-` for visual-brief):
+  - `.vb-pill` — blue chip with a glowing left dot, for section headers
+  - `.vb-label-caps` — small-caps Inter label, 1.8px letter-spacing
+  - `.vb-num-tabular` — `font-variant-numeric: tabular-nums` + JetBrains Mono for column alignment
+  - `.vb-severity-dot.info / .warn / .crit` — Site Watch dot with sized glow per severity
+  - `.vb-score-big.good / .warn / .bad` — Syne 800 hero numeric with color-matched text-shadow
+  - `.vb-card` — sharp-corner card (0 radius), `0 24px 60px` shadow
+  - `.vb-card-featured` — premium variant with blue gradient + glow shadow
+
+Next: v1.5.34 polishes the Citability page to use these tokens. v1.5.35 adds the Action Export modal. UI polish lands per page; nothing breaks in between.
+
 ## 1.5.32 (2026-05-19)
 
 ### Docs — `skill/SKILL.md` rewritten for AI agent discovery

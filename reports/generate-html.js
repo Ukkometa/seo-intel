@@ -243,7 +243,7 @@ function buildHtmlTemplate(data, opts = {}) {
   <link rel="icon" type="image/png" href="/favicon.png?v=${Date.now()}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
@@ -278,10 +278,128 @@ function buildHtmlTemplate(data, opts = {}) {
       /* Typography */
       --font-display: 'Syne', sans-serif;
       --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
 
       /* Spacing */
       --radius: 6px;
       --max-width: 1200px;
+
+      /* ── v1.6 Visual Brief — Intel Blue System (added v1.5.33) ──────────
+         These tokens are ADDITIVE alongside the existing --accent-gold /
+         --accent-purple palette. Subsequent patches migrate per-page UI
+         to the intel-blue accent; existing pages stay on the gold accent
+         until explicitly migrated. Anti-pattern: never mix gold + blue
+         in the same component. */
+      --intel-blue: #3b82f6;
+      --intel-blue-soft: rgba(59, 130, 246, 0.18);
+      --intel-blue-faint: rgba(59, 130, 246, 0.06);
+      --intel-blue-border: rgba(59, 130, 246, 0.25);
+      --intel-blue-glow: rgba(59, 130, 246, 0.45);
+
+      /* Brief severity palette (brighter/more saturated than legacy --color-*).
+         For new score gradients + severity dots. */
+      --signal-good: #4ade80;
+      --signal-warn: #f5c842;
+      --signal-bad:  #f47b5d;
+
+      /* Brief background tones — already match --bg-primary/--bg-elevated
+         above; re-aliased here so future patches can reference brief naming
+         without remembering the legacy variable names. */
+      --surface-page: #0a0a0a;
+      --surface-card: #161616;
+      --surface-off:  #111111;
+      --surface-border: #262626;
+    }
+
+    /* ── v1.6 Component utilities (added v1.5.33) ─────────────────────────
+       Opt-in classes used by new components. No existing markup changes. */
+
+    /* Pill — section header chip */
+    .vb-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 22px;
+      border-radius: 100px;
+      color: var(--intel-blue);
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: 0.78rem;
+      background: var(--intel-blue-faint);
+      border: 1px solid var(--intel-blue-border);
+      letter-spacing: 0.5px;
+    }
+    .vb-pill::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--intel-blue);
+      box-shadow: 0 0 12px var(--intel-blue-glow);
+    }
+
+    /* All-caps label — small typography accent */
+    .vb-label-caps {
+      font-family: var(--font-body);
+      font-weight: 600;
+      letter-spacing: 1.8px;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      color: var(--text-subtle);
+    }
+
+    /* Tabular numbers — apply to any block of figures so columns align */
+    .vb-num-tabular {
+      font-variant-numeric: tabular-nums;
+      font-family: var(--font-mono);
+    }
+
+    /* Severity dot — Site Watch / Problems tab style */
+    .vb-severity-dot {
+      display: inline-block;
+      border-radius: 50%;
+      vertical-align: middle;
+    }
+    .vb-severity-dot.info { width: 10px; height: 10px; background: var(--signal-good); box-shadow: 0 0 14px rgba(74, 222, 128, 0.65); }
+    .vb-severity-dot.warn { width: 14px; height: 14px; background: var(--signal-warn); box-shadow: 0 0 14px rgba(245, 200, 66, 0.65); }
+    .vb-severity-dot.crit { width: 18px; height: 18px; background: var(--signal-bad);  box-shadow: 0 0 14px rgba(244, 123, 93, 0.65); }
+
+    /* Big score numeric — citability/health hero numbers.
+       Use .vb-score-big.good|warn|bad to drive color + glow. */
+    .vb-score-big {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(3rem, 7vw, 5.25rem);
+      line-height: 1;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+    }
+    .vb-score-big.good { color: var(--signal-good); text-shadow: 0 0 28px rgba(74, 222, 128, 0.33); }
+    .vb-score-big.warn { color: var(--signal-warn); text-shadow: 0 0 28px rgba(245, 200, 66, 0.33); }
+    .vb-score-big.bad  { color: var(--signal-bad);  text-shadow: 0 0 28px rgba(244, 123, 93, 0.33); }
+
+    /* Featured/premium card — for the Solo upsell or hero blocks */
+    .vb-card-featured {
+      background:
+        linear-gradient(180deg, rgba(59,130,246,0.14) 0%, rgba(59,130,246,0.04) 100%),
+        var(--surface-card);
+      border: 1px solid var(--intel-blue-border);
+      border-radius: 0;
+      padding: 32px;
+      box-shadow:
+        0 40px 100px rgba(0, 0, 0, 0.6),
+        0 0 90px rgba(59, 130, 246, 0.18);
+    }
+
+    /* Plain dashboard card per brief — sharp corners, deep shadow.
+       Use for new cards; existing dashboard cards keep their look. */
+    .vb-card {
+      background: var(--surface-card);
+      border: 1px solid var(--surface-border);
+      border-radius: 0;
+      padding: 32px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }

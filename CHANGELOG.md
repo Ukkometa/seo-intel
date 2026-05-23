@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.38 (2026-05-23)
+
+### Fix — LM Studio model count was always 0 (wrong endpoint + wrong parser)
+The wizard showed `localhost:1234 LM Studio · 0 model(s) active` even when LM Studio had models loaded. Two bugs stacked:
+
+1. We were hitting `/api/v1/models` (LM Studio's native endpoint), not `/v1/models` (the OpenAI-compatible one).
+2. Even on the native endpoint, the response shape is `{ models: [{ key, loaded_instances }] }` — we were parsing it as `{ data: [{ id }] }` (OpenAI shape), so even when the call succeeded, the filter zeroed everything out.
+
+Fix in `setup/checks.js`:
+- Try `/v1/models` first (standard OpenAI-compat, listed under LM Studio's "OpenAI-compatible" Developer tab).
+- Fall back to `/api/v1/models` if the OpenAI route is disabled in LM Studio settings.
+- Parse both shapes: `data.data` (OpenAI) and `data.models` (LM Studio native). Identifier extracted via first-of `id | key | model | name`.
+
+Verified against the user's live LM Studio (3 models surfaced correctly — Gemma 4 E2B, an uncensored variant, and an embedding model). Smoke 10/10.
+
 ## 1.5.37 (2026-05-23)
 
 ### Notify — native macOS / Linux notifications for pending problems

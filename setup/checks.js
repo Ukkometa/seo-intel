@@ -80,15 +80,29 @@ export async function checkOllamaRemote(host) {
 export async function checkLmStudio(customUrl) {
   const host = customUrl || process.env.LMSTUDIO_URL || 'http://localhost:1234';
 
+  // LM Studio exposes TWO model endpoints with DIFFERENT response shapes:
+  //   /v1/models        OpenAI-compatible → { data: [{ id }] }
+  //   /api/v1/models    LM Studio native  → { models: [{ key, loaded_instances }] }
+  // Try OpenAI-compat first (standard, smaller payload, listed under "OpenAI-
+  // compatible" tab in LM Studio Developer panel). Fall back to the native
+  // endpoint if the OpenAI one isn't enabled. Parse both shapes.
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
+    let res = await fetch(`${host}/v1/models`, { signal: controller.signal });
+    if (!res.ok) {
+      // OpenAI-compat path off — try LM Studio native
+      res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
+    }
     clearTimeout(timeout);
 
     if (!res.ok) return { reachable: false, models: [], host };
-    const data = await res.json().catch(() => ({ data: [] }));
-    const models = (data.data || []).map(m => m.id || m.model).filter(Boolean);
+    const data = await res.json().catch(() => ({}));
+    // Support both shapes: OpenAI `data[]` and LM Studio native `models[]`.
+    const list = Array.isArray(data.data) ? data.data
+               : Array.isArray(data.models) ? data.models
+               : [];
+    const models = list.map(m => m.id || m.key || m.model || m.name).filter(Boolean);
     return { reachable: true, models, host };
   } catch {
     return { reachable: false, models: [], host };

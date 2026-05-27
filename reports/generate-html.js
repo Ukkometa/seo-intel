@@ -21,6 +21,7 @@ import { isPro } from '../lib/license.js';
 import { getActiveInsights } from '../db/db.js';
 import { getCitabilityScores } from '../analyses/aeo/index.js';
 import { getWatchData } from '../analyses/watch/index.js';
+import { getProblems, getProblemCounts } from '../lib/problems.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -127,6 +128,14 @@ export function gatherProjectData(db, project, config) {
   let citabilityData = null;
   try { citabilityData = getCitabilityScores(db, project); } catch { /* table may not exist yet */ }
 
+  // Problems (v1.5.39) — unified Ahrefs-style "what's broken" feed
+  let problems = [];
+  let problemCounts = null;
+  try {
+    problems = getProblems(db, project, { includePaid: isPro(), limit: 200 });
+    problemCounts = getProblemCounts(db, project, { includePaid: isPro() });
+  } catch { /* fresh DB / migration not run yet — silent */ }
+
   // Site Watch data
   let watchData = null;
   try { watchData = getWatchData(db, project); } catch { /* tables may not exist yet */ }
@@ -155,6 +164,7 @@ export function gatherProjectData(db, project, config) {
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
     keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData, watchData,
+    problems, problemCounts,
   };
 
   // Rollback the owned→target merge so the actual DB is unchanged
@@ -227,6 +237,7 @@ function buildHtmlTemplate(data, opts = {}) {
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
     keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData, watchData,
+    problems = [], problemCounts = null,
   } = data;
 
   const totalPages = domains.reduce((sum, d) => sum + d.page_count, 0);
@@ -2978,6 +2989,9 @@ function buildHtmlTemplate(data, opts = {}) {
   </script>
 
   <div class="dashboard">
+
+    <!-- ═══ PROBLEMS (v1.5.39 — Ahrefs-style landing card) ═══ -->
+    ${buildProblemsCard(problems, problemCounts, escapeHtml, project)}
 
     <!-- ═══ GSC PERFORMANCE TREND ═══ -->
     ${gscData ? (() => {
@@ -5849,6 +5863,115 @@ function buildMultiHtmlTemplate(allProjectData) {
 
 // ─── AEO Card Builder ────────────────────────────────────────────────────────
 
+// ─── Problems card (v1.5.39) — Ahrefs-style unified "what's broken" feed ──
+// Uses lib/problems.js getProblems() — single source of truth shared with MCP.
+function buildProblemsCard(problems, counts, escapeHtml, project) {
+  if (!counts || counts.total === 0) {
+    return `
+      <div class="card full-width vb-card" id="problems-card" style="margin-bottom: 24px;">
+        <div style="display:flex; align-items:center; gap:14px; margin-bottom:14px;">
+          <span class="vb-pill">Problems</span>
+          <span class="vb-label-caps">all clear</span>
+        </div>
+        <div style="color: var(--text-muted); font-size: 0.85rem;">
+          <i class="fa-solid fa-check" style="color: var(--signal-good); margin-right: 6px;"></i>
+          No pending issues detected for this project. Run a fresh crawl to refresh detection.
+        </div>
+      </div>`;
+  }
+
+  const sev = (s) => s === 'critical' ? 'crit' : s === 'warn' ? 'warn' : 'info';
+  const sevColor = (s) => s === 'critical' ? 'var(--signal-bad)' : s === 'warn' ? 'var(--signal-warn)' : 'var(--signal-good)';
+  const sevLabel = (s) => s.toUpperCase();
+  const diffStars = (n) => '●'.repeat(Math.max(1, Math.min(5, n))) + '○'.repeat(5 - Math.max(1, Math.min(5, n)));
+
+  const top = problems.slice(0, 12);
+  const remaining = problems.length - top.length;
+
+  const rows = top.map(p => {
+    const sevClass = sev(p.severity);
+    const sevCol = sevColor(p.severity);
+    const fix = (p.fix_template || '').slice(0, 200);
+    const urls = (p.affected_urls || []).slice(0, 3).map(u => {
+      try { return new URL(u).pathname || u; } catch { return u.slice(0, 50); }
+    });
+    return `
+      <tr data-problem-id="${escapeHtml(p.id)}">
+        <td style="vertical-align:top; padding-top: 14px;">
+          <span class="vb-severity-dot ${sevClass}"></span>
+        </td>
+        <td style="vertical-align:top;">
+          <div style="font-family: var(--font-display); font-weight: 700; font-size: 0.92rem; color: var(--text-primary); line-height: 1.3;">${escapeHtml(p.title)}</div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; line-height: 1.5;">${escapeHtml(p.description)}</div>
+          ${urls.length ? `<div class="vb-num-tabular" style="font-size: 0.68rem; color: var(--text-subtle); margin-top: 4px;">${urls.map(u => `<code style="background:transparent;">${escapeHtml(u)}</code>`).join(' · ')}</div>` : ''}
+        </td>
+        <td style="vertical-align:top; padding-top: 14px;">
+          <span class="vb-label-caps" style="color: ${sevCol};">${sevLabel(p.severity)}</span>
+          <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">${escapeHtml(p.category)}</div>
+        </td>
+        <td style="vertical-align:top; padding-top: 14px;" title="Fix difficulty: ${p.fix_difficulty}/5">
+          <span style="color: var(--intel-blue); font-size: 0.7rem; letter-spacing: 1px;">${diffStars(p.fix_difficulty)}</span>
+        </td>
+        <td style="vertical-align:top; padding-top: 12px;">
+          <details style="font-size: 0.7rem;">
+            <summary style="cursor:pointer; color: var(--intel-blue); font-weight: 600; user-select: none;">Fix</summary>
+            <div style="margin-top: 8px; padding: 10px; background: var(--surface-off); border-left: 2px solid var(--intel-blue); color: var(--text-secondary); line-height: 1.5; font-size: 0.72rem;">${escapeHtml(fix)}${(p.fix_template || '').length > 200 ? '…' : ''}</div>
+          </details>
+        </td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="card full-width vb-card" id="problems-card" style="margin-bottom: 24px;">
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom: 18px; flex-wrap: wrap;">
+        <span class="vb-pill">Problems</span>
+        <span style="font-family: var(--font-display); font-weight: 700; font-size: 1.4rem; color: var(--text-primary); letter-spacing: -0.02em;">${counts.total} issue${counts.total === 1 ? '' : 's'} pending</span>
+        <span class="vb-label-caps" style="margin-left:auto; color: var(--text-subtle);">ahrefs-style site health</span>
+      </div>
+
+      <div style="display:flex; gap: 32px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--surface-border); flex-wrap: wrap;">
+        <div>
+          <div class="vb-score-big ${counts.critical > 0 ? 'bad' : 'good'}">${counts.critical}</div>
+          <div class="vb-label-caps" style="margin-top: 6px;">critical</div>
+        </div>
+        <div>
+          <div class="vb-score-big ${counts.warn > 9 ? 'warn' : 'good'}">${counts.warn}</div>
+          <div class="vb-label-caps" style="margin-top: 6px;">warn</div>
+        </div>
+        <div>
+          <div class="vb-score-big good">${counts.info}</div>
+          <div class="vb-label-caps" style="margin-top: 6px;">info</div>
+        </div>
+        <div style="margin-left:auto; max-width: 420px; align-self: center;">
+          <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6;">
+            Each problem ships with a <strong style="color: var(--intel-blue);">fix template</strong> and <strong style="color: var(--intel-blue);">verification</strong> step — copy the Fix into an AI agent (via MCP <code style="color: var(--text-primary); background: var(--surface-off); padding: 1px 5px; border-radius: 3px; font-size: 0.7rem;">list_problems</code>) or apply manually.
+          </div>
+        </div>
+      </div>
+
+      <table class="analysis-table" style="margin: 0;">
+        <thead>
+          <tr>
+            <th style="width: 28px;"></th>
+            <th>Issue</th>
+            <th style="width: 90px;">Severity</th>
+            <th style="width: 90px;">Difficulty</th>
+            <th style="width: 100px;">Action</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+
+      ${remaining > 0 ? `
+        <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--surface-border); text-align: center;">
+          <span style="color: var(--text-muted); font-size: 0.78rem;">
+            Showing top ${top.length} of ${counts.total} — query the rest via MCP:
+            <code style="color: var(--intel-blue); background: var(--surface-off); padding: 2px 6px; border-radius: 3px; margin-left: 4px;">list_problems("${escapeHtml(project)}", limit=${counts.total})</code>
+          </span>
+        </div>` : ''}
+    </div>`;
+}
+
 function buildAeoCard(citabilityData, escapeHtml, project) {
   const targetScores = citabilityData.filter(s => s.role === 'target' || s.role === 'owned');
   const compScores = citabilityData.filter(s => s.role === 'competitor');
@@ -5867,7 +5990,8 @@ function buildAeoCard(citabilityData, escapeHtml, project) {
     avg: Math.round(targetScores.reduce((a, s) => a + (s[sig] || 0), 0) / targetScores.length),
   }));
 
-  const scoreColor = (s) => s >= 75 ? '#4ade80' : s >= 55 ? '#facc15' : s >= 35 ? '#ff8c00' : '#ef4444';
+  // Brief gradient: 0–34 bad, 35–59 warn, 60+ good (matches lib/problems.js severity)
+  const scoreColor = (s) => s >= 60 ? 'var(--signal-good)' : s >= 35 ? 'var(--signal-warn)' : 'var(--signal-bad)';
 
   // Page rows (worst first, limit 25)
   const pageRows = targetScores
@@ -5908,20 +6032,28 @@ function buildAeoCard(citabilityData, escapeHtml, project) {
     compStatHtml += `<div class="ki-stat"><span class="ki-stat-number" style="color:${scoreColor(avgComp)}">${avgComp}</span><span class="ki-stat-label">Competitor Avg</span></div>`;
   }
   if (delta !== null) {
-    compStatHtml += `<div class="ki-stat"><span class="ki-stat-number" style="color:${delta >= 0 ? '#4ade80' : '#ef4444'}">${delta > 0 ? '+' : ''}${delta}</span><span class="ki-stat-label">Delta</span></div>`;
+    compStatHtml += `<div class="ki-stat"><span class="ki-stat-number" style="color:${delta >= 0 ? 'var(--signal-good)' : 'var(--signal-bad)'}">${delta > 0 ? '+' : ''}${delta}</span><span class="ki-stat-label">Delta</span></div>`;
   }
+
+  // Visual-brief pill header: pick the worst signal for the "weakest area" caption
+  const weakestSignal = [...signalAvgs].sort((a, b) => a.avg - b.avg)[0];
 
   return `
     <div class="card full-width" id="aeo-citability">
       ${cardExportHtml('aeo', project)}
-      <h2><span class="icon"><i class="fa-solid fa-robot"></i></span> AI Citability Audit</h2>
+      <div style="display:flex; align-items:center; gap: 14px; margin-bottom: 18px; flex-wrap: wrap;">
+        <span class="vb-pill">AI Citability</span>
+        <span style="font-family: var(--font-display); font-weight: 700; font-size: 1.4rem; color: var(--text-primary); letter-spacing: -0.02em;">${targetScores.length} pages scored</span>
+        ${weakestSignal ? `<span class="vb-label-caps" style="margin-left:auto; color: var(--text-subtle);">weakest: ${weakestSignal.label}</span>` : ''}
+      </div>
+      <h2 style="display:none;"><span class="icon"><i class="fa-solid fa-robot"></i></span> AI Citability Audit</h2>
       <div class="ki-stat-bar">
         <div class="ki-stat"><span class="ki-stat-number" style="color:${scoreColor(avgTarget)}">${avgTarget}</span><span class="ki-stat-label">Target Avg</span></div>
         ${compStatHtml}
-        <div class="ki-stat"><span class="ki-stat-number" style="color:#4ade80">${tierCounts.excellent}</span><span class="ki-stat-label">Excellent</span></div>
-        <div class="ki-stat"><span class="ki-stat-number" style="color:#facc15">${tierCounts.good}</span><span class="ki-stat-label">Good</span></div>
-        <div class="ki-stat"><span class="ki-stat-number" style="color:#ff8c00">${tierCounts.needs_work}</span><span class="ki-stat-label">Needs Work</span></div>
-        <div class="ki-stat"><span class="ki-stat-number" style="color:#ef4444">${tierCounts.poor}</span><span class="ki-stat-label">Poor</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:var(--signal-good)">${tierCounts.excellent}</span><span class="ki-stat-label">Excellent</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:var(--signal-warn)">${tierCounts.good}</span><span class="ki-stat-label">Good</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:var(--signal-bad);opacity:0.85">${tierCounts.needs_work}</span><span class="ki-stat-label">Needs Work</span></div>
+        <div class="ki-stat"><span class="ki-stat-number" style="color:var(--signal-bad)">${tierCounts.poor}</span><span class="ki-stat-label">Poor</span></div>
       </div>
 
       <div style="display:flex;gap:2rem;margin:1.5rem 0;flex-wrap:wrap;">

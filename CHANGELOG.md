@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.39 (2026-05-27)
+
+### Dashboard — Problems card as the landing surface (Ahrefs-style "what's broken")
+The biggest UX shift since MCP shipped. Opening the dashboard now greets the user with a unified Problems card at the very top of every project panel — same data backing the `list_problems` MCP tool, finally surfaced for humans too.
+
+- **New `buildProblemsCard()`** renders Ahrefs-style: big counters (Critical / Warn / Info) using the v1.5.33 visual-brief `.vb-score-big` numerals, top 12 issues table with severity dots, category, fix-difficulty stars (1–5), and an expandable "Fix" disclosure per row showing the agent-friendly `fix_template`.
+- Single source of truth: same `getProblems()` library function that powers `list_problems` MCP tool. Dashboard and AI agents see identical data; closing one closes both.
+- "Showing top 12 of 190 — query the rest via MCP: `list_problems("carbium", limit=190)`" — makes the agent escape hatch visible from the dashboard itself.
+- Empty state: "all clear" message when no problems pending.
+
+### Dashboard — AI Citability card polished to brief spec
+- Inline colors (`#4ade80`, `#facc15`, `#ff8c00`, `#ef4444`) swapped to brief signal tokens (`var(--signal-good)`, `var(--signal-warn)`, `var(--signal-bad)`). One color system, no drift.
+- Score gradient aligned with `lib/problems.js` severity buckets: ≥60 good, 35–59 warn, <35 bad.
+- New `.vb-pill` header chip with the "weakest signal" caption ("weakest: answer density") so the user sees the headline takeaway at a glance.
+- Existing signal bars + page-score table preserved — minimal disruption, maximum polish.
+
+**Verified live against carbium / risunouto / ukkometa:** 36 severity dots rendered across three Problems cards, 3 MCP-hint references, citability cards on each pro panel, no existing functionality broken. Smoke 10/10. HTML size unchanged (2.4MB).
+
+Next: setup-wizard cron-entry installer (v1.5.40), then per-page polish for Site Watch timeline / Competitive Radar / Action Export modal.
+
 ## 1.5.38 (2026-05-23)
 
 ### Fix — LM Studio model count was always 0 (wrong endpoint + wrong parser)

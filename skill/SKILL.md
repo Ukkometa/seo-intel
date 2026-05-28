@@ -5,15 +5,15 @@ description: >
   keyword gaps, content strategy, site audits, AI citability (AEO), or wants to crawl/analyze websites.
   Ships a Model Context Protocol (MCP) server so Claude Code / Cursor / Cline / any MCP host can call
   seo-intel's local SQLite intelligence as native tools — list_projects, get_intel, get_pages,
-  list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free),
-  plus run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt (Solo).
+  list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel,
+  run_citability_audit, prescore_draft, draft_blog_prompt (all free), plus get_competitor_positioning (Solo).
   Also covers: CLI commands (crawl/extract/analyze/aeo/keywords/watch/blog-draft/export), Intelligence
   Ledger (deduped insight accumulation), agentic exports, gap-intel, technical audit, and competitive
-  action planning. Free tier covers crawl + raw-data MCP firehose. Solo (€19.99/mo) unlocks the
-  analysis layer.
+  action planning. Free tier covers your own site end-to-end — crawl, AI citability, keyword intel,
+  dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.32)
+# SEO Intel (v1.5.41)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -21,9 +21,9 @@ The local **SEO data layer for AI agents**. Crawl your site + competitors, store
 - **AI agents via MCP** — install `seo-intel-mcp` into Claude Code / Cursor / Cline / any MCP host. The agent's own flagship LLM (Opus / GPT / Gemini) does synthesis using seo-intel as the deterministic data source.
 - **Humans via CLI + dashboard** — `seo-intel <command>` for power users, `seo-intel serve` for the web dashboard.
 
-**Free vs Solo:**
-- **Free** = crawl + raw-data MCP firehose (read pages/keywords/headings/links, trigger crawls, persist agent-generated findings)
-- **Solo (€19.99/mo, ~14× cheaper than Ahrefs)** = the analysis layer (citability scoring, competitor positioning, blog draft prompts, AEO prescoring, full data export with extractions + insights tables)
+**Free vs Solo** (the line: *free thinks; paid remembers and watches*):
+- **Free** = everything about **your own** site — crawl, AI citability (AEO) scoring, keyword intelligence, template/orphan detection, JS-render delta, Search Console insights, blog-draft prompts, the full dashboard, and the daily problem-notification cron. A capable agent commoditizes one-shot analysis anyway, so own-site analysis is free.
+- **Solo (€19.99/mo, ~14× cheaper than Ahrefs)** = what an agent structurally can't do for itself — **competitor synthesis** (gap analysis, positioning, keyword battleground, competitor export/digest), **automation** (scheduled crawls), and **history & trends** (crawl change brief, publishing velocity).
 
 ## Install
 
@@ -38,55 +38,56 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+)
 
-The MCP server exposes 13 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required.
+The MCP server exposes 15 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. Almost everything is free — only competitor synthesis requires Solo.
 
-### Free tier MCP tools (9)
+### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
 |---|---|
 | `list_projects` | Discover configured projects + page counts |
 | `get_intel(project, for='raw')` | Structured digest — domains, totals, last crawl |
+| `get_intel(project, for='audit')` | Citability + active insights ledger |
+| `get_intel(project, for='blog')` | Keyword gaps + long tails + drafting hints |
 | `get_pages(project, role?, limit?, offset?)` | Paginated page list with title/word count/status |
 | `list_keywords(project, domain?, limit?)` | Top extracted keywords by domain + location |
 | `get_headings(project, url, limit?)` | Heading structure (H1–H6) for a specific page |
 | `run_crawl(project, stealth?, max_pages?)` | Spawn a crawl as detached subprocess; returns pid |
 | `get_crawl_status()` | Read most recent job's progress with PID liveness |
 | `ingest_insight(project, type, data, agent_name?)` | Persist agent-generated insight to the ledger (deduped) |
-| `export_intel(project, tables?, max_rows_per_table?)` | Bulk raw export of free tables. Includes a `notice` field telling the agent NOT to ingest wholesale — pipe to file or use targeted tools instead |
-
-### Paid (Solo) MCP tools (4 + 3 slices)
-| Tool | Purpose |
-|---|---|
-| `get_intel(project, for='audit')` | Citability + active insights ledger |
-| `get_intel(project, for='blog')` | Keyword gaps + long tails + drafting hints |
-| `get_intel(project, for='competitor')` | Competitor summary + keyword matrix |
+| `list_problems(project, severity?, limit?)` | Ahrefs-style "what's broken" — prioritised issues with fix templates |
+| `mark_problem_status(project, problem_id, status, agent_name?)` | Mark a problem done/dismissed |
 | `run_citability_audit(project, include_competitors?)` | AEO scoring (6 signals); persists scores + upserts insights |
-| `get_competitor_positioning(project)` | Strategic positioning narrative + competitor coverage |
 | `prescore_draft(draft_md)` | Pre-publish AEO scorer for agent-written content |
 | `draft_blog_prompt(project, topic?, lang?, content_type?)` | AEO-aware prompt seeded with gap data — agent's LLM writes the draft |
-| `export_intel(project, tables=[...paid])` | Adds extractions, analyses, page_schemas, citability_scores, insights |
+| `export_intel(project, tables?, max_rows_per_table?)` | Bulk export of own-site tables (pages, keywords, headings, links, technical, schemas, extractions, citability scores, insights). Includes a `notice` field telling the agent NOT to ingest wholesale — pipe to file or use targeted tools instead |
+
+### Solo (paid) MCP surface — competitor synthesis only
+| Tool | Purpose |
+|---|---|
+| `get_competitor_positioning(project)` | Strategic positioning narrative + competitor coverage |
+| `get_intel(project, for='competitor')` | Competitor summary + keyword matrix |
+| `export_intel(project, tables=['analyses'])` | Adds the competitor gap-analysis history table |
 
 ### Agent session patterns
 
-**Free-tier closed loop** (no license required):
+**Free-tier closed loop** (no license required — full own-site workflow):
 ```
 1. list_projects                                  # discover
 2. get_crawl_status                               # check freshness
 3. run_crawl(carbium) if stale                    # refresh
-4. get_intel(carbium, for=raw) + get_pages        # gather
-5. agent's own Opus/GPT does analysis             # think
-6. ingest_insight(content_gap, ...)               # persist
-7. next session: get_intel(audit) shows past findings
+4. run_citability_audit(carbium)                  # score everything (AEO, 6 signals)
+5. get_intel(carbium, for=audit|blog)             # citability + gaps + hints
+6. draft_blog_prompt(carbium, topic=X)            # AEO-aware prompt
+7. agent's own Opus/GPT writes the draft          # generate
+8. prescore_draft(draft_md)                       # 0-100 score, revise until ≥ 60
+9. ingest_insight(...) → next session get_intel(audit) shows past findings
 ```
 
-**Solo-tier strategic loop:**
+**Solo-tier competitor loop** (the part an agent can't gather itself):
 ```
-1. run_citability_audit(carbium)                  # score everything
-2. get_competitor_positioning(carbium)            # strategic narrative
-3. get_intel(carbium, for=blog)                   # gaps + hints
-4. draft_blog_prompt(carbium, topic=X)            # AEO-aware prompt
-5. agent's Opus/GPT writes the draft              # generate
-6. prescore_draft(draft_md)                       # 0-100 score
-7. revise until ≥ 60, then ingest_insight + publish
+1. run_crawl(carbium) with competitors configured # crawl the field
+2. get_competitor_positioning(carbium)            # strategic narrative + coverage
+3. get_intel(carbium, for=competitor)             # competitor summary + keyword matrix
+4. feed into the free drafting loop above          # out-execute the gaps
 ```
 
 **Bulk firehose** (free or Solo, both with safety):
@@ -94,7 +95,7 @@ The MCP server exposes 13 tools as native AI agent calls. Agents discover tool d
 export_intel(project)                             # default cap 1000 rows/table
 # Read response.notice FIRST — it explicitly says do NOT ingest wholesale.
 # Recommended: pipe to a file via Bash tool, then query with jq/sqlite-utils.
-# For pre-parsed analyses, use the targeted Solo tools instead.
+# Own-site tables are free; the competitor gap-analysis history needs Solo.
 ```
 
 **Important:** the `export_intel` response includes a top-level `notice` field with `level: important|critical`, token estimate, and instructions. Agents should ALWAYS read the notice before deciding what to do with the data — for large projects (carbium-sized), the firehose is ~300k tokens and will blow up most context windows. Save to file or use targeted tools.
@@ -107,18 +108,18 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 
 | Stage | Command | Gate | Best engine |
 |---|---|---|---|
-| **Scan** | `seo-intel scan <domain>` | Solo | Full pipeline (no config) |
+| **Scan** | `seo-intel scan <domain>` | Free | Full pipeline (no config) |
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
-| Extract | `seo-intel extract <project>` | Solo | Ollama / Gemma 4 or Qwen local |
-| Analyze | `seo-intel analyze <project>` | Solo | OpenClaw (Opus/Sonnet) |
-| AEO | `seo-intel aeo <project>` | Solo | Pure local (no AI needed) |
+| Extract | `seo-intel extract <project>` | Free | Ollama / Gemma 4 or Qwen local |
+| Analyze | `seo-intel analyze <project>` | Solo (competitor) | OpenClaw (Opus/Sonnet) |
+| AEO | `seo-intel aeo <project>` | Free | Pure local (no AI needed) |
 | Watch | `seo-intel watch <project>` | Free | Pure local (diff engine) |
-| Keywords | `seo-intel keywords <project>` | Solo | OpenClaw (Opus/Sonnet) |
-| Blog Draft | `seo-intel blog-draft <project>` | Solo | Cloud LLM (Gemini/Claude/GPT) |
-| Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (full) | SQL heuristics |
-| Dashboard | `seo-intel serve` | Free (limited) / Solo (full) | HTML |
-| **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw) / Solo (others) | Pure DB read |
-| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 13 native MCP tools for AI agents |
+| Keywords | `seo-intel keywords <project>` | Free | OpenClaw (Opus/Sonnet) |
+| Blog Draft | `seo-intel blog-draft <project>` | Free | Cloud LLM (Gemini/Claude/GPT) |
+| Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
+| Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
+| **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
+| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 15 native MCP tools for AI agents |
 
 ### Agent interpretation rule
 
@@ -151,7 +152,7 @@ seo-intel keywords <project>       # Keyword Inventor — traditional + AI/agent
 seo-intel brief <project>          # Generate content briefs for new pages
 seo-intel gap-intel <project>      # Topic/content gap analysis vs competitors (Solo)
 seo-intel watch <project>          # Site health monitor — diff between crawl runs
-seo-intel blog-draft <project>     # Generate AEO-optimised blog post draft (Solo)
+seo-intel blog-draft <project>     # Generate AEO-optimised blog post draft (Free)
 seo-intel html <project>           # Generate dashboard
 seo-intel serve                    # Web dashboard at localhost:3000
 seo-intel status                   # Data freshness + summary
@@ -275,8 +276,8 @@ seo-intel shallow <project>        # Quick technical audit (no full crawl needed
 seo-intel competitors <project>    # Manage competitor list
 seo-intel subdomains <domain>      # Subdomain discovery
 seo-intel gap-intel <project>      # Topic gap analysis vs competitor domains (Solo)
-seo-intel watch <project>          # Site health monitor — diff between crawl runs (Solo)
-seo-intel blog-draft <project>     # AEO-optimised blog post draft (Solo)
+seo-intel watch <project>          # Site health monitor — diff between crawl runs (Free)
+seo-intel blog-draft <project>     # AEO-optimised blog post draft (Free)
 ```
 
 ## Site Watch — Health Monitoring & Change Detection (v1.4.2+)
@@ -313,7 +314,7 @@ seo-intel watch <project> --format json  # Structured JSON output
 
 ## Technical Audit — Extended-Data Validation (v1.5.23)
 
-Reads signals captured during crawl and produces concrete findings. Extended-data feature — requires Solo tier.
+Reads signals captured during crawl and produces concrete findings. Own-site technical validation — available on the free tier.
 
 ```bash
 seo-intel tech-audit <project>                # Audit all domains in project
@@ -346,7 +347,7 @@ seo-intel blog-draft <project> --model claude --save    # Use Claude, save to re
 
 **Models:** gemini (default), claude, gpt, deepseek
 
-Solo tier only.
+Free tier — drafting for your own site.
 
 ## Gap Intel — Topic Coverage Gap Analysis (v1.4.0)
 
@@ -782,7 +783,7 @@ Wire via OpenClaw cron for proactive briefings delivered to your chat.
 
 | Tier | Price | Features |
 |---|---|---|
-| Free | €0 | Unlimited crawl, technical exports, crawl-only dashboard, Site Watch |
-| Solo | €19.99/mo or €199.99/yr | Full AI pipeline, AEO, all exports, full dashboard |
+| Free | €0 | Your own site, end-to-end: unlimited crawl, extraction, AI Citability (AEO), keyword intel, templates/orphans, JS-render delta, GSC insights, blog drafts, technical exports, full dashboard, Site Watch, daily problem cron |
+| Solo | €19.99/mo or €199.99/yr | Everything in Free + competitor synthesis (gap analysis, positioning, keyword battleground), scheduled crawls, and history/trends (change brief, publishing velocity) |
 
 Solo via [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/).

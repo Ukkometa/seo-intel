@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.41 (2026-05-28)
+
+### Your own site is now fully free — across CLI, MCP, and the dashboard
+Everything SEO Intel can tell you about **your own** site is now available on the free tier: full crawl, AI Citability (AEO) scoring, keyword intelligence, programmatic template detection, orphan detection, JS-rendering delta, Search Console insights, blog-draft generation, and the complete dashboard. The daily problem-notification cron stays free too.
+
+Solo (€19.99/mo) now focuses on the things a tool has to do that an AI agent can't do for itself:
+
+- **Competitor synthesis** — gap analysis, keyword battleground, positioning, competitive landscape sections, and the competitor export/digest.
+- **Automation** — the scheduled-crawl scheduler.
+- **History & trends** — the crawl change brief ("what changed") and publishing velocity.
+
+**CLI:** own-site commands (`aeo`, `keywords`, `templates`, `orphans`, `js-delta`, `blog-draft`, `gsc-insights`, `scan`, `extract`, `html`) no longer prompt to upgrade. `intel <project> --for=audit|blog` is free; `--for=competitor` is Solo.
+
+**MCP:** `run_citability_audit`, `prescore_draft`, and `draft_blog_prompt` are now free tools. `export_intel` returns all own-site tables (pages, keywords, headings, links, technical, schemas, extractions, citability scores, and the Intelligence Ledger) for free; only the competitor gap-analysis history requires Solo. `get_competitor_positioning` remains Solo.
+
+**Dashboard:** collapsed to a single template that gates sections individually — own-site analysis (citability, keyword inventor, top keywords, GSC insights, internal links, exports, drafts) renders on every tier; competitor and strategy sections render with Solo. The old separate free-tier dashboard codepath is gone.
+
 ## 1.5.40 (2026-05-28)
 
 ### Setup wizard — daily notifications now self-install

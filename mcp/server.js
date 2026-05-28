@@ -414,18 +414,17 @@ server.registerTool(
   }
 );
 
-// ── Tool: run_citability_audit (PAID) ─────────────────────────────────────
+// ── Tool: run_citability_audit (FREE) ─────────────────────────────────────
 server.registerTool(
   'run_citability_audit',
   {
-    description: 'Run AEO citability scoring across all crawled pages (6 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage). Persists scores to citability_scores and upserts citability_gap insights into the ledger. Pure function — fast, no LLM calls. Paid tier.',
+    description: 'Run AEO citability scoring across all crawled pages (6 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage). Persists scores to citability_scores and upserts citability_gap insights into the ledger. Pure function — fast, no LLM calls. Free tier — analysis of your own site is free.',
     inputSchema: {
       project: z.string(),
       include_competitors: z.boolean().optional().describe('Score competitor pages too (default true)'),
     },
   },
   async ({ project, include_competitors = true }) => {
-    if (!isPro()) return paidGate('run_citability_audit');
     if (!loadProjectConfig(project)) {
       return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
     }
@@ -497,17 +496,16 @@ server.registerTool(
   }
 );
 
-// ── Tool: prescore_draft (PAID) ───────────────────────────────────────────
+// ── Tool: prescore_draft (FREE) ───────────────────────────────────────────
 server.registerTool(
   'prescore_draft',
   {
-    description: 'Run the AEO scorer on a markdown draft before publishing. Returns the same 6-signal breakdown the dashboard uses (entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage) plus the overall 0-100 score and tier (excellent / good / fair / poor). Use this as a pre-publish gate when drafting via draft_blog_prompt — score < 60 means revise. Paid tier.',
+    description: 'Run the AEO scorer on a markdown draft before publishing. Returns the same 6-signal breakdown the dashboard uses (entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage) plus the overall 0-100 score and tier (excellent / good / fair / poor). Use this as a pre-publish gate when drafting via draft_blog_prompt — score < 60 means revise. Free tier.',
     inputSchema: {
       draft_md: z.string().describe('Full markdown of the draft, including YAML frontmatter if present. The scorer extracts headings, word count, schema_type from frontmatter, etc.'),
     },
   },
   async ({ draft_md }) => {
-    if (!isPro()) return paidGate('prescore_draft');
     try {
       const score = prescore(draft_md);
       const out = {
@@ -530,11 +528,11 @@ server.registerTool(
   }
 );
 
-// ── Tool: draft_blog_prompt (PAID) ────────────────────────────────────────
+// ── Tool: draft_blog_prompt (FREE) ────────────────────────────────────────
 server.registerTool(
   'draft_blog_prompt',
   {
-    description: 'Generate an AEO-aware blog draft prompt seeded with full project context — keyword gaps, citability gaps, top entities, brand voice notes, competitor heading patterns. The agent\'s own LLM writes the draft using this prompt. Pair with prescore_draft for a write→score→revise loop. Paid tier.',
+    description: 'Generate an AEO-aware blog draft prompt seeded with full project context — keyword gaps, citability gaps, top entities, brand voice notes, competitor heading patterns. The agent\'s own LLM writes the draft using this prompt. Pair with prescore_draft for a write→score→revise loop. Free tier.',
     inputSchema: {
       project: z.string(),
       topic: z.string().optional().describe('Specific topic to draft about. If omitted, the prompt asks the LLM to pick the highest-leverage topic from the gap data.'),
@@ -543,7 +541,6 @@ server.registerTool(
     },
   },
   async ({ project, topic, lang = 'en', content_type = 'blog' }) => {
-    if (!isPro()) return paidGate('draft_blog_prompt');
     const config = loadProjectConfig(project);
     if (!config) {
       return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
@@ -572,8 +569,10 @@ server.registerTool(
 );
 
 // ── Tool: export_intel (firehose; free tables + paid tables) ──────────────
-const FREE_EXPORT_TABLES = ['pages', 'keywords', 'headings', 'links', 'technical', 'sitemap_urls'];
-const PAID_EXPORT_TABLES = ['extractions', 'analyses', 'page_schemas', 'citability_scores', 'insights'];
+// v1.5.41: own-site derived data (extractions, schemas, citability, the
+// ledger) is free — only the competitor gap analysis (`analyses`) is paid.
+const FREE_EXPORT_TABLES = ['pages', 'keywords', 'headings', 'links', 'technical', 'sitemap_urls', 'extractions', 'page_schemas', 'citability_scores', 'insights'];
+const PAID_EXPORT_TABLES = ['analyses'];
 const ALL_EXPORT_TABLES = [...FREE_EXPORT_TABLES, ...PAID_EXPORT_TABLES];
 
 const EXPORT_TABLE_QUERIES = {
@@ -597,7 +596,7 @@ const MAX_MAX_ROWS_PER_TABLE = 50000;
 function buildExportNotice({ tokens, bytes, free, paidRequested, paidExcluded, anyTruncated, maxRowsPerTable }) {
   const tooBig = tokens > 50000;
   const upgradeBlurb = free
-    ? `\n\n📦 Tables NOT in this response (require SEO Intel Solo, €19.99/mo — vs Ahrefs ~$129/mo): ${PAID_EXPORT_TABLES.join(', ')}.\n   These are the AI-derived layers: per-page entity/intent/schema extraction, full analysis history, structured @type inventory, citability scores, and the Intelligence Ledger.\n   For pre-parsed digests instead of raw rows, the Solo tools return ready-to-use analysis: run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt.`
+    ? `\n\n📦 Table NOT in this response (requires SEO Intel Solo, €19.99/mo — vs Ahrefs ~$129/mo): ${PAID_EXPORT_TABLES.join(', ')}.\n   That's the competitor gap-analysis history (keyword_gaps, content_gaps, positioning, quick_wins). Everything about YOUR OWN site — extractions, schemas, citability scores, and the Intelligence Ledger — is free.\n   Free pre-parsed digests: get_intel(for=audit|blog), run_citability_audit, prescore_draft, draft_blog_prompt. Solo adds competitor synthesis: get_competitor_positioning + get_intel(for=competitor).`
     : `\n\nYou have Solo. Paid tables in this export: ${(paidRequested || []).join(', ') || '(none requested)'}.`;
 
   const sizeLine = tooBig
@@ -630,7 +629,7 @@ server.registerTool(
   'export_intel',
   {
     description: [
-      'Bulk export of raw structured intelligence — pages, keywords, headings, links, technical, sitemap URLs (free), plus extractions, analyses, schemas, citability scores, and insights (Solo). Mirrors `seo-intel export --full <project>` as a single MCP call.',
+      'Bulk export of raw structured intelligence — pages, keywords, headings, links, technical, sitemap URLs, extractions, schemas, citability scores, and the Intelligence Ledger (all free), plus the competitor gap-analysis history (Solo). Mirrors `seo-intel export --full <project>` as a single MCP call.',
       '',
       '⚠️ FIREHOSE WARNING: this is raw rows, not summaries. For carbium-sized projects it can be 5–10 MB / 200k+ tokens. The response includes a `notice` field telling the agent how to handle it (pipe to file, use other tools, or upgrade). Agents SHOULD NOT paste the response wholesale into their context — read the `notice` first, then either query selectively or save to a file.',
       '',

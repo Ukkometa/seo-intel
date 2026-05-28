@@ -225,6 +225,12 @@ function buildHtmlTemplate(data, opts = {}) {
   const suffix = opts.suffix || '';  // '' for single-project, '-projectname' for multi
   const panelOnly = opts.panelOnly || false; // true = return body panel only (no html/head)
   const pro = isPro();
+  // v1.5.41 monetization line — analysis of YOUR OWN site is FREE (a smart
+  // agent commoditizes one-shot analysis anyway). The paywall sits on what an
+  // agent structurally can't do for itself: competitor synthesis and history.
+  // These semantic flags make the intent explicit at every render site.
+  const showCompetitor = pro; // competitor-vs-target sections (gap, venn, battleground…)
+  const showHistory = pro;    // over-time / "what changed" trend sections
 
   const {
     project, targetDomain, competitorDomains, allDomains,
@@ -250,7 +256,7 @@ function buildHtmlTemplate(data, opts = {}) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SEO Intel ${pro ? 'Dashboard' : 'Preview'} — ${project.toUpperCase()}</title>
+  <title>SEO Intel Dashboard — ${project.toUpperCase()}</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=${Date.now()}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1883,361 +1889,6 @@ function buildHtmlTemplate(data, opts = {}) {
   </style>
 </head>`;
 
-  // ── Free tier: structural audit dashboard (crawl data only, no extractions/analysis) ──
-  if (!pro) {
-    // All queries use only: pages, technical, links, headings, page_schemas
-    // No joins to extractions or analyses tables.
-
-    const targetPages = (() => {
-      try {
-        return db.prepare(`
-          SELECT p.url, p.status_code, p.word_count, p.load_ms, p.click_depth, p.is_indexable,
-                 h.text as h1,
-                 t.has_canonical, t.has_og_tags, t.has_schema
-          FROM pages p
-          JOIN domains d ON d.id = p.domain_id
-          LEFT JOIN (
-            SELECT page_id, MIN(text) as text FROM headings WHERE level = 1 GROUP BY page_id
-          ) h ON h.page_id = p.id
-          LEFT JOIN technical t ON t.page_id = p.id
-          WHERE d.project = ? AND d.role = 'target'
-          ORDER BY p.click_depth, p.url LIMIT 100
-        `).all(project);
-      } catch { return []; }
-    })();
-
-    const techCoverage = (() => {
-      try {
-        return db.prepare(`
-          SELECT
-            COUNT(*) as total,
-            SUM(t.has_canonical) as canonical,
-            SUM(t.has_og_tags) as og,
-            SUM(t.has_schema) as schema,
-            SUM(t.has_robots) as robots
-          FROM technical t
-          JOIN pages p ON p.id = t.page_id
-          JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'target'
-        `).get(project) || {};
-      } catch { return {}; }
-    })();
-
-    const h1Stats = (() => {
-      try {
-        const total = db.prepare(`
-          SELECT COUNT(*) as c FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'target' AND p.is_indexable = 1
-        `).get(project)?.c || 0;
-        const withH1 = db.prepare(`
-          SELECT COUNT(DISTINCT p.id) as c FROM pages p
-          JOIN domains d ON d.id = p.domain_id
-          JOIN headings h ON h.page_id = p.id AND h.level = 1
-          WHERE d.project = ? AND d.role = 'target' AND p.is_indexable = 1
-        `).get(project)?.c || 0;
-        return { total, withH1, withoutH1: total - withH1 };
-      } catch { return { total: 0, withH1: 0, withoutH1: 0 }; }
-    })();
-
-    const topLinkedPages = (() => {
-      try {
-        return db.prepare(`
-          SELECT l.target_url, COUNT(*) as inbound
-          FROM links l
-          WHERE l.is_internal = 1
-            AND l.source_id IN (
-              SELECT p.id FROM pages p JOIN domains d ON d.id = p.domain_id
-              WHERE d.project = ? AND d.role = 'target'
-            )
-          GROUP BY l.target_url
-          ORDER BY inbound DESC LIMIT 15
-        `).all(project);
-      } catch { return []; }
-    })();
-
-    const orphanPages = (() => {
-      try {
-        return db.prepare(`
-          SELECT p.url FROM pages p
-          JOIN domains d ON d.id = p.domain_id
-          LEFT JOIN links l ON l.target_url = p.url AND l.is_internal = 1
-          WHERE d.project = ? AND d.role = 'target' AND p.is_indexable = 1 AND l.id IS NULL
-          LIMIT 30
-        `).all(project);
-      } catch { return []; }
-    })();
-
-    const schemaTypes = (() => {
-      try {
-        return db.prepare(`
-          SELECT ps.schema_type, COUNT(*) as count FROM page_schemas ps
-          JOIN pages p ON ps.page_id = p.id
-          JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'target'
-          GROUP BY ps.schema_type ORDER BY count DESC
-        `).all(project);
-      } catch { return []; }
-    })();
-
-    const allTargetPages = targetPages;
-    const indexedPages = allTargetPages.filter(p => p.is_indexable).length;
-    const errorPages = allTargetPages.filter(p => (p.status_code || 0) >= 400).length;
-    const deepPages = allTargetPages.filter(p => (p.click_depth || 0) > 3).length;
-    const missingCanonical = techCoverage.total
-      ? techCoverage.total - (techCoverage.canonical || 0) : 0;
-    const avgWordCount = allTargetPages.length
-      ? Math.round(allTargetPages.reduce((s, p) => s + (p.word_count || 0), 0) / allTargetPages.length)
-      : 0;
-    const avgLoad = allTargetPages.length
-      ? Math.round(allTargetPages.reduce((s, p) => s + (p.load_ms || 0), 0) / allTargetPages.length)
-      : 0;
-
-    const issues = errorPages + h1Stats.withoutH1 + (missingCanonical > (techCoverage.total || 1) * 0.2 ? 1 : 0) + deepPages;
-
-    const HIGH_VALUE_SCHEMA = [
-      { type: 'FAQPage', label: 'FAQPage', benefit: 'SERP accordion eligibility' },
-      { type: 'BreadcrumbList', label: 'BreadcrumbList', benefit: 'Breadcrumb rich results' },
-      { type: 'Organization', label: 'Organization', benefit: 'Knowledge panel' },
-      { type: 'Product', label: 'Product', benefit: 'Price/rating in search results' },
-      { type: 'Article', label: 'Article', benefit: 'News/blog rich results' },
-    ];
-    const foundSchemaTypes = new Set(schemaTypes.map(s => s.schema_type));
-
-    const panelHtml = `
-    <div class="project-panel" data-project="${project}">
-    <div style="max-width:var(--max-width);margin:0 auto;">
-
-      <!-- HEADER -->
-      <div class="header-bar" id="header">
-        <div class="header-left">
-          <h1>SEO Intel <span style="font-size:0.5em;color:var(--text-muted);font-weight:400;vertical-align:middle;">Structural Audit</span></h1>
-          <div class="subtitle">Project: ${project.toUpperCase()} | Target: ${targetDomain}</div>
-        </div>
-        <div class="header-badges">
-          <span class="status-badge" style="background:rgba(139,189,217,0.12);color:var(--color-info);border:1px solid rgba(139,189,217,0.2);">Free Tier</span>
-          <span class="status-badge gold">Last Crawl: ${lastCrawl}</span>
-        </div>
-      </div>
-
-      <!-- SUMMARY CARDS -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0;">
-        <div style="background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);padding:16px 12px;text-align:center;">
-          <div style="font-family:var(--font-display);font-size:1.4rem;color:var(--text-primary);">${indexedPages}</div>
-          <div style="font-size:0.65rem;color:var(--text-muted);">Pages Indexed</div>
-        </div>
-        <div style="background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);padding:16px 12px;text-align:center;">
-          <div style="font-family:var(--font-display);font-size:1.4rem;color:${errorPages > 0 ? 'var(--color-danger)' : 'var(--color-success)'};">${errorPages}</div>
-          <div style="font-size:0.65rem;color:var(--text-muted);">Error Pages</div>
-        </div>
-        <div style="background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);padding:16px 12px;text-align:center;">
-          <div style="font-family:var(--font-display);font-size:1.4rem;color:${h1Stats.withoutH1 > 0 ? 'var(--color-warning)' : 'var(--color-success)'};">${h1Stats.withoutH1}</div>
-          <div style="font-size:0.65rem;color:var(--text-muted);">Missing H1</div>
-        </div>
-        <div style="background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);padding:16px 12px;text-align:center;">
-          <div style="font-family:var(--font-display);font-size:1.4rem;color:${avgWordCount < 300 ? 'var(--color-danger)' : avgWordCount < 800 ? 'var(--color-warning)' : 'var(--color-success)'};">${avgWordCount}</div>
-          <div style="font-size:0.65rem;color:var(--text-muted);">Avg Words</div>
-        </div>
-        <div style="background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);padding:16px 12px;text-align:center;">
-          <div style="font-family:var(--font-display);font-size:1.4rem;color:${issues > 3 ? 'var(--color-danger)' : issues > 0 ? 'var(--color-warning)' : 'var(--color-success)'};">${issues}</div>
-          <div style="font-size:0.65rem;color:var(--text-muted);">Issues Found</div>
-        </div>
-      </div>
-
-      ${issues > 0 ? `
-      <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:20px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);">
-        <i class="fa-solid fa-circle-info" style="color:var(--color-info);margin-right:6px;"></i>
-        Crawled <strong>${totalPages}</strong> pages — found <strong>${issues} structural issue${issues !== 1 ? 's' : ''}</strong> worth reviewing.
-        ${errorPages > 0 ? `<span style="margin-left:10px;color:var(--color-danger);">● ${errorPages} error page${errorPages !== 1 ? 's' : ''}</span>` : ''}
-        ${h1Stats.withoutH1 > 0 ? `<span style="margin-left:10px;color:var(--color-warning);">● ${h1Stats.withoutH1} missing H1</span>` : ''}
-        ${deepPages > 0 ? `<span style="margin-left:10px;color:var(--color-warning);">● ${deepPages} buried deep (4+ clicks)</span>` : ''}
-      </div>` : `
-      <div style="font-size:0.75rem;color:var(--color-success);margin-bottom:20px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius);">
-        <i class="fa-solid fa-check-circle" style="margin-right:6px;"></i>
-        Crawled <strong>${totalPages}</strong> pages — no major structural issues detected.
-      </div>`}
-
-      <!-- SITE WATCH -->
-      ${watchData?.current ? buildWatchCard(watchData, escapeHtml, project) : ''}
-
-      <!-- PAGE INVENTORY -->
-      <div class="card" style="margin-bottom:16px;">
-        <h2><span class="icon"><i class="fa-solid fa-table-list"></i></span> Page Inventory — ${targetDomain}</h2>
-        <div class="table-wrapper" style="max-height:480px;overflow-y:auto;">
-          <table>
-            <thead>
-              <tr>
-                <th>URL</th>
-                <th>H1</th>
-                <th style="text-align:center;">Status</th>
-                <th style="text-align:center;">Indexed</th>
-                <th style="text-align:right;">Depth</th>
-                <th style="text-align:right;">Words</th>
-                <th style="text-align:center;">Canonical</th>
-                <th style="text-align:center;">OG</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${targetPages.map(p => {
-                const shortUrl = p.url.replace(/^https?:\/\/[^/]+/, '') || '/';
-                const statusColor = (p.status_code || 0) >= 400 ? 'var(--color-danger)' : (p.status_code || 0) >= 300 ? 'var(--color-warning)' : 'var(--color-success)';
-                const depthColor = (p.click_depth || 0) <= 2 ? 'var(--color-success)' : (p.click_depth || 0) === 3 ? 'var(--color-warning)' : 'var(--color-danger)';
-                const h1Text = p.h1 ? escapeHtml(p.h1.slice(0, 50)) + (p.h1.length > 50 ? '…' : '') : '<span style="color:var(--color-warning);">missing</span>';
-                return `<tr>
-                  <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;" title="${escapeHtml(p.url)}">${escapeHtml(shortUrl)}</td>
-                  <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.7rem;color:var(--text-secondary);">${h1Text}</td>
-                  <td style="text-align:center;color:${statusColor};font-size:0.72rem;">${p.status_code || '—'}</td>
-                  <td style="text-align:center;font-size:0.72rem;">${p.is_indexable ? '<span style="color:var(--color-success);">✓</span>' : '<span style="color:var(--color-danger);">✗</span>'}</td>
-                  <td style="text-align:right;font-size:0.72rem;color:${depthColor};">${p.click_depth ?? '—'}</td>
-                  <td style="text-align:right;font-size:0.72rem;color:var(--text-muted);">${p.word_count ? p.word_count.toLocaleString() : '—'}</td>
-                  <td style="text-align:center;font-size:0.72rem;">${p.has_canonical ? '<span style="color:var(--color-success);">✓</span>' : '<span style="color:var(--text-muted);">—</span>'}</td>
-                  <td style="text-align:center;font-size:0.72rem;">${p.has_og_tags ? '<span style="color:var(--color-success);">✓</span>' : '<span style="color:var(--text-muted);">—</span>'}</td>
-                </tr>`;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-        ${targetPages.length >= 100 ? '<div style="font-size:0.65rem;color:var(--text-muted);margin-top:6px;">Showing first 100 pages. Run <code>seo-intel export ' + project + '</code> for full CSV export.</div>' : ''}
-      </div>
-
-      <!-- INTERNAL LINK STRUCTURE -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-        <div class="card">
-          <h2><span class="icon"><i class="fa-solid fa-arrow-trend-up"></i></span> Most Linked Pages</h2>
-          ${topLinkedPages.length > 0 ? `
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            ${topLinkedPages.map((p, i) => {
-              const label = p.target_url.replace(/^https?:\/\/[^/]+/, '').slice(0, 45) || '/';
-              const maxInbound = topLinkedPages[0].inbound || 1;
-              const barPct = Math.round((p.inbound / maxInbound) * 100);
-              return `<div style="font-size:0.7rem;">
-                <div style="display:flex;justify-content:space-between;margin-bottom:2px;">
-                  <span style="color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80%;" title="${escapeHtml(p.target_url)}">${escapeHtml(label)}</span>
-                  <span style="color:var(--text-muted);flex-shrink:0;margin-left:8px;">${p.inbound}</span>
-                </div>
-                <div style="height:3px;background:var(--bg-elevated);border-radius:2px;overflow:hidden;">
-                  <div style="height:100%;width:${barPct}%;background:var(--accent-gold);border-radius:2px;opacity:0.6;"></div>
-                </div>
-              </div>`;
-            }).join('')}
-          </div>` : `
-          <div style="font-size:0.72rem;color:var(--text-muted);">
-            ${internalLinks.topPages.slice(0, 8).map(p => `
-            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-subtle);">
-              <span style="color:var(--accent-gold);font-family:var(--font-display);min-width:20px;">${p.count}</span>
-              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.label)}</span>
-            </div>`).join('')}
-          </div>`}
-        </div>
-
-        <div class="card">
-          <h2><span class="icon"><i class="fa-solid fa-triangle-exclamation"></i></span> Orphaned Pages</h2>
-          ${orphanPages.length === 0 ? `
-          <div style="font-size:0.8rem;color:var(--color-success);padding:12px 0;">
-            <i class="fa-solid fa-check-circle" style="margin-right:6px;"></i>No orphaned pages found.
-          </div>` : `
-          <div style="font-size:0.65rem;color:var(--color-warning);margin-bottom:8px;">
-            <i class="fa-solid fa-warning" style="margin-right:4px;"></i>
-            ${orphanPages.length} indexed page${orphanPages.length !== 1 ? 's' : ''} with no inbound internal links
-          </div>
-          <div style="max-height:200px;overflow-y:auto;">
-            ${orphanPages.map(p => {
-              const label = p.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 55) || '/';
-              return `<div style="font-size:0.68rem;color:var(--text-secondary);padding:3px 0;border-bottom:1px solid var(--border-subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(p.url)}">${escapeHtml(label)}</div>`;
-            }).join('')}
-          </div>`}
-        </div>
-      </div>
-
-      <!-- SCHEMA COVERAGE + TECHNICAL SIGNALS -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-        <div class="card">
-          <h2><span class="icon"><i class="fa-solid fa-code"></i></span> Schema.org Coverage</h2>
-          ${schemaTypes.length > 0 ? `
-          <div style="margin-bottom:14px;">
-            <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:8px;">Found on your site:</div>
-            ${schemaTypes.map(s => {
-              const isHighValue = HIGH_VALUE_SCHEMA.some(h => h.type === s.schema_type);
-              return `<div style="display:flex;justify-content:space-between;font-size:0.7rem;padding:3px 0;">
-                <span style="color:${isHighValue ? 'var(--color-success)' : 'var(--text-secondary)'};">
-                  ${isHighValue ? '✅' : '⚪'} ${escapeHtml(s.schema_type)}
-                </span>
-                <span style="color:var(--text-muted);">${s.count} page${s.count !== 1 ? 's' : ''}</span>
-              </div>`;
-            }).join('')}
-          </div>` : `
-          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:14px;">No structured data detected.</div>`}
-          <div style="border-top:1px solid var(--border-subtle);padding-top:10px;">
-            <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:8px;">High-value types to add:</div>
-            ${HIGH_VALUE_SCHEMA.map(h => {
-              const present = foundSchemaTypes.has(h.type);
-              return `<div style="display:flex;align-items:flex-start;gap:6px;font-size:0.68rem;padding:3px 0;">
-                <span style="flex-shrink:0;">${present ? '✅' : '⚠️'}</span>
-                <span>
-                  <span style="color:${present ? 'var(--color-success)' : 'var(--text-secondary)'};">${h.label}</span>
-                  ${!present ? `<span style="color:var(--text-muted);display:block;font-size:0.62rem;">${h.benefit}</span>` : ''}
-                </span>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-
-        <div class="card">
-          <h2><span class="icon"><i class="fa-solid fa-gear"></i></span> Technical Signals</h2>
-          ${techCoverage.total ? (() => {
-            const pct = (n) => techCoverage.total ? Math.round(((n || 0) / techCoverage.total) * 100) : 0;
-            const bar = (label, n) => {
-              const p = pct(n);
-              const color = p >= 90 ? 'var(--color-success)' : p >= 60 ? 'var(--color-warning)' : 'var(--color-danger)';
-              return `<div style="margin-bottom:12px;"><div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-bottom:3px;"><span style="color:var(--text-secondary);">${label}</span><span style="color:${color};">${p}% <span style="color:var(--text-muted);font-size:0.62rem;">(${n || 0}/${techCoverage.total})</span></span></div><div style="height:4px;background:var(--bg-elevated);border-radius:2px;overflow:hidden;"><div style="height:100%;width:${p}%;background:${color};border-radius:2px;"></div></div></div>`;
-            };
-            return bar('Canonical Tag', techCoverage.canonical) +
-                   bar('Open Graph Tags', techCoverage.og) +
-                   bar('Schema Markup', techCoverage.schema) +
-                   bar('Robots Meta', techCoverage.robots) +
-                   (avgLoad > 0 ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:8px;">
-                     Avg load: <span style="color:${avgLoad > 3000 ? 'var(--color-danger)' : avgLoad > 1500 ? 'var(--color-warning)' : 'var(--color-success)'};">${avgLoad > 1000 ? (avgLoad/1000).toFixed(1) + 's' : avgLoad + 'ms'}</span>
-                   </div>` : '');
-          })() : '<div style="font-size:0.72rem;color:var(--text-muted);">No technical data yet. Run a crawl first.</div>'}
-        </div>
-      </div>
-
-
-      <!-- Action exports available via CLI terminal panel -->
-
-      <!-- UPGRADE CTA -->
-      <div style="text-align:center;padding:36px 24px;margin-bottom:16px;background:var(--bg-card);border:1px solid rgba(232,213,163,0.12);border-radius:var(--radius);">
-        <i class="fa-solid fa-chart-column" style="font-size:1.2rem;color:var(--accent-gold);margin-bottom:10px;display:block;"></i>
-        <h3 style="font-size:0.9rem;color:var(--text-primary);margin-bottom:6px;">See the Full Picture</h3>
-        <p style="font-size:0.72rem;color:var(--text-muted);max-width:440px;margin:0 auto 14px;line-height:1.6;">
-          This is your site's structure. To see how you compare to competitors —
-          keyword gaps, content opportunities, pages you can outrank — upgrade to SEO Intel Solo.
-        </p>
-        <a href="https://ukkometa.fi/en/seo-intel/" target="_blank"
-           style="display:inline-block;padding:10px 24px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.8rem;font-weight:500;text-decoration:none;">
-          Upgrade to Solo — €19.99/mo →
-        </a>
-        <div style="font-size:0.62rem;color:var(--text-muted);margin-top:8px;">
-          €199/yr saves ~17%
-        </div>
-        <div style="font-size:0.62rem;color:var(--text-muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle);">
-          Data crawled: ${lastCrawl} · Export raw CSV: <code style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;">seo-intel export ${project}</code>
-        </div>
-      </div>
-
-    </div>
-    </div>`;
-
-    if (panelOnly) return panelHtml;
-
-    const freeScriptHtml = `<script>
-      document.querySelectorAll('.header-bar').forEach(el => {
-        el.style.maxWidth = 'var(--max-width)';
-        el.style.margin = '0 auto';
-      });
-    </script>`;
-
-    return headHtml + '\n<body>\n' + panelHtml + '\n' + freeScriptHtml + '\n</body>\n</html>';
-  }
 
   // ── Panel HTML (project-specific body content) ──
   const panelHtml = `
@@ -2357,16 +2008,16 @@ function buildHtmlTemplate(data, opts = {}) {
           <span style="font-size:0.6rem;color:var(--text-muted);margin-right:4px;"><i class="fa-solid fa-play" style="margin-right:3px;"></i>Run:</span>
           <button class="term-btn" data-cmd="crawl" data-project="${project}"><i class="fa-solid fa-spider"></i> Crawl</button>
           <label class="term-stealth"><input type="checkbox" id="stealthToggle${suffix}"${extractionStatus.liveProgress?.stealth ? ' checked' : ''}><i class="fa-solid fa-user-ninja"></i></label>
-          ${pro ? `<button class="term-btn" data-cmd="extract" data-project="${project}"><i class="fa-solid fa-brain"></i> Extract</button>
-          <span style="width:1px;height:16px;background:var(--border-subtle);margin:0 2px;"></span>
-          <button class="term-btn term-btn-intel" data-cmd="analyze" data-project="${project}"><i class="fa-solid fa-chart-column"></i> Analyze</button>
-          <button class="term-btn term-btn-intel" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>
+          <button class="term-btn" data-cmd="extract" data-project="${project}"><i class="fa-solid fa-brain"></i> Extract</button>
           <button class="term-btn term-btn-intel" data-cmd="keywords" data-project="${project}"><i class="fa-solid fa-key"></i> Keywords</button>
-          <button class="term-btn term-btn-intel" data-cmd="templates" data-project="${project}"><i class="fa-solid fa-clone"></i> Templates</button>` : ''}
+          <button class="term-btn term-btn-intel" data-cmd="templates" data-project="${project}"><i class="fa-solid fa-clone"></i> Templates</button>
+          ${showCompetitor ? `<span style="width:1px;height:16px;background:var(--border-subtle);margin:0 2px;"></span>
+          <button class="term-btn term-btn-intel" data-cmd="analyze" data-project="${project}"><i class="fa-solid fa-chart-column"></i> Analyze</button>` : ''}
+          ${showHistory ? `<button class="term-btn term-btn-intel" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>` : ''}
           <button class="term-btn" data-cmd="status" data-project=""><i class="fa-solid fa-circle-info"></i> Status</button>
           <button class="term-btn" data-cmd="guide" data-project="${project}"><i class="fa-solid fa-map"></i> Guide</button>
           <button class="term-btn" data-cmd="setup" data-project="" style="margin-left:auto;border-color:rgba(232,213,163,0.25);"><i class="fa-solid fa-gear"></i> Setup</button>
-          ${!pro ? `<span style="font-size:0.55rem;color:var(--text-muted);margin-left:auto;"><i class="fa-solid fa-lock" style="color:var(--accent-gold);margin-right:3px;"></i><a href="https://ukkometa.fi/en/seo-intel/" target="_blank" style="color:var(--accent-gold);text-decoration:none;">Solo</a> for extract, analyze, exports</span>` : ''}
+          ${!pro ? `<span style="font-size:0.55rem;color:var(--text-muted);margin-left:auto;"><i class="fa-solid fa-lock" style="color:var(--accent-gold);margin-right:3px;"></i><a href="https://ukkometa.fi/en/seo-intel/" target="_blank" style="color:var(--accent-gold);text-decoration:none;">Solo</a> for competitors, scheduling & history</span>` : ''}
         </div>
         <!-- Terminal output -->
         <div id="termOutput${suffix}" style="padding:12px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;line-height:1.7;color:var(--text-muted);max-height:400px;overflow-y:auto;min-height:60px;">
@@ -2386,11 +2037,10 @@ function buildHtmlTemplate(data, opts = {}) {
         <i class="fa-solid fa-file-export"></i> Exports
         <span style="margin-left:auto;font-size:.55rem;color:var(--text-muted);font-weight:400;letter-spacing:0;">→ reports/</span>
       </div>
-      ${pro ? `
       <div class="export-sidebar-btns">
         <button class="export-btn" data-export-cmd="export-actions" data-export-project="${project}" data-export-scope="technical"><i class="fa-solid fa-wrench"></i> Technical Audit</button>
-        <button class="export-btn" data-export-cmd="export-actions" data-export-project="${project}" data-export-scope="competitive"><i class="fa-solid fa-users"></i> Competitive Gaps</button>
-        <button class="export-btn" data-export-cmd="suggest-usecases" data-export-project="${project}"><i class="fa-solid fa-lightbulb"></i> Suggest What to Build</button>
+        ${showCompetitor ? `<button class="export-btn" data-export-cmd="export-actions" data-export-project="${project}" data-export-scope="competitive"><i class="fa-solid fa-users"></i> Competitive Gaps</button>
+        <button class="export-btn" data-export-cmd="suggest-usecases" data-export-project="${project}"><i class="fa-solid fa-lightbulb"></i> Suggest What to Build</button>` : ''}
       </div>
       <div class="export-sidebar-header" style="margin-top:12px;">
         <i class="fa-solid fa-pen-fancy"></i> Create
@@ -2436,16 +2086,8 @@ function buildHtmlTemplate(data, opts = {}) {
         </div>
         <button class="export-btn download-all-btn" data-project="${project}" style="font-size:0.58rem;opacity:0.6;"><i class="fa-solid fa-file-zipper"></i> Raw Full Export (ZIP)</button>
       </div>
-      ` : `
-      <div style="padding:20px 14px;text-align:center;">
-        <i class="fa-solid fa-lock" style="font-size:1rem;color:var(--accent-gold);margin-bottom:8px;display:block;"></i>
-        <p style="font-size:0.68rem;color:var(--text-muted);line-height:1.5;margin-bottom:12px;">Agentic exports turn your crawl data into implementation briefs.</p>
-        <a href="https://ukkometa.fi/en/seo-intel/" target="_blank" style="display:inline-block;padding:6px 14px;background:var(--accent-gold);color:var(--text-dark);border-radius:var(--radius);font-size:0.68rem;font-weight:500;text-decoration:none;">Unlock with Solo</a>
-      </div>
-      `}
     </div>
   </div>
-  ${pro ? `
   <div class="viewer-row" style="max-width:var(--max-width);margin:0 auto;">
     <div style="position:relative;background:#0e0e0e;border:1px solid var(--border-card);border-radius:0 0 var(--radius) var(--radius);border-top:none;">
       <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
@@ -2460,7 +2102,6 @@ function buildHtmlTemplate(data, opts = {}) {
       </div>
     </div>
   </div>
-  ` : ''}
 
   <script>
   (function() {
@@ -3158,8 +2799,8 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>`;
     })() : ''}
 
-    <!-- ═══ GSC INSIGHTS ═══ -->
-    ${pro && gscInsights ? (() => {
+    <!-- ═══ GSC INSIGHTS ═══ (free — your own Search Console) -->
+    ${gscInsights ? (() => {
       const blocks = gscInsights.map(insight => {
         const itemsHtml = insight.items.length ? `
           <div class="gsc-insight-items">
@@ -3196,7 +2837,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
 
     <!-- ═══ KEYWORD VENN BATTLEFIELD ═══ -->
-    ${pro && keywordVenn.hasData ? `
+    ${showCompetitor && keywordVenn.hasData ? `
     <div class="card" id="keyword-venn">
       <h2><span class="icon"><i class="fa-solid fa-crosshairs"></i></span> Keyword Venn Battlefield</h2>
       <canvas id="vennCanvas${suffix}" width="540" height="400"></canvas>
@@ -3212,7 +2853,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
 
     <!-- ═══ COMPETITIVE GRAVITY MAP ═══ -->
-    ${pro ? `
+    ${showCompetitor ? `
     <div class="card" id="gravity-map">
       <h2><span class="icon"><i class="fa-solid fa-diagram-project"></i></span> Competitive Gravity Map</h2>
       <canvas id="gravityCanvas${suffix}" width="540" height="440"></canvas>
@@ -3249,7 +2890,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
 
     <!-- ═══ TERRITORY CONTROL MAP ═══ -->
-    ${pro ? `
+    ${showCompetitor ? `
     <div class="card full-width" id="territory-map">
       <h2><span class="icon"><i class="fa-solid fa-chess-rook"></i></span> Territory Control Map</h2>
       <canvas id="treemapCanvas${suffix}" width="1100" height="400"></canvas>
@@ -3269,7 +2910,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ ENTITY TOPIC MAP ═══ -->
-    ${pro && entityTopicMap.hasData ? `
+    ${showCompetitor && entityTopicMap.hasData ? `
     <div class="card full-width" id="entity-map">
       ${cardExportHtml('insights', project)}
       <h2><span class="icon"><i class="fa-solid fa-map"></i></span> Entity Topic Map</h2>
@@ -3294,7 +2935,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ KEYWORD BATTLEGROUND ═══ -->
-    ${pro ? `
+    ${showCompetitor ? `
     <div class="card full-width" id="keyword-heatmap">
       ${cardExportHtml('keywords', project)}
       <h2><span class="icon"><i class="fa-solid fa-shield-halved"></i></span> Keyword Battleground</h2>
@@ -3408,7 +3049,7 @@ function buildHtmlTemplate(data, opts = {}) {
     })() : ''}
 
     <!-- ═══ TECHNICAL SEO GAPS ═══ -->
-    ${pro && latestAnalysis?.technical_gaps?.length ? `
+    ${showCompetitor && latestAnalysis?.technical_gaps?.length ? `
     <div class="card full-width" id="technical-gaps">
       ${cardExportHtml('technical', project)}
       <h2><span class="icon"><i class="fa-solid fa-wrench"></i></span> Technical SEO Gaps</h2>
@@ -3429,7 +3070,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
     ` : ''}
 
-    ${pro ? `
+    ${showCompetitor ? `
     <div class="section-divider">
       <div class="section-divider-line right"></div>
       <span class="section-divider-label"><i class="fa-solid fa-bolt"></i> Strategy & Actions</span>
@@ -3437,7 +3078,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>` : ''}
 
     <!-- ═══ QUICK WINS ═══ -->
-    ${pro && latestAnalysis?.quick_wins?.length ? `
+    ${showCompetitor && latestAnalysis?.quick_wins?.length ? `
     <div class="card" id="quick-wins">
       ${cardExportHtml('insights', project)}
       <h2><span class="icon"><i class="fa-solid fa-bolt"></i></span> Quick Wins</h2>
@@ -3460,7 +3101,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ NEW PAGES TO CREATE ═══ -->
-    ${pro && latestAnalysis?.new_pages?.length ? `
+    ${showCompetitor && latestAnalysis?.new_pages?.length ? `
     <div class="card" id="new-pages">
       ${cardExportHtml('pages', project)}
       <h2><span class="icon"><i class="fa-solid fa-file-circle-plus"></i></span> New Pages to Create</h2>
@@ -3489,7 +3130,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ POSITIONING STRATEGY ═══ -->
-    ${pro && latestAnalysis?.positioning ? `
+    ${showCompetitor && latestAnalysis?.positioning ? `
     <div class="card full-width" id="positioning">
       <h2><span class="icon"><i class="fa-solid fa-crosshairs"></i></span> Positioning Strategy</h2>
       <div class="positioning-grid">
@@ -3513,7 +3154,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ CONTENT GAPS ═══ -->
-    ${pro && latestAnalysis?.content_gaps?.length ? `
+    ${showCompetitor && latestAnalysis?.content_gaps?.length ? `
     <div class="card full-width" id="content-gaps">
       ${cardExportHtml('insights', project)}
       <h2><span class="icon"><i class="fa-solid fa-magnifying-glass-minus"></i></span> Content Gaps</h2>
@@ -3535,7 +3176,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ TOPIC CLUSTER GAPS ═══ -->
-    ${pro && topicClusters ? `
+    ${showCompetitor && topicClusters ? `
     <div class="card full-width" id="topic-cluster-gaps">
       <h2><span class="icon"><i class="fa-solid fa-diagram-project"></i></span> Topic Cluster Coverage</h2>
       <p class="attack-desc">Semantic topic clusters — pages grouped by theme. Red = gap vs competitors. Green = target is competitive.</p>
@@ -3564,7 +3205,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ SHALLOW CHAMPIONS ═══ -->
-    ${pro ? `
+    ${showCompetitor ? `
     <div class="card" id="shallow-champions">
       <h2><span class="icon"><i class="fa-solid fa-trophy"></i></span> Shallow Champions <span class="attack-count">${shallowChampions.total}</span></h2>
       <p class="attack-desc">Competitor pages at depth 1-2 with under 700 words — validated topics, thin content. Out-invest them.</p>
@@ -3701,7 +3342,7 @@ function buildHtmlTemplate(data, opts = {}) {
     ` : ''}
 
     <!-- ═══ CTA LANDSCAPE ═══ -->
-    ${pro && ctaLandscape.hasData ? `
+    ${showCompetitor && ctaLandscape.hasData ? `
     <div class="card" id="cta-landscape">
       <h2><span class="icon"><i class="fa-solid fa-bullhorn"></i></span> CTA Landscape</h2>
       <div class="attack-table-wrap">
@@ -3748,8 +3389,7 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
     ` : ''}
 
-    <!-- ═══ TOP KEYWORDS ═══ -->
-    ${pro ? `
+    <!-- ═══ TOP KEYWORDS ═══ (free — your own site) -->
     <div class="card" id="top-keywords">
       ${cardExportHtml('keywords', project)}
       <h2><span class="icon"><i class="fa-solid fa-key"></i></span> Top Keywords (${targetDomain})</h2>
@@ -3783,7 +3423,6 @@ function buildHtmlTemplate(data, opts = {}) {
       </div>
       ` : '<div class="empty-state">No keyword data available</div>'}
     </div>
-    ` : ''}
 
     <!-- ═══ INTERNAL LINK ANALYSIS ═══ -->
     <div class="card" id="internal-links">
@@ -3806,10 +3445,10 @@ function buildHtmlTemplate(data, opts = {}) {
 
     ${!pro ? `
     <div class="card full-width" style="text-align:center; padding:40px 24px;">
-      <i class="fa-solid fa-lock" style="font-size:1.5rem; color:var(--accent-gold); margin-bottom:12px;"></i>
-      <h3 style="font-size:0.9rem; color:var(--text-primary); margin-bottom:8px;">Unlock AI Analysis, Keywords & Strategy</h3>
-      <p style="font-size:0.75rem; color:var(--text-muted); max-width:400px; margin:0 auto 16px;">
-        Upgrade to Solo for keyword battleground, competitive gaps, AI-powered quick wins, content audits, and 15+ advanced visualizations.
+      <i class="fa-solid fa-radar" style="font-size:1.5rem; color:var(--accent-gold); margin-bottom:12px;"></i>
+      <h3 style="font-size:0.9rem; color:var(--text-primary); margin-bottom:8px;">Your own site is fully analyzed — free. Now watch the competition.</h3>
+      <p style="font-size:0.75rem; color:var(--text-muted); max-width:460px; margin:0 auto 16px;">
+        Solo adds what an agent can't do for itself: <strong>competitor synthesis</strong> (gaps, keyword battleground, positioning), <strong>scheduled crawls</strong> that run themselves, and <strong>history &amp; trends</strong> that show what changed over time.
       </p>
       <a href="https://ukkometa.fi/en/seo-intel/" target="_blank"
          style="display:inline-block; padding:8px 20px; background:var(--accent-gold); color:var(--text-dark); border-radius:var(--radius); font-size:0.78rem; font-weight:500; text-decoration:none;">
@@ -3818,18 +3457,17 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
     ` : ''}
 
-    ${pro ? `
     <div class="section-divider">
       <div class="section-divider-line right"></div>
       <span class="section-divider-label"><i class="fa-solid fa-flask"></i> Research</span>
       <div class="section-divider-line"></div>
-    </div>` : ''}
+    </div>
 
-    <!-- ═══ AEO / AI CITABILITY AUDIT ═══ -->
-    ${pro && citabilityData?.length ? buildAeoCard(citabilityData, escapeHtml, project) : ''}
+    <!-- ═══ AEO / AI CITABILITY AUDIT ═══ (free — your own site) -->
+    ${citabilityData?.length ? buildAeoCard(citabilityData, escapeHtml, project) : ''}
 
     <!-- ═══ LONG-TAIL OPPORTUNITIES ═══ -->
-    ${pro && latestAnalysis?.long_tails?.length ? `
+    ${showCompetitor && latestAnalysis?.long_tails?.length ? `
     <div class="card full-width" id="long-tails">
       <h2><span class="icon"><i class="fa-solid fa-binoculars"></i></span> Long-tail Opportunities</h2>
       <div class="analysis-table-wrap">
@@ -3856,8 +3494,8 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
     ` : ''}
 
-    <!-- ═══ KEYWORD INVENTOR ═══ -->
-    ${pro && keywordsReport ? (() => {
+    <!-- ═══ KEYWORD INVENTOR ═══ (free — your own site) -->
+    ${keywordsReport ? (() => {
       const allClusters = keywordsReport.keyword_clusters || [];
       const allKws = allClusters.flatMap(c => (c.keywords || []).map(k => ({ ...k, cluster: c.topic })));
       const totalPhrases = allKws.length;

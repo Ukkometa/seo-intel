@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.40 (2026-05-28)
+
+### Setup wizard — daily notifications now self-install
+The notify loop is now opt-in via a single click. Setup-wizard's Done step gains a small "Daily problem notifications" card that toggles a managed `crontab` line via `lib/cron.js`. No more manual `crontab -e`.
+
+- **New CLI:** `seo-intel install-cron [--schedule "0 9 * * *"] [--open] [--remove]` — install / replace / remove a managed cron line. Idempotent. macOS + Linux. Windows returns a clear "use Task Scheduler" message.
+- **New library:** `lib/cron.js` exports `installNotifyCron`, `removeNotifyCron`, `getNotifyCronStatus`. Uses a `# managed-by-seo-intel` marker comment so we only touch our own entries — the user's other cron jobs are never modified.
+- **Setup wizard card** (Step 6, Done): live status pill, one-click Enable/Disable button, default schedule 9am daily, intel-blue accent matching the visual brief tokens. Polls `/api/setup/cron` on step entry; toggle hits `/api/setup/cron POST { action: 'install'|'remove' }`.
+- Cron line writes the absolute `process.execPath` so the scheduled job works regardless of the user's PATH inside cron's minimal environment (a classic foot-gun avoided).
+
+Full lifecycle verified: status read → install (`0 9 * * *` line written, crontab confirms) → status reports installed → remove → crontab clean → status reports clean. Smoke 10/10.
+
 ## 1.5.39 (2026-05-27)
 
 ### Dashboard — Problems card as the landing surface (Ahrefs-style "what's broken")

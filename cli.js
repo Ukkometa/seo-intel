@@ -1511,6 +1511,41 @@ program
     if (fired === 0) console.log(chalk.dim('  ✓ No projects need attention.'));
   });
 
+// ── INSTALL-CRON (one-shot cron entry for daily notify) ────────────────────
+program
+  .command('install-cron')
+  .description('Install / remove the daily seo-intel notify cron entry (macOS + Linux)')
+  .option('--remove', 'Remove the managed cron entry instead of installing')
+  .option('--schedule <cron>', 'Cron schedule, 5 fields (default: 9am daily)', '0 9 * * *')
+  .option('--open', 'Pass --open to the scheduled notify command (dashboard opens when fired)')
+  .action(async (opts) => {
+    const { installNotifyCron, removeNotifyCron, getNotifyCronStatus, DEFAULT_SCHEDULE } = await import('./lib/cron.js');
+    if (opts.remove) {
+      const r = removeNotifyCron();
+      if (!r.ok) { console.error(chalk.red(`Failed: ${r.error}`)); process.exit(1); }
+      console.log(chalk.green(r.removed ? '  ✓ Removed managed cron entry.' : '  (Nothing to remove.)'));
+      return;
+    }
+    const status = getNotifyCronStatus();
+    if (status.platform === 'win32') {
+      console.log(chalk.yellow('  ⚠ Windows: use Task Scheduler manually.'));
+      console.log(chalk.dim('  Daily task command:'));
+      console.log(chalk.dim(`    ${process.execPath} ${join(__dirname, 'cli.js')} notify`));
+      return;
+    }
+    if (status.installed) {
+      console.log(chalk.dim(`  Existing entry detected (schedule: ${status.schedule}). Replacing…`));
+    }
+    const result = installNotifyCron({ schedule: opts.schedule, openOnFire: !!opts.open });
+    if (!result.ok) { console.error(chalk.red(`Failed: ${result.error}`)); process.exit(1); }
+    console.log(chalk.green(`  ✓ Daily notification scheduled (cron: ${result.schedule})`));
+    console.log(chalk.dim(`  Cron line: ${result.line}`));
+    console.log(chalk.dim(`  Remove with: seo-intel install-cron --remove`));
+    if (process.platform === 'darwin') {
+      console.log(chalk.dim(`  Note: macOS may prompt to authorise cron access on first fire — approve in System Settings if so.`));
+    }
+  });
+
 // ── STATUS ─────────────────────────────────────────────────────────────────
 program
   .command('status')

@@ -128,6 +128,17 @@ export function handleSetupRequest(req, res, url) {
     return true;
   }
 
+  // GET /api/setup/cron — read notify-cron install state
+  if (path === '/api/setup/cron' && method === 'GET') {
+    handleCronStatus(req, res);
+    return true;
+  }
+  // POST /api/setup/cron — install / remove
+  if (path === '/api/setup/cron' && method === 'POST') {
+    handleCronAction(req, res);
+    return true;
+  }
+
   // POST /api/setup/save-env — save a key to .env
   if (path === '/api/setup/save-env' && method === 'POST') {
     handleSaveEnv(req, res);
@@ -335,6 +346,34 @@ async function handlePingOllama(req, res) {
         probed: { ollama: `${host}/api/tags`, lmstudio: `${host}/api/v1/models` },
         hint: `Neither Ollama (port ${port || '11434'} expected) nor LM Studio (port ${port || '1234'} expected) responded at ${host}. Common causes: (1) the engine is bound to 127.0.0.1 only — re-bind to 0.0.0.0 to allow LAN access, (2) firewall blocking inbound port ${port || 'N'}, (3) wrong port. Verify from the LM Studio Developer tab / 'ollama serve' output.`,
       });
+    }
+  } catch (err) {
+    jsonResponse(res, { error: err.message }, 500);
+  }
+}
+
+async function handleCronStatus(req, res) {
+  try {
+    const { getNotifyCronStatus } = await import('../lib/cron.js');
+    jsonResponse(res, getNotifyCronStatus());
+  } catch (err) {
+    jsonResponse(res, { error: err.message }, 500);
+  }
+}
+
+async function handleCronAction(req, res) {
+  try {
+    const body = await readBody(req);
+    const { action, schedule, openOnFire } = body || {};
+    const { installNotifyCron, removeNotifyCron, getNotifyCronStatus } = await import('../lib/cron.js');
+    if (action === 'install') {
+      const result = installNotifyCron({ schedule, openOnFire: !!openOnFire });
+      jsonResponse(res, { ...result, status: getNotifyCronStatus() });
+    } else if (action === 'remove') {
+      const result = removeNotifyCron();
+      jsonResponse(res, { ...result, status: getNotifyCronStatus() });
+    } else {
+      jsonResponse(res, { error: 'action must be "install" or "remove"' }, 400);
     }
   } catch (err) {
     jsonResponse(res, { error: err.message }, 500);

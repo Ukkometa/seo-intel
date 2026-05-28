@@ -1862,6 +1862,21 @@ input::placeholder {
       <!-- Populated by JS -->
     </table>
 
+    <!-- ── Daily notification scheduler (v1.5.40) ────────────────────────── -->
+    <div id="notifyCronCard" style="margin-top:20px; padding:14px 16px; background:var(--bg-elevated); border:1px solid rgba(59,130,246,0.18); border-radius:var(--radius); display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+      <i class="fa-solid fa-bell" style="font-size:1rem; color:#3b82f6;"></i>
+      <div style="flex:1; min-width:200px;">
+        <div style="font-size:0.8rem; font-weight:600; color:var(--text-primary); margin-bottom:2px;">Daily problem notifications</div>
+        <div id="notifyCronHint" style="font-size:0.66rem; color:var(--text-muted); line-height:1.4;">
+          Fires a native macOS / Linux notification each morning for projects with pending criticals or warns.
+        </div>
+      </div>
+      <div id="notifyCronStatus" style="font-size:0.66rem; color:var(--text-muted);">…</div>
+      <button id="notifyCronToggleBtn" class="btn btn-sm" onclick="toggleNotifyCron()" style="padding:5px 12px; font-size:0.7rem; min-width:90px;">
+        <i class="fa-solid fa-spinner fa-spin"></i>
+      </button>
+    </div>
+
     <h3 style="font-family:var(--font-display); font-size:0.85rem; color:var(--text-primary); margin: 20px 0 12px; font-weight:600;">
       <i class="fa-solid fa-rocket" style="color:var(--accent-gold); margin-right:6px;"></i> What's Next
     </h3>
@@ -3409,6 +3424,64 @@ input::placeholder {
     }
 
     goToStep(6);
+    loadNotifyCronStatus();
+  };
+
+  // ── Daily notification cron (v1.5.40) ──────────────────────────────────
+  let _cronState = null;
+  async function loadNotifyCronStatus() {
+    const statusEl = document.getElementById('notifyCronStatus');
+    const btn = document.getElementById('notifyCronToggleBtn');
+    const hint = document.getElementById('notifyCronHint');
+    if (!statusEl || !btn) return;
+    try {
+      const s = await API.get('/api/setup/cron');
+      _cronState = s;
+      if (s.platform === 'win32') {
+        statusEl.textContent = 'Windows: use Task Scheduler';
+        btn.disabled = true;
+        btn.innerHTML = 'N/A';
+        hint.textContent = 'Cron auto-install is macOS / Linux only — set up a daily Task Scheduler entry manually.';
+        return;
+      }
+      if (s.installed) {
+        statusEl.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Active · ${s.schedule}</span>`;
+        btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Disable';
+        btn.style.borderColor = 'rgba(244,123,93,0.4)';
+        btn.style.color = '#f47b5d';
+      } else {
+        statusEl.innerHTML = `<span style="color:var(--text-muted);">Not scheduled</span>`;
+        btn.innerHTML = '<i class="fa-solid fa-bell"></i> Enable';
+        btn.style.borderColor = 'rgba(59,130,246,0.4)';
+        btn.style.color = '#3b82f6';
+      }
+      btn.disabled = false;
+    } catch (err) {
+      statusEl.textContent = 'Status check failed';
+      btn.disabled = true;
+    }
+  }
+
+  window.toggleNotifyCron = async function() {
+    const btn = document.getElementById('notifyCronToggleBtn');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    const action = _cronState?.installed ? 'remove' : 'install';
+    try {
+      const r = await API.post('/api/setup/cron', { action, schedule: '0 9 * * *' });
+      if (r.ok === false && r.error) {
+        document.getElementById('notifyCronStatus').textContent = 'Error: ' + r.error;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Retry';
+        return;
+      }
+      await loadNotifyCronStatus();
+    } catch (err) {
+      document.getElementById('notifyCronStatus').textContent = 'Error: ' + err.message;
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Retry';
+    }
   };
 
   window.copyCli = function() {

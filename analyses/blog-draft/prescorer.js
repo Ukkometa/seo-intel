@@ -10,6 +10,23 @@
 
 import { scorePage } from '../aeo/scorer.js';
 
+/**
+ * Recover a draft's subject from its own output when no explicit topic was
+ * given — so the agentic-loop write-back (F1) can still match Ledger gaps.
+ * Prefers YAML frontmatter `title:`, falls back to the first markdown H1.
+ * Shared by CLI `blog-draft` and the MCP `prescore_draft` tool.
+ * @param {string} draft
+ * @returns {string|null}
+ */
+export function extractDraftTopic(draft) {
+  if (!draft) return null;
+  const fm = draft.match(/^\s*---\s*[\s\S]*?\btitle\s*:\s*["']?(.+?)["']?\s*$/im);
+  if (fm && fm[1]) return fm[1].trim();
+  const h1 = draft.match(/^\s{0,3}#\s+(.+?)\s*$/m);
+  if (h1 && h1[1]) return h1[1].replace(/[#*_`]/g, '').trim();
+  return null;
+}
+
 export function prescore(markdownText) {
   // Strip YAML frontmatter
   const bodyMatch = markdownText.match(/^---[\s\S]*?---\n([\s\S]*)$/);

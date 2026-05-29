@@ -13,7 +13,7 @@ description: >
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.41)
+# SEO Intel (v1.5.42)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -56,7 +56,7 @@ The MCP server exposes 15 tools as native AI agent calls. Agents discover tool d
 | `list_problems(project, severity?, limit?)` | Ahrefs-style "what's broken" — prioritised issues with fix templates |
 | `mark_problem_status(project, problem_id, status, agent_name?)` | Mark a problem done/dismissed |
 | `run_citability_audit(project, include_competitors?)` | AEO scoring (6 signals); persists scores + upserts insights |
-| `prescore_draft(draft_md)` | Pre-publish AEO scorer for agent-written content |
+| `prescore_draft(draft_md, project?, topic?)` | Pre-publish AEO scorer for agent-written content. Pass `project` to close the loop — records the draft in the Ledger and marks matching gaps `in_progress` so they stop resurfacing |
 | `draft_blog_prompt(project, topic?, lang?, content_type?)` | AEO-aware prompt seeded with gap data — agent's LLM writes the draft |
 | `export_intel(project, tables?, max_rows_per_table?)` | Bulk export of own-site tables (pages, keywords, headings, links, technical, schemas, extractions, citability scores, insights). Includes a `notice` field telling the agent NOT to ingest wholesale — pipe to file or use targeted tools instead |
 
@@ -78,8 +78,9 @@ The MCP server exposes 15 tools as native AI agent calls. Agents discover tool d
 5. get_intel(carbium, for=audit|blog)             # citability + gaps + hints
 6. draft_blog_prompt(carbium, topic=X)            # AEO-aware prompt
 7. agent's own Opus/GPT writes the draft          # generate
-8. prescore_draft(draft_md)                       # 0-100 score, revise until ≥ 60
-9. ingest_insight(...) → next session get_intel(audit) shows past findings
+8. prescore_draft(draft_md, project, topic)       # 0-100 score + closes the loop:
+                                                  #   records the draft, marks the gap in_progress
+9. next session get_intel(audit) shows the drafted gap is handled, not re-suggested
 ```
 
 **Solo-tier competitor loop** (the part an agent can't gather itself):

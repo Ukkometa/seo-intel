@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.42 (2026-05-29)
+
+### The content loop now remembers its own work
+Drafting a post used to leave the Intelligence Ledger untouched — so the same gap kept getting suggested even after you'd written about it. Now drafting closes that memory gap.
+
+- **`blog-draft` writes back to the Ledger.** After a draft is generated and AEO-scored, SEO Intel records a `draft_created` insight and flips the matching gap(s) to `in_progress` — so they stop resurfacing until a re-audit re-scores the published page. Matching is precise (keyword/topic), and the write-back is best-effort: a Ledger hiccup never fails your draft.
+- **MCP `prescore_draft` can close the loop too.** It gains optional `project` and `topic` arguments — pass them and the scored draft is recorded + matching gaps marked `in_progress`, identical to the CLI. Omit them for a pure, stateless score (unchanged default).
+- When no `--topic` is given, the targeted gap is recovered from the draft's own frontmatter title or first H1.
+
+### Fix — free-tier `blog-draft` no longer claims "no data" when you have citability gaps
+`blog-draft`'s empty-state check only counted competitor-analysis gaps, so a free user whose gaps came from `aeo` (AI citability) or only from `keywords` could be wrongly told "No intelligence data found." It now counts citability and content gaps too, and points free users at `aeo` + `keywords` first (competitor gaps via `analyze` are Solo).
+
+### Fix — MCP startup banner now reflects the real free/paid split
+The `seo-intel-mcp` startup line (shown in your MCP host's logs) still listed `run_citability_audit`, `prescore_draft`, `draft_blog_prompt`, and `get_intel(audit/blog)` as paid. They've been free since 1.5.41 — the banner now says so, listing only competitor synthesis (`get_competitor_positioning`, `get_intel(competitor)`, the `analyses` export table) as Solo.
+
 ## 1.5.41 (2026-05-28)
 
 ### Your own site is now fully free — across CLI, MCP, and the dashboard

@@ -328,6 +328,72 @@ export function updateInsightStatus(db, id, status) {
   db.prepare('UPDATE insights SET status = ? WHERE id = ?').run(status, id);
 }
 
+// ── Agentic loop write-back (F1, v1.5.42) ───────────────────────────────────
+//
+// Closes the loop's memory gap: when a draft is actually produced, the Ledger
+// should remember it. Two moves:
+//   1. recordDraftCreated  — persist a `draft_created` insight (idempotent per
+//      topic/type/lang) so "I drafted X" is durable and visible.
+//   2. markGapsInProgress  — flip matching ACTIVE gap insights to 'in_progress'
+//      so the same gap stops resurfacing in the next blog-draft pass.
+// Both are best-effort and must never break draft generation.
+
+/**
+ * Record that a draft was created targeting this project's Ledger.
+ * Idempotent: re-drafting the same (topic, content_type, lang) refreshes it.
+ * @returns {string} the fingerprint used
+ */
+export function recordDraftCreated(db, project, { topic, score = null, tier = null, wordCount = null, lang = 'en', contentType = 'blog', savedPath = null } = {}) {
+  const ts = Date.now();
+  const normTopic = (topic || 'auto').toLowerCase().trim().slice(0, 120);
+  const fp = `draft:${contentType}:${lang}:${normTopic}`.replace(/[^a-z0-9:_-]+/g, '-');
+  const data = JSON.stringify({
+    topic: topic || '(auto)', score, tier, word_count: wordCount,
+    lang, content_type: contentType, saved_path: savedPath, created_at: ts,
+  });
+  db.prepare(`
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
+    VALUES (?, 'draft_created', 'active', ?, ?, ?, NULL, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      data = excluded.data
+  `).run(project, fp, ts, ts, data);
+  return fp;
+}
+
+/**
+ * Flip ACTIVE gap insights matching `topic` to 'in_progress' so the loop stops
+ * re-suggesting work that's already been drafted. Precise substring match on
+ * each gap's key term (never a loose word-split that would over-match).
+ * Only touches drafting-relevant gap types — never positioning/site_watch/etc.
+ * @returns {number} count of insights marked
+ */
+export function markGapsInProgress(db, project, topic) {
+  if (!topic || !topic.trim()) return 0;
+  const needle = topic.toLowerCase().trim();
+  const GAP_TYPES = ['keyword_gap', 'long_tail', 'content_gap', 'citability_gap', 'keyword_inventor'];
+  const placeholders = GAP_TYPES.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id, data FROM insights WHERE project = ? AND status = 'active' AND type IN (${placeholders})`
+  ).all(project, ...GAP_TYPES);
+
+  const upd = db.prepare(`UPDATE insights SET status = 'in_progress', last_seen = ? WHERE id = ?`);
+  const ts = Date.now();
+  let marked = 0;
+  for (const r of rows) {
+    let keyTerm = '', fullText = '';
+    try {
+      const d = JSON.parse(r.data);
+      keyTerm = (d.keyword || d.phrase || d.topic || d.suggested_title || d.title || d.url || '').toLowerCase().trim();
+      fullText = [d.keyword, d.phrase, d.topic, d.suggested_title, d.title, d.url]
+        .filter(Boolean).join(' ').toLowerCase();
+    } catch { continue; }
+    const hit = (keyTerm && (needle.includes(keyTerm) || keyTerm.includes(needle))) || (fullText && fullText.includes(needle));
+    if (hit) { upd.run(ts, r.id); marked++; }
+  }
+  return marked;
+}
+
 export function upsertDomain(db, { domain, project, role }) {
   const now = Date.now();
   return db.prepare(`

@@ -40,6 +40,7 @@ import {
   getPageHash, getSchemasByProject,
   upsertInsightsFromAnalysis, upsertInsightsFromKeywords,
   upsertSitemapUrls,
+  recordDraftCreated, markGapsInProgress,
 } from './db/db.js';
 import { generateMultiDashboard } from './reports/generate-html.js';
 import { buildTechnicalActions } from './exports/technical.js';
@@ -4709,7 +4710,7 @@ program
     printAttackHeader('✍️  AEO Blog Draft Generator', project);
 
     const { gatherBlogDraftContext, buildBlogDraftPrompt } = await getBlogDraftModule();
-    const { prescore } = await getPrescorerModule();
+    const { prescore, extractDraftTopic } = await getPrescorerModule();
 
     // ── Gather intelligence ──
     console.log(chalk.gray('  Gathering intelligence from Ledger...'));
@@ -4728,9 +4729,13 @@ program
     console.log(chalk.gray(`    Keyword gaps: ${stats.keywordGaps}  Long-tails: ${stats.longTails}  Citability gaps: ${stats.citabilityGaps}`));
     console.log(chalk.gray(`    Keyword inventor: ${stats.kwInventor}  Content gaps: ${stats.contentGaps}  Entities: ${stats.entities}`));
 
-    if (stats.keywordGaps + stats.longTails + stats.kwInventor === 0) {
+    // F5 (v1.5.42): count the free-tier gap sources too — a free user's gaps
+    // come from `aeo` (citability) and `keywords` (kw-inventor), not just the
+    // Solo competitor analysis. Don't tell them "no data" when AEO gaps exist.
+    if (stats.keywordGaps + stats.longTails + stats.kwInventor + stats.citabilityGaps + stats.contentGaps === 0) {
       console.log(chalk.yellow('\n  ⚠️  No intelligence data found in the Ledger.'));
-      console.log(chalk.gray('   Run: seo-intel analyze ' + project + '  and  seo-intel keywords ' + project + '\n'));
+      console.log(chalk.gray('   Free sources: seo-intel aeo ' + project + '  and  seo-intel keywords ' + project));
+      console.log(chalk.gray('   Competitor gaps (Solo): seo-intel analyze ' + project + '\n'));
       return;
     }
 
@@ -4786,14 +4791,15 @@ program
     }
 
     // ── Output ──
+    let savedPath = null;
     if (opts.save) {
       const slug = opts.topic
         ? opts.topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50)
         : 'auto';
       const filename = `${project}-blog-draft-${slug}-${new Date().toISOString().slice(0, 10)}.md`;
-      const outPath = join(__dirname, 'reports', filename);
-      writeFileSync(outPath, draft, 'utf8');
-      console.log(chalk.bold.green(`  ✅ Draft saved: ${outPath}`));
+      savedPath = join(__dirname, 'reports', filename);
+      writeFileSync(savedPath, draft, 'utf8');
+      console.log(chalk.bold.green(`  ✅ Draft saved: ${savedPath}`));
       console.log('');
     } else {
       console.log(chalk.bold('  📝 Generated Draft'));
@@ -4803,6 +4809,32 @@ program
       console.log('');
       console.log(chalk.gray('  Tip: add --save to write the draft to reports/'));
       console.log('');
+    }
+
+    // ── F1 (v1.5.42): close the loop's memory gap ──
+    // Record the draft in the Ledger and flip matching gaps to in_progress so
+    // they stop resurfacing next pass. Best-effort — never break the command.
+    try {
+      const effectiveTopic = opts.topic || extractDraftTopic(draft);
+      recordDraftCreated(db, project, {
+        topic: effectiveTopic,
+        score: scoreResult.score,
+        tier: scoreResult.tier,
+        wordCount: scoreResult.wordCount,
+        lang: opts.lang,
+        contentType: opts.type || 'blog',
+        savedPath,
+      });
+      const marked = markGapsInProgress(db, project, effectiveTopic);
+      if (marked > 0) {
+        console.log(chalk.gray(`  📌 Ledger: ${marked} gap(s) marked in-progress — they'll stop resurfacing until re-audited.`));
+      } else {
+        console.log(chalk.gray('  📌 Ledger: draft recorded.'));
+      }
+      console.log('');
+    } catch (e) {
+      // loop write-back is best-effort; a failure must not fail the draft
+      console.log(chalk.dim(`  (Ledger write-back skipped: ${e.message})`));
     }
   });
 

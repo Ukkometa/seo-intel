@@ -25,14 +25,14 @@ import { spawn } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
-import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getCompetitorSummary } from '../db/db.js';
+import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getCompetitorSummary, recordDraftCreated, markGapsInProgress } from '../db/db.js';
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
 import { readProgress } from '../lib/progress.js';
 import { getProblems, getProblemCounts, markProblemStatus, getActiveStatusMap, PROBLEM_CATEGORIES, PROBLEM_STATUSES } from '../lib/problems.js';
 
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
-import { prescore } from '../analyses/blog-draft/prescorer.js';
+import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -500,12 +500,14 @@ server.registerTool(
 server.registerTool(
   'prescore_draft',
   {
-    description: 'Run the AEO scorer on a markdown draft before publishing. Returns the same 6-signal breakdown the dashboard uses (entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage) plus the overall 0-100 score and tier (excellent / good / fair / poor). Use this as a pre-publish gate when drafting via draft_blog_prompt — score < 60 means revise. Free tier.',
+    description: 'Run the AEO scorer on a markdown draft before publishing. Returns the same 6-signal breakdown the dashboard uses (entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage) plus the overall 0-100 score and tier (excellent / good / fair / poor). Use this as a pre-publish gate when drafting via draft_blog_prompt — score < 60 means revise. Free tier. Pass `project` (and optionally `topic`) to close the loop: the draft is recorded in the Ledger and matching gaps are marked in_progress so they stop resurfacing.',
     inputSchema: {
       draft_md: z.string().describe('Full markdown of the draft, including YAML frontmatter if present. The scorer extracts headings, word count, schema_type from frontmatter, etc.'),
+      project: z.string().optional().describe('If set, the scored draft is written back to this project\'s Intelligence Ledger (records a draft_created insight + marks matching gaps in_progress). Omit for a pure, stateless score.'),
+      topic: z.string().optional().describe('The topic/keyword this draft targets. Used to match gaps for the in_progress write-back. If omitted, recovered from the draft\'s frontmatter title or first H1.'),
     },
   },
-  async ({ draft_md }) => {
+  async ({ draft_md, project, topic }) => {
     try {
       const score = prescore(draft_md);
       const out = {
@@ -518,6 +520,33 @@ server.registerTool(
           ? 'Draft scores well. Safe to publish.'
           : 'Below 60 — consider strengthening: add FAQ schema for Q&A proximity, increase entity authority via named experts/citations, shorten paragraphs for answer density, add structured claims (numbers/dates).',
       };
+
+      // F1 (v1.5.42): loop write-back — only when a project is supplied, and
+      // best-effort so a Ledger hiccup never fails the score.
+      if (project && loadProjectConfig(project)) {
+        try {
+          const db = getDb();
+          const effectiveTopic = topic || extractDraftTopic(draft_md);
+          recordDraftCreated(db, project, {
+            topic: effectiveTopic,
+            score: score.score,
+            tier: score.tier,
+            wordCount: score.wordCount,
+          });
+          const marked = markGapsInProgress(db, project, effectiveTopic);
+          out.ledger = {
+            recorded: true,
+            topic: effectiveTopic || '(auto)',
+            gaps_marked_in_progress: marked,
+            note: marked > 0
+              ? `${marked} matching gap(s) marked in_progress — they stop resurfacing until a re-audit re-scores the published page.`
+              : 'Draft recorded; no active gaps matched the topic.',
+          };
+        } catch (e) {
+          out.ledger = { recorded: false, error: e.message };
+        }
+      }
+
       return {
         content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
         structuredContent: out,
@@ -833,7 +862,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 15 tools — free: list_projects (with nag), list_problems, mark_problem_status, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel (free-tier subset); paid: get_intel(audit/blog/competitor), run_citability_audit, get_competitor_positioning, prescore_draft, draft_blog_prompt, export_intel (paid tables), and list_problems unlocks paid categories.`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 15 tools — free (your own site): list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo (competitor synthesis): get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

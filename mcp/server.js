@@ -34,6 +34,7 @@ import { getProblems, getProblemCounts, markProblemStatus, getActiveStatusMap, P
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
 import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js';
 import { lightCrawl } from '../crawler/light.js';
+import { runContentLoop } from '../analyses/loop/orchestrator.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -680,6 +681,49 @@ server.registerTool(
   }
 );
 
+// ── Tool: run_content_loop (free — the one-call content loop) ─────────────
+// Walks gap → draft → prescore → queue. In MCP the agent's own LLM is the
+// writer, so this runs in HAND-BACK mode: it ranks the gaps, picks the highest-
+// leverage one(s), and returns a seeded prompt per gap. The agent writes the
+// draft, then calls prescore_draft(project, topic) to score + close the loop.
+server.registerTool(
+  'run_content_loop',
+  {
+    description: [
+      'Run the content loop for a project in one call: ranks the open gaps in the Intelligence Ledger by leverage (priority × source × AI-intent), picks the highest, and returns an AEO-aware draft prompt seeded with full context.',
+      '',
+      'Hand-back by design — your own LLM writes the draft from the returned prompt, then you call prescore_draft(project, topic) to AEO-score it and close the loop (records the draft, marks the gap in_progress). Use dry_run to just see which gap it would target. Free tier.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string(),
+      topic: z.string().optional().describe('Focus a specific topic instead of auto-picking the top gap.'),
+      count: z.number().int().positive().optional().describe('Return prompts for the top N gaps (default 1).'),
+      lang: z.enum(['en', 'fi']).optional(),
+      content_type: z.enum(['blog', 'article', 'guide', 'docs', 'social']).optional(),
+      dry_run: z.boolean().optional().describe('Only rank + select the gap(s); do not build prompts.'),
+    },
+  },
+  async ({ project, topic, count, lang = 'en', content_type = 'blog', dry_run }) => {
+    const config = loadProjectConfig(project);
+    if (!config) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const result = await runContentLoop(db, project, {
+        config, topic: topic || null, count: count || 1, lang, contentType: content_type,
+        dryRun: !!dry_run, generate: null, // hand-back: the agent writes
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        structuredContent: result,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel run_content_loop error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 // ── Tool: export_intel (firehose; free tables + paid tables) ──────────────
 // v1.5.41: own-site derived data (extractions, schemas, citability, the
 // ledger) is free — only the competitor gap analysis (`analyses`) is paid.
@@ -945,7 +989,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 16 tools — free: crawl_site (ad-hoc, any URL, no config), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo (competitor synthesis): get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 17 tools — free: crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo (competitor synthesis): get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

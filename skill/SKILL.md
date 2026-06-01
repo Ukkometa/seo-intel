@@ -13,7 +13,7 @@ description: >
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.44)
+# SEO Intel (v1.5.45)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -38,12 +38,13 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+)
 
-The MCP server exposes 16 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. Almost everything is free — only competitor synthesis requires Solo.
+The MCP server exposes 17 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. Almost everything is free — only competitor synthesis requires Solo.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
 |---|---|
 | `crawl_site(url, max_pages?, include_citability?, same_origin?)` | **Ad-hoc crawl of any URL** — no project, no account, nothing saved. Fetch-based (no browser), robots-aware, returns title/meta/headings/links/schema/word-count + optional AEO score. The zero-signup entry point for any agent |
+| `run_content_loop(project, topic?, count?, lang?, content_type?, dry_run?)` | **The content loop in one call** — ranks open Ledger gaps by leverage, picks the top one, returns a seeded AEO draft prompt. Your LLM writes it, then `prescore_draft(project, topic)` scores + closes the loop |
 | `list_projects` | Discover configured projects + page counts |
 | `get_intel(project, for='raw')` | Structured digest — domains, totals, last crawl |
 | `get_intel(project, for='audit')` | Citability + active insights ledger |

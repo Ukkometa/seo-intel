@@ -5391,6 +5391,74 @@ if (process.argv.length <= 2) {
   process.exit(0);
 }
 
+// ── LOOP — content-loop orchestrator: gap → draft → prescore → queue ─────
+program
+  .command('loop <project>')
+  .description('Run the content loop once: pick the top gap → draft → prescore → queue for publish')
+  .option('--topic <t>', 'Focus on a specific topic instead of auto-picking')
+  .option('--count <n>', 'Draft the top N gaps', '1')
+  .option('--lang <code>', 'Language: en or fi', 'en')
+  .option('--type <type>', 'Content type: blog, docs, or social', 'blog')
+  .option('--model <name>', 'Generation model (gemini, claude, gpt, deepseek)', 'gemini')
+  .option('--min-score <n>', 'Target citability before publishing', '60')
+  .option('--revise <k>', 'Auto-revise up to k times if below min-score', '0')
+  .option('--no-queue', 'Do not write drafts to reports/ready/')
+  .option('--dry-run', 'Pick the gap and show the plan — no model call')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('loop')) return;
+    const db = getDb();
+    const config = loadConfig(project);
+    const isJson = opts.format === 'json';
+    const { runContentLoop } = await import('./analyses/loop/orchestrator.js');
+
+    if (!isJson) printAttackHeader('🔁  Content Loop', project);
+
+    const result = await runContentLoop(db, project, {
+      config,
+      topic: opts.topic || null,
+      count: parseInt(opts.count, 10) || 1,
+      lang: opts.lang,
+      contentType: opts.type || 'blog',
+      minScore: parseInt(opts.minScore, 10) || 60,
+      revise: parseInt(opts.revise, 10) || 0,
+      queue: opts.queue !== false,
+      dryRun: !!opts.dryRun,
+      generate: opts.dryRun ? null : (p) => callAnalysisModel(p, opts.model),
+      onProgress: isJson ? () => {} : (m) => console.log(chalk.gray('  · ' + m)),
+    });
+
+    if (isJson) { console.log(JSON.stringify(result, null, 2)); return; }
+
+    console.log('');
+    if (result.mode === 'no-gaps') {
+      console.log(chalk.yellow('  No active gaps to draft.'));
+      console.log(chalk.gray('  ' + result.next_action));
+      console.log('');
+      return;
+    }
+    if (result.mode === 'dry-run') {
+      console.log(chalk.bold('  Planned drafts (highest leverage first):'));
+      for (const p of result.planned) {
+        console.log(`    ${chalk.cyan(p.topic.slice(0, 60))} ${chalk.gray(`[${p.source} · ${p.priority} · leverage ${p.leverage}]`)}`);
+      }
+      console.log('');
+      console.log(chalk.gray('  Re-run without --dry-run to draft these.'));
+      console.log('');
+      return;
+    }
+    for (const d of result.drafts) {
+      const tier = d.score >= 60 ? chalk.green : d.score >= 35 ? chalk.yellow : chalk.red;
+      console.log(`  ${chalk.bold('→')} ${chalk.cyan(`"${d.topic.slice(0, 56)}"`)}  ${tier(`${d.score}/100 (${d.tier})`)}`);
+      console.log(chalk.gray(`    ${d.word_count}w · ${d.revisions} revision(s) · gap: ${d.gap.source} · ${d.ledger.gaps_marked_in_progress} gap(s) marked in-progress`));
+      if (d.queued_path) console.log(chalk.gray(`    queued: ${d.queued_path}`));
+    }
+    for (const s of result.skipped) console.log(chalk.gray(`  ✗ skipped "${s.topic.slice(0, 40)}": ${s.reason}`));
+    console.log('');
+    console.log(chalk.gray('  ' + result.next_action));
+    console.log('');
+  });
+
 // ── CRAWL-URL — ad-hoc lightweight crawl of any URL (free, no project) ────
 program
   .command('crawl-url <url>')

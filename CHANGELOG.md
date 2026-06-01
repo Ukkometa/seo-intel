@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.45 (2026-05-29)
+
+### The content loop in one command — `seo-intel loop` + `run_content_loop` (MCP)
+Closes the loop from the agent's side: instead of running gap-finding, drafting, and scoring as separate steps, one invocation walks the whole content half — **rank the open gaps → draft the highest-leverage one → AEO-prescore → record it → queue for publish.**
+
+- **CLI `seo-intel loop <project>`** (free): picks the top gap from the Intelligence Ledger (ranked by priority × source × AI-intent), drafts it with your chosen model, pre-scores citability, optionally auto-revises (`--revise k`) until it clears `--min-score`, marks the gap in-progress (the v1.5.42 write-back), and writes the approved draft to `reports/ready/<project>/`. Flags: `--topic`, `--count`, `--lang`, `--type`, `--model`, `--min-score`, `--revise`, `--no-queue`, `--dry-run`, `--format json`. `--dry-run` shows which gap it would target with no model call.
+- **MCP `run_content_loop`** (free): the same ranking + selection, returned as a seeded draft prompt for the agent's own LLM (hand-back mode) — write the draft, then call `prescore_draft(project, topic)` to score and close the loop. `dry_run` to just see the target.
+- New module `analyses/loop/orchestrator.js` (`runContentLoop`) backs both surfaces; the model writer is injectable so the CLI drives your cloud model while MCP hands the prompt to the agent.
+- The queued draft carries front-matter (`status: ready`, score, tier, source gap) as a publish handoff — it does not auto-deploy.
+
 ## 1.5.44 (2026-05-29)
 
 ### New standalone skill: `ai-citability` — score AI citability with zero install, zero account

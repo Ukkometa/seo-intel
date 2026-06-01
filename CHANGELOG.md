@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.44 (2026-05-29)
+
+### New standalone skill: `ai-citability` — score AI citability with zero install, zero account
+A drop-in Agent Skill (Claude Code / Cursor / Codex) that scores any page or draft 0–100 for how easily an AI assistant (ChatGPT, Claude, Perplexity, AI Overviews, Bing Copilot) can cite it — across the same six signals as the full AEO audit.
+
+- **Truly self-contained:** pure Node, no `npm install`, no account, no API key, no network. Nothing is saved or sent. Drop the folder into your agent's skills directory and it works.
+- **Markdown or HTML** input, from a file or stdin: `node scripts/score.mjs <file>` (add `--json` for machine output). The agent fetches the content however it likes — a local file, WebFetch, or the `crawl_site` MCP tool.
+- Reports the overall score + tier, all six signal bars, the two weakest signals with concrete fixes, and funnels to the full `seo-intel aeo` audit for whole-site, entity-aware, historical scoring.
+- Ships the exact scoring engine as the product (vendored from `analyses/aeo/scorer.js`), with a smoke-test drift guard so the standalone score never diverges from `seo-intel aeo`.
+- Lives in `skills/ai-citability/` — distributed via the repo / skill directories, not the npm package.
+
 ## 1.5.43 (2026-05-29)
 
 ### New MCP tool: `crawl_site` — crawl any URL, no setup, no account, nothing saved

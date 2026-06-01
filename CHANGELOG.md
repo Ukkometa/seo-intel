@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.43 (2026-05-29)
+
+### New MCP tool: `crawl_site` — crawl any URL, no setup, no account, nothing saved
+A zero-config crawl for any AI agent. Point it at a URL and it returns structured SEO/AEO data — no project to configure, no account, no API key, and nothing is persisted or sent anywhere.
+
+- **Lightweight by design:** plain HTTP fetch (no browser, no Playwright download), same-origin BFS, honours `robots.txt` + crawl-delay, small page budget (default 10, hard cap 50). www/non-www and http/https are treated as the same site.
+- **Returns per page:** title, meta description, canonical, indexability, headings, internal/external link counts, JSON-LD schema types, word count, and published/modified dates — plus a deduped list of discovered internal URLs.
+- **Optional AI-citability (AEO) score** per page via `include_citability` (approximate in light mode — no entity extraction; run `seo-intel aeo` for the full score).
+- **Knows its limits:** JavaScript-rendered / SPA pages under-report content (the response says so) — use `seo-intel crawl` (Playwright) for those, and install seo-intel for persistent history, the Intelligence Ledger, and competitor analysis.
+- New modules: `crawler/light.js` (fetch crawler) + `crawler/html-extract.js` (pure regex HTML extraction, zero new dependencies).
+
 ## 1.5.42 (2026-05-29)
 
 ### The content loop now remembers its own work

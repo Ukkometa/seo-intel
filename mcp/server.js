@@ -33,6 +33,7 @@ import { getProblems, getProblemCounts, markProblemStatus, getActiveStatusMap, P
 
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
 import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js';
+import { lightCrawl } from '../crawler/light.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -354,6 +355,88 @@ server.registerTool(
       content: [{ type: 'text', text: JSON.stringify(progress, null, 2) }],
       structuredContent: progress,
     };
+  }
+);
+
+// ── Tool: crawl_site (free — zero-config, zero-signup, local, lightweight) ──
+// "Crawl for all Claude users": point it at a URL and it BFS-crawls same-origin
+// pages with plain fetch (no browser, no project config, nothing persisted,
+// nothing leaves the machine). For deep/JS-rendered/persistent crawls, the user
+// installs seo-intel and runs `seo-intel crawl`.
+server.registerTool(
+  'crawl_site',
+  {
+    description: [
+      'Crawl a website ad-hoc and return structured SEO/AEO data — no project setup, no account, no API key, nothing saved. Point it at any URL.',
+      '',
+      'Lightweight by design: plain HTTP fetch (no browser/JS rendering), same-origin BFS, honours robots.txt + crawl-delay, small page budget (default 10, hard cap 50). Returns title, meta, headings, links, JSON-LD schema types, word count, indexability — optionally a per-page AI-citability (AEO) score.',
+      '',
+      'Limits: JS-rendered/SPA pages under-report content (use the full `seo-intel crawl` with Playwright for those). Results are ephemeral — for persistent history, the Intelligence Ledger, and competitor analysis, install seo-intel (still local, own-site free). Free tier.',
+    ].join('\n'),
+    inputSchema: {
+      url: z.string().describe('Start URL (scheme optional — "example.com" works). The crawl follows same-origin links from here.'),
+      max_pages: z.number().int().positive().optional().describe('Pages to fetch (default 10, hard cap 50).'),
+      include_citability: z.boolean().optional().describe('Run the AEO citability scorer per page (default false). Note: light mode does no entity extraction, so entity-authority is under-counted — run `seo-intel aeo` for the full score.'),
+      same_origin: z.boolean().optional().describe('Only follow links on the start site (default true). www/non-www and http/https are treated as the same site.'),
+    },
+  },
+  async ({ url, max_pages, include_citability, same_origin }) => {
+    try {
+      const r = await lightCrawl(url, {
+        maxPages: max_pages ?? 10,
+        includeCitability: include_citability ?? false,
+        sameOrigin: same_origin ?? true,
+      });
+
+      // Compact, token-aware shape: drop body_text + the full per-page link lists
+      // (return counts + a deduped discovered-URL list instead).
+      const pages = r.pages.map(p => ({
+        url: p.url,
+        status_code: p.status_code,
+        title: p.title,
+        meta_desc: p.meta_desc,
+        canonical: p.canonical || null,
+        is_indexable: p.is_indexable,
+        word_count: p.word_count,
+        headings: p.headings.slice(0, 40),
+        schema_types: p.schema_types,
+        published_date: p.published_date,
+        modified_date: p.modified_date,
+        internal_links: p.links.filter(l => l.internal).length,
+        external_links: p.links.filter(l => !l.internal).length,
+        ...(p.citability ? { citability: p.citability } : {}),
+      }));
+
+      // Deduped internal URLs discovered but not crawled (structure peek).
+      const crawled = new Set(r.pages.map(p => p.url));
+      const discovered = [];
+      const seen = new Set();
+      for (const p of r.pages) {
+        for (const l of p.links) {
+          if (l.internal && !crawled.has(l.href) && !seen.has(l.href)) {
+            seen.add(l.href); discovered.push(l.href);
+            if (discovered.length >= 50) break;
+          }
+        }
+        if (discovered.length >= 50) break;
+      }
+
+      const out = {
+        start: r.start,
+        origin: r.origin,
+        stats: r.stats,
+        pages,
+        discovered_internal_urls: discovered,
+        skipped: r.skipped,
+        notice: 'Ephemeral + local — nothing was saved and nothing left this machine. Light mode does not render JavaScript, so SPA/JS-built pages under-report content; use `seo-intel crawl` (Playwright) for those. For persistent history, the Intelligence Ledger, AI-citability over time, and competitor analysis, install seo-intel — own-site stays free.',
+      };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(out, null, 2) }],
+        structuredContent: out,
+      };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel crawl_site error: ${err.message}` }], isError: true };
+    }
   }
 );
 
@@ -862,7 +945,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 15 tools — free (your own site): list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo (competitor synthesis): get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 16 tools — free: crawl_site (ad-hoc, any URL, no config), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo (competitor synthesis): get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

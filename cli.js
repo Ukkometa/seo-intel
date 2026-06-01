@@ -5391,6 +5391,62 @@ if (process.argv.length <= 2) {
   process.exit(0);
 }
 
+// ── CRAWL-URL — ad-hoc lightweight crawl of any URL (free, no project) ────
+program
+  .command('crawl-url <url>')
+  .description('Ad-hoc lightweight crawl of any URL — no project, no browser, nothing saved')
+  .option('--max-pages <n>', 'Pages to fetch (default 10, hard cap 50)', '10')
+  .option('--citability', 'Include per-page AI citability (AEO) score')
+  .option('--all-origins', 'Follow links across origins (default: same site only)')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (url, opts) => {
+    const isJson = opts.format === 'json';
+    const { lightCrawl } = await import('./crawler/light.js');
+    try {
+      const r = await lightCrawl(url, {
+        maxPages: parseInt(opts.maxPages, 10) || 10,
+        includeCitability: !!opts.citability,
+        sameOrigin: !opts.allOrigins,
+        onProgress: isJson ? undefined : (m) => console.log(chalk.gray('  ' + m)),
+      });
+
+      if (isJson) {
+        const pages = r.pages.map(p => ({
+          url: p.url, status_code: p.status_code, title: p.title, meta_desc: p.meta_desc,
+          canonical: p.canonical || null, is_indexable: p.is_indexable, word_count: p.word_count,
+          headings: p.headings, schema_types: p.schema_types,
+          published_date: p.published_date, modified_date: p.modified_date,
+          internal_links: p.links.filter(l => l.internal).length,
+          external_links: p.links.filter(l => !l.internal).length,
+          ...(p.citability ? { citability: p.citability } : {}),
+        }));
+        console.log(JSON.stringify({ start: r.start, origin: r.origin, stats: r.stats, pages, skipped: r.skipped }, null, 2));
+        return;
+      }
+
+      console.log('');
+      console.log(chalk.bold(`  🕸  Light crawl — ${r.origin}`));
+      console.log(chalk.gray(`  ${r.stats.crawled} pages · ${r.stats.with_schema} with schema · ${r.stats.missing_title} missing title · ${r.stats.missing_meta_desc} missing meta · ${r.stats.elapsed_ms}ms`));
+      console.log('');
+      for (const p of r.pages) {
+        const c = p.citability;
+        const citeTxt = c ? (c.score >= 60 ? chalk.green : c.score >= 35 ? chalk.yellow : chalk.red)(` · cite:${c.score}`) : '';
+        console.log(`  ${chalk.cyan(p.url)}`);
+        console.log(chalk.gray(`    [${p.status_code}] ${p.word_count}w · h:${p.headings.length} · schema:[${p.schema_types.join(',') || '—'}]`) + citeTxt);
+        if (p.title) console.log(chalk.gray(`    “${p.title.slice(0, 80)}”`));
+      }
+      if (r.skipped.length) console.log(chalk.gray(`\n  skipped ${r.skipped.length}: ${r.skipped.slice(0, 5).map(s => s.reason).join(', ')}`));
+      console.log('');
+      console.log(chalk.gray('  Ephemeral + local — nothing saved. JS-rendered pages under-report (use `seo-intel crawl`).'));
+      console.log(chalk.gray('  For persistent history, the Ledger & competitors: `seo-intel setup` → `crawl`.'));
+      console.log('');
+    } catch (err) {
+      if (isJson) { console.log(JSON.stringify({ error: err.message })); process.exit(1); }
+      console.error(chalk.red(`\n  ✗ ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
 // Global error handler — ensures uncaught errors in async actions exit non-zero (BUG-004)
 program.parseAsync().catch(err => {
   console.error(chalk.red(`\n✗ ${err.message}\n`));

@@ -140,10 +140,54 @@ function getProjects() {
     .filter(Boolean);
 }
 
+// ── Security: loopback-only gate (anti DNS-rebinding + cross-origin/CSRF) ──
+//
+// This server binds 127.0.0.1, but any web page you visit can still fire
+// requests at localhost. Two checks close that whole class:
+//   • Host  — a DNS-rebinding request arrives carrying the ATTACKER's domain as
+//     Host (not localhost), so requiring a loopback Host defeats it.
+//   • Origin — a cross-origin page sends its own Origin; requiring a loopback
+//     Origin (when present) blocks cross-origin reads and CSRF.
+// Same-origin dashboard use is unaffected: same-origin GET/SSE either sends no
+// Origin or sends our own loopback Origin.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+function normHost(h) {
+  if (!h) return '';
+  h = String(h).trim().toLowerCase();
+  if (h.startsWith('[')) { const i = h.indexOf(']'); return i > 0 ? h.slice(1, i) : h.slice(1); } // [::1]:port → ::1
+  return h.split(':')[0]; // host:port → host
+}
+
+function isLocalRequest(req) {
+  const host = normHost(req.headers.host);
+  if (!host || !LOCAL_HOSTS.has(host)) return false;            // defeats DNS rebinding
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null') {                            // defeats cross-origin / CSRF
+    try { if (!LOCAL_HOSTS.has(normHost(new URL(origin).host))) return false; }
+    catch { return false; }
+  }
+  return true;
+}
+
 // ── Request handler ──
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
+
+  // Security headers on every response (clickjacking + MIME-sniffing). The
+  // frame-ancestors directive only governs who may iframe us — it does NOT
+  // restrict the dashboard's own CDN resources, so it is safe to set globally.
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+
+  // Loopback-only gate — reject anything not local before any routing happens.
+  if (!isLocalRequest(req)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden: SEO Intel only accepts requests from localhost.');
+    return;
+  }
 
   // ─── Setup wizard routes ───
   if (path.startsWith('/setup') || path.startsWith('/api/setup/')) {
@@ -1162,12 +1206,13 @@ ${md}`;
       args.push('--save');
     }
 
-    // SSE headers
+    // SSE headers — no CORS: the dashboard is same-origin, and the loopback
+    // gate already blocks cross-origin callers. (Removed Access-Control-Allow-Origin:*
+    // which previously let any website read this command-execution stream.)
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
     });
 
     const send = (type, data) => {

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.46 (2026-05-29)
+
+### Security — the local dashboard now accepts requests from localhost only
+Hardened `seo-intel serve` against a class of browser-based attack that affects local web servers in general (cross-site request forgery and DNS rebinding). While the dashboard was running, a web page open in the same browser could send requests to `localhost` — and the command-stream endpoint additionally sent a wildcard `Access-Control-Allow-Origin`, which would have let such a page read its output.
+
+- **Loopback-only gate:** every request is now checked at the door — the `Host` must be a loopback name (defeats DNS rebinding) and any `Origin` must be loopback too (blocks cross-origin / CSRF). Non-local requests get `403`.
+- **Removed the wildcard `Access-Control-Allow-Origin: *`** from the terminal SSE stream — the dashboard is same-origin and never needed CORS.
+- **Standard headers added:** `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` (anti-clickjacking), `X-Content-Type-Options: nosniff`.
+
+The server already bound `127.0.0.1` only; this adds the missing in-app checks. Same-origin dashboard use is unchanged. **Recommended update for anyone who runs `seo-intel serve`.**
+
 ## 1.5.45 (2026-05-29)
 
 ### The content loop in one command — `seo-intel loop` + `run_content_loop` (MCP)

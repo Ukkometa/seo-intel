@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.5.48 (2026-06-07)
+
+### Local-model suggester — `seo-intel models` + `suggest_models` (MCP)
+Extraction runs a small AI model once per crawled page. This makes it easy to pick the right **local** one — and is emphatic that local is the way to do it.
+
+- **`seo-intel models`** — detects your GPU/VRAM and which models are already in Ollama, then recommends from a curated local set: **Gemma 4 E2B / E4B / 12B** and **Qwen 3.5 4B / 9B** (smallest → largest, with VRAM/speed/quality and the `ollama pull` command for each). `--format json` for machine output.
+- **`suggest_models` (MCP)** — the same recommendation from any chat/agent, so an assistant can suggest a model for the user's hardware.
+- **Both always carry a disclaimer: extraction should be done with a LOCAL model.** Cloud is a fallback, not the default — it sends every page's content off-machine, costs money at scale, and rate-limits, all for a task a 4–8B local model handles well, offline, with data never leaving the machine.
+- Added **Gemma 4 12B** to the extraction model catalog (a quality step up from E4B that still fits ~10 GB cards).
+
+### Fixed
+- **MCP server boot is no longer blocked by the crawler dependency chain.** The `crawl_site` tool's crawler (which pulls in `turndown`) is now loaded on first use instead of at startup. Previously, if importing `turndown` was slow on a given machine, the entire MCP server could fail to start — no tools, no banner, no handshake. Boot now completes in well under a second regardless of crawler import speed.
+- **Commands no longer hang when the license or update servers are slow or unreachable.** Two startup network paths had no effective cap: the license phone-home was awaited without a hard timeout (blocking commands like `status` for up to ~10s), and background update-check fetches kept the process from exiting until the OS connect timeout. The license check is now capped at 2.5s and degrades to cached/offline behavior, and one-shot commands exit as soon as their work is done instead of waiting on lingering background requests. Activation still works normally when the server is reachable.
+
 ## 1.5.47 (2026-06-07)
 
 ### AI-crawler access is now part of AI citability — and the audit runs from your agent

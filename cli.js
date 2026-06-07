@@ -57,6 +57,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Start background update check (non-blocking, never slows startup)
 checkForUpdates();
 
+// Long-running commands (serve, setup-web) intentionally keep the process alive.
+// Everything else is one-shot: once the action resolves we force-exit so a
+// hung background fetch (update check / license phone-home) can't hold the
+// shell — an aborted fetch's socket lingers until the OS connect timeout, so
+// AbortController alone is not enough to make the process exit promptly.
+let _keepProcessAlive = false;
+
 // Ensure reports/ and config/ directories exist
 try { mkdirSync(join(__dirname, 'reports'), { recursive: true }); } catch { /* ok */ }
 try { mkdirSync(join(__dirname, 'config'), { recursive: true }); } catch { /* ok */ }
@@ -1547,6 +1554,84 @@ program
     }
   });
 
+// ── MODELS ─────────────────────────────────────────────────────────────────
+program
+  .command('models')
+  .description('Suggest local extraction models for your hardware (Gemma / Qwen) — local is strongly recommended over cloud')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (opts) => {
+    const isJson = opts.format === 'json';
+    const { suggestExtractionModels, CLOUD_EXTRACTION_DISCLAIMER, detectVRAM } = await import('./setup/engine.js');
+
+    // Detect hardware (best-effort) + installed Ollama models (quick, short timeout).
+    let vram = { available: false, vramMB: 0, gpuName: null };
+    try { vram = detectVRAM(); } catch { /* keep default */ }
+    let installed = [];
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch('http://localhost:11434/api/tags', { signal: controller.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        const data = await res.json();
+        installed = (data.models || []).map(m => m.name);
+      }
+    } catch { /* Ollama not reachable — fine */ }
+
+    const { suggestions, recommendedId } = suggestExtractionModels(vram.vramMB || 0, installed);
+
+    if (isJson) {
+      console.log(JSON.stringify({
+        command: 'models',
+        hardware: { gpu: vram.gpuName || null, vramMB: vram.vramMB || 0 },
+        recommended: recommendedId,
+        suggestions,
+        cloud_disclaimer: CLOUD_EXTRACTION_DISCLAIMER,
+      }, null, 2));
+      return;
+    }
+
+    console.log('');
+    console.log(chalk.bold('  🧠 Local extraction models'));
+    console.log('');
+    if (vram.available && vram.vramMB) {
+      console.log(chalk.gray(`  Detected: ${vram.gpuName || 'GPU'} · ~${(vram.vramMB / 1024).toFixed(1)} GB VRAM`));
+    } else {
+      console.log(chalk.gray('  GPU/VRAM not detected — showing the full range. Pick by your machine.'));
+    }
+    console.log('');
+
+    const qFmt = (q) => q === 'excellent' ? chalk.green(q) : q === 'great' || q === 'better' ? chalk.cyan(q) : chalk.gray(q);
+    for (const s of suggestions) {
+      const star = s.id === recommendedId ? chalk.bold.green(' ◀ recommended') : '';
+      const fit = vram.vramMB && !s.fitsVram ? chalk.red(' (needs more VRAM)') : '';
+      const got = s.installed ? chalk.green(' ✓ installed') : chalk.gray(` ollama pull ${s.id}`);
+      console.log(`  ${chalk.bold(s.name.padEnd(16))} ${chalk.gray(s.vram.padEnd(8))} ${s.speed.padEnd(11)} ${qFmt(s.quality)}${star}${fit}`);
+      console.log(`  ${' '.repeat(16)} ${got}`);
+    }
+    console.log('');
+
+    // The MUST: extraction-should-be-local disclaimer, every time.
+    console.log(chalk.bold.yellow('  ⚠  Extraction should be done with a LOCAL model'));
+    const wrap = (text, width) => {
+      const out = []; let line = '';
+      for (const word of text.split(/\s+/)) {
+        if ((line + ' ' + word).trim().length > width) { out.push(line.trim()); line = word; }
+        else line += ' ' + word;
+      }
+      if (line.trim()) out.push(line.trim());
+      return out;
+    };
+    for (const line of wrap(CLOUD_EXTRACTION_DISCLAIMER, 78)) {
+      console.log(chalk.yellow('     ' + line));
+    }
+    console.log('');
+    if (recommendedId && !suggestions.find(s => s.id === recommendedId)?.installed) {
+      console.log(chalk.gray(`  Get started:  `) + chalk.white(`ollama pull ${recommendedId}`) + chalk.gray(`  then  `) + chalk.white(`seo-intel setup`));
+      console.log('');
+    }
+  });
+
 // ── STATUS ─────────────────────────────────────────────────────────────────
 program
   .command('status')
@@ -2357,6 +2442,7 @@ program
   .option('--open', 'Open browser automatically', true)
   .option('--no-open', 'Do not open browser')
   .action(async (opts) => {
+    _keepProcessAlive = true;
     const port = parseInt(opts.port, 10);
     process.env.PORT = String(port);
     if (opts.open) process.env.SEO_INTEL_AUTO_OPEN = '1';
@@ -2369,6 +2455,7 @@ program
   .description('Open the web-based setup wizard in your browser')
   .option('--port <n>', 'Server port', '3000')
   .action(async (opts) => {
+    _keepProcessAlive = true;
     const port = parseInt(opts.port, 10);
     process.env.PORT = String(port);
     await import('./server.js');
@@ -5094,10 +5181,20 @@ program
   });
 
 // ── License activation hook — phone-home if cache is stale/missing ──────────
+// Hard cap so a slow/unreachable license server can never block the command.
+// If activation doesn't finish in time we proceed on cached/offline behavior;
+// the in-flight request is abandoned when the process exits (see bottom of file).
+const LICENSE_ACTIVATION_BUDGET_MS = 2500;
 program.hook('preAction', async () => {
   const license = loadLicense();
   if (license.needsActivation || license.stale) {
-    await activateLicense().catch(() => {});
+    await Promise.race([
+      activateLicense().catch(() => {}),
+      new Promise((resolve) => {
+        const t = setTimeout(resolve, LICENSE_ACTIVATION_BUDGET_MS);
+        if (typeof t.unref === 'function') t.unref();
+      }),
+    ]);
   }
 });
 
@@ -5553,7 +5650,27 @@ program
   });
 
 // Global error handler — ensures uncaught errors in async actions exit non-zero (BUG-004)
-program.parseAsync().catch(err => {
-  console.error(chalk.red(`\n✗ ${err.message}\n`));
-  process.exit(1);
-});
+program.parseAsync()
+  .then(() => {
+    // One-shot command finished — exit now instead of waiting on the event loop
+    // to drain. A hung background fetch (update check / license phone-home) would
+    // otherwise keep the process alive until the OS connect timeout (~10s).
+    if (!_keepProcessAlive) flushThenExit(process.exitCode ?? 0);
+  })
+  .catch(err => {
+    console.error(chalk.red(`\n✗ ${err.message}\n`));
+    process.exit(1);
+  });
+
+// Drain any buffered stdout/stderr before exiting. process.exit() truncates
+// async pipe writes (large `--format json` output piped to another process),
+// so we wait for both streams to flush, with a short safety net so a stalled
+// pipe can never hang the process.
+function flushThenExit(code) {
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  const t = setTimeout(() => process.exit(code), 2000);
+  if (typeof t.unref === 'function') t.unref();
+}

@@ -4326,9 +4326,24 @@ program
     }
 
     const { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } = await import('./analyses/aeo/index.js');
+    const { fetchAiAccessForDomains } = await import('./analyses/aeo/ai-access.js');
+
+    // AI-crawler access (robots.txt) — domain-level signal. Network, but cheap
+    // (one robots.txt per target/owned domain) and best-effort.
+    const targetDomains = db
+      .prepare("SELECT DISTINCT domain FROM domains WHERE project = ? AND role IN ('target','owned')")
+      .all(project)
+      .map(r => r.domain);
+    let aiAccessByDomain = null;
+    if (targetDomains.length) {
+      if (isBrief) console.log(chalk.gray(`  Checking AI-crawler access (robots.txt) for ${targetDomains.length} domain(s)…`));
+      try { aiAccessByDomain = await fetchAiAccessForDomains(targetDomains); }
+      catch { aiAccessByDomain = null; }
+    }
 
     const results = runAeoAnalysis(db, project, {
       includeCompetitors: !opts.targetOnly,
+      aiAccessByDomain,
       log: (msg) => isBrief ? console.log(chalk.gray(msg)) : null,
     });
 
@@ -4340,7 +4355,7 @@ program
 
     // Persist scores
     persistAeoScores(db, results);
-    upsertCitabilityInsights(db, project, results.target);
+    upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess);
 
     const { summary } = results;
     const { tierCounts } = summary;
@@ -4439,6 +4454,21 @@ program
       console.log(`    ${chalk.red('●')} Poor (<35):        ${tierCounts.poor}`);
       console.log('');
 
+      if (summary.aiAccess && summary.aiAccess.length) {
+        console.log(chalk.bold('  🤖 AI Crawler Access (robots.txt)'));
+        console.log('');
+        for (const a of summary.aiAccess) {
+          const icon = a.verdict === 'blocked' ? chalk.red('✗') : a.verdict === 'partial' ? chalk.yellow('⚠') : chalk.green('✓');
+          const label = a.verdict === 'blocked' ? chalk.red('BLOCKED') : a.verdict === 'partial' ? chalk.yellow('PARTIAL') : chalk.green('OPEN');
+          console.log(`    ${icon} ${chalk.bold(a.domain)}  ${label}  ${chalk.gray(a.score + '/100')}`);
+          if (a.verdict !== 'open') console.log(chalk.gray(`         ${a.detail}`));
+        }
+        if (summary.gatedPages > 0) {
+          console.log(chalk.red(`    ⛔ ${summary.gatedPages} page(s) capped at 30/100 — AI assistants can't read them, so on-page quality can't help.`));
+        }
+        console.log('');
+      }
+
       if (summary.weakestSignals.length) {
         console.log(chalk.bold('  🔍 Weakest Signals (target average)'));
         console.log('');
@@ -4488,12 +4518,16 @@ program
     }
 
     // ── Regenerate dashboard ──
-    try {
-      const configs = loadAllConfigs();
-      generateMultiDashboard(db, configs);
-      console.log(chalk.green('  ✅ Dashboard updated with AI Citability card\n'));
-    } catch (e) {
-      console.log(chalk.gray(`  (Dashboard not updated: ${e.message})\n`));
+    // Skip in JSON mode: generateMultiDashboard logs progress to stdout, which
+    // would corrupt the JSON object that machine/agent consumers parse.
+    if (isBrief) {
+      try {
+        const configs = loadAllConfigs();
+        generateMultiDashboard(db, configs);
+        console.log(chalk.green('  ✅ Dashboard updated with AI Citability card\n'));
+      } catch (e) {
+        console.log(chalk.gray(`  (Dashboard not updated: ${e.message})\n`));
+      }
     }
 
     // ── Save report ──
@@ -4674,11 +4708,14 @@ program
       console.log(chalk.green(`\n  ✅ Report saved: ${opts.out}\n`));
     }
 
-    // Regenerate dashboard
-    try {
-      const configs = loadAllConfigs();
-      generateMultiDashboard(db, configs);
-    } catch {}
+    // Regenerate dashboard — skip in JSON mode so generateMultiDashboard's
+    // stdout progress logs don't corrupt the JSON output.
+    if (opts.format !== 'json') {
+      try {
+        const configs = loadAllConfigs();
+        generateMultiDashboard(db, configs);
+      } catch {}
+    }
   });
 
 // ── AEO BLOG DRAFT GENERATOR ─────────────────────────────────────────────

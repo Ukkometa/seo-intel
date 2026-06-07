@@ -13,7 +13,7 @@ description: >
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.46)
+# SEO Intel (v1.5.47)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -38,7 +38,7 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+)
 
-The MCP server exposes 17 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. Almost everything is free — only competitor synthesis requires Solo.
+The MCP server exposes 19 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. Almost everything is free — only competitor synthesis and the one-shot `scan_site` require Solo.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
@@ -57,7 +57,8 @@ The MCP server exposes 17 tools as native AI agent calls. Agents discover tool d
 | `ingest_insight(project, type, data, agent_name?)` | Persist agent-generated insight to the ledger (deduped) |
 | `list_problems(project, severity?, limit?)` | Ahrefs-style "what's broken" — prioritised issues with fix templates |
 | `mark_problem_status(project, problem_id, status, agent_name?)` | Mark a problem done/dismissed |
-| `run_citability_audit(project, include_competitors?)` | AEO scoring (6 signals); persists scores + upserts insights |
+| `run_citability_audit(project, include_competitors?, check_ai_access?)` | AEO scoring (7 signals incl. AI-crawler access); checks robots.txt for ClaudeBot/GPTBot/PerplexityBot/Google-Extended blocks; persists scores + upserts insights |
+| `tech_audit(project, domain?, sitemap_head?, limit?)` | Technical SEO audit from crawled data — titles, meta, noindex/robots conflicts, redirects, canonicals, sitemap diff. Severity-sorted findings |
 | `prescore_draft(draft_md, project?, topic?)` | Pre-publish AEO scorer for agent-written content. Pass `project` to close the loop — records the draft in the Ledger and marks matching gaps `in_progress` so they stop resurfacing |
 | `draft_blog_prompt(project, topic?, lang?, content_type?)` | AEO-aware prompt seeded with gap data — agent's LLM writes the draft |
 | `export_intel(project, tables?, max_rows_per_table?)` | Bulk export of own-site tables (pages, keywords, headings, links, technical, schemas, extractions, citability scores, insights). Includes a `notice` field telling the agent NOT to ingest wholesale — pipe to file or use targeted tools instead |
@@ -65,6 +66,7 @@ The MCP server exposes 17 tools as native AI agent calls. Agents discover tool d
 ### Solo (paid) MCP surface — competitor synthesis only
 | Tool | Purpose |
 |---|---|
+| `scan_site(domain, pages?, stealth?, no_ai?, model?)` | One-shot full audit of any domain (crawl → extract → analyze → export) as a detached background job — mirrors `seo-intel scan` |
 | `get_competitor_positioning(project)` | Strategic positioning narrative + competitor coverage |
 | `get_intel(project, for='competitor')` | Competitor summary + keyword matrix |
 | `export_intel(project, tables=['analyses'])` | Adds the competitor gap-analysis history table |
@@ -76,7 +78,7 @@ The MCP server exposes 17 tools as native AI agent calls. Agents discover tool d
 1. list_projects                                  # discover
 2. get_crawl_status                               # check freshness
 3. run_crawl(carbium) if stale                    # refresh
-4. run_citability_audit(carbium)                  # score everything (AEO, 6 signals)
+4. run_citability_audit(carbium)                  # score everything (AEO, 7 signals incl. AI-crawler access)
 5. get_intel(carbium, for=audit|blog)             # citability + gaps + hints
 6. draft_blog_prompt(carbium, topic=X)            # AEO-aware prompt
 7. agent's own Opus/GPT writes the draft          # generate
@@ -263,7 +265,7 @@ seo-intel subdomains <domain>                     # Discover subdomains
 ## Analysis & Audit Commands
 
 ```bash
-seo-intel aeo <project>            # AI Citability Audit (0-100 per page, 6 signals)
+seo-intel aeo <project>            # AI Citability Audit (0-100 per page, 7 signals incl. AI-crawler access)
 seo-intel keywords <project>       # Keyword Inventor (traditional + Perplexity + agent queries)
 seo-intel brief <project>          # Content brief generation for gap pages
 seo-intel templates <project>      # URL pattern analysis and content type mapping

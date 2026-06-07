@@ -12,12 +12,16 @@ import { scorePage } from './scorer.js';
  *
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} project
- * @param {object} opts - { includeCompetitors: boolean, log: function }
+ * @param {object} opts - { includeCompetitors, log, aiAccessByDomain }
+ *   aiAccessByDomain: optional Map<domain, verdict> from ai-access.js. Pure —
+ *   this function never touches the network; callers fetch robots.txt and pass
+ *   the verdicts in (preserves the "AEO runs on existing crawl data" contract).
  * @returns {object} { target: PageScore[], competitors: Map<domain, PageScore[]>, summary }
  */
 export function runAeoAnalysis(db, project, opts = {}) {
   const log = opts.log || console.log;
   const includeCompetitors = opts.includeCompetitors ?? true;
+  const aiAccessByDomain = opts.aiAccessByDomain || null;
 
   // ── Gather pages with body_text ─────────────────────────────────────────
   const roleFilter = includeCompetitors
@@ -75,8 +79,12 @@ export function runAeoAnalysis(db, project, opts = {}) {
       entities = JSON.parse(page.primary_entities || '[]');
     } catch { /* ignore */ }
 
+    const aiAccess = aiAccessByDomain
+      ? (aiAccessByDomain.get(page.domain) || aiAccessByDomain.get(page.domain.replace(/^www\./, '')) || null)
+      : null;
+
     const result = scorePage(
-      page, headings, entities, schemaTypes, pageSchemas, page.search_intent
+      page, headings, entities, schemaTypes, pageSchemas, page.search_intent, aiAccess
     );
 
     const pageScore = {
@@ -117,6 +125,20 @@ export function runAeoAnalysis(db, project, opts = {}) {
   const tierCounts = { excellent: 0, good: 0, needs_work: 0, poor: 0 };
   for (const r of targetResults) tierCounts[r.tier]++;
 
+  // Domain-level AI-access rollup (one verdict per target/owned domain).
+  const aiAccess = [];
+  if (aiAccessByDomain) {
+    const seen = new Set();
+    for (const r of targetResults) {
+      const key = r.domain.replace(/^www\./, '');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const v = aiAccessByDomain.get(r.domain) || aiAccessByDomain.get(key);
+      if (v) aiAccess.push({ domain: key, verdict: v.verdict, score: v.score, blocked: !!v.blocked, blockedBots: v.citationBlocked || [], detail: v.detail });
+    }
+  }
+  const gatedPages = targetResults.filter(r => r.aiAccessGated).length;
+
   const summary = {
     totalScored: scored,
     targetPages: targetResults.length,
@@ -126,6 +148,8 @@ export function runAeoAnalysis(db, project, opts = {}) {
     scoreDelta: avgTarget - avgComp,
     tierCounts,
     weakestSignals: getWeakestSignals(targetResults),
+    aiAccess,
+    gatedPages,
   };
 
   log(`  Scored ${scored} pages (${targetResults.length} target, ${compScores.length} competitor)`);
@@ -171,7 +195,7 @@ export function persistAeoScores(db, results) {
 /**
  * Feed low-scoring pages into Intelligence Ledger as citability_gap insights
  */
-export function upsertCitabilityInsights(db, project, targetResults) {
+export function upsertCitabilityInsights(db, project, targetResults, aiAccess = null) {
   const upsertStmt = db.prepare(`
     INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
     VALUES (?, 'citability_gap', 'active', ?, ?, ?, NULL, ?)
@@ -183,6 +207,27 @@ export function upsertCitabilityInsights(db, project, targetResults) {
   const ts = Date.now();
   db.exec('BEGIN');
   try {
+    // Domain-level AI-access blocks — the highest-severity citability gap: the
+    // page can't be cited at all because robots.txt locks out the crawlers.
+    if (Array.isArray(aiAccess)) {
+      for (const a of aiAccess) {
+        if (a.verdict === 'open') continue;
+        const fp = `ai-access::${a.domain}`;
+        const data = {
+          domain: a.domain,
+          score: a.score,
+          tier: a.blocked ? 'poor' : 'needs_work',
+          verdict: a.verdict,
+          blocked_crawlers: a.blockedBots,
+          weakest_signals: ['ai access'],
+          recommendation: a.blocked
+            ? `robots.txt blocks AI answer-engine crawlers (${(a.blockedBots || []).slice(0, 5).join(', ')}). Allow ClaudeBot / GPTBot / PerplexityBot / Google-Extended so the assistants developers use can read and cite ${a.domain}.`
+            : `${a.detail} Review robots.txt AI-crawler rules on ${a.domain}.`,
+        };
+        upsertStmt.run(project, fp, ts, ts, JSON.stringify(data));
+      }
+    }
+
     for (const r of targetResults) {
       if (r.score >= 60) continue; // only flag pages that need work
 
@@ -216,14 +261,12 @@ export function upsertCitabilityInsights(db, project, targetResults) {
 function getWeakestSignals(targetResults) {
   if (!targetResults.length) return [];
 
-  const signalTotals = {
-    entity_authority: 0, structured_claims: 0, answer_density: 0,
-    qa_proximity: 0, freshness: 0, schema_coverage: 0,
-  };
-
+  // Key-agnostic: ai_access only appears in the breakdown when robots data was
+  // supplied, so build the accumulator from whatever signals are present.
+  const signalTotals = {};
   for (const r of targetResults) {
     for (const [k, v] of Object.entries(r.breakdown)) {
-      signalTotals[k] += v;
+      signalTotals[k] = (signalTotals[k] || 0) + v;
     }
   }
 

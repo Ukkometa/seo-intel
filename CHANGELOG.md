@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.47 (2026-06-07)
+
+### AI-crawler access is now part of AI citability — and the audit runs from your agent
+A page can be perfectly structured and still be impossible for an AI assistant to cite — because `robots.txt` blocks the crawler. AEO now checks for exactly that.
+
+- **New citability signal: AI-crawler access.** `seo-intel aeo <project>` fetches each target domain's `robots.txt` and detects whether answer-engine crawlers (ClaudeBot, GPTBot, OAI-SearchBot, PerplexityBot, Google-Extended, Amazonbot, DuckAssistBot, and training crawlers like CCBot / Applebot-Extended) are allowed, plus the Cloudflare `Content-Signal: ai-train=no` directive. When the assistants developers actually use are locked out, the affected pages are **capped at 30/100** — on-page quality can't help a page the AI can't read. A new "AI Crawler Access" section appears in the audit, and a high-priority `citability_gap` is written to the Intelligence Ledger per blocked domain.
+- The check is the only network call AEO makes (one `robots.txt` per target domain), it's best-effort, and a missing/unreachable `robots.txt` is treated as open. The pure scorer stays offline — robots verdicts are fetched separately and passed in.
+- **New MCP tool `tech_audit`** — run the technical SEO audit (titles, meta, noindex/robots conflicts, redirects, canonicals, sitemap diff) straight from any MCP host, no shelling out to the CLI.
+- **New MCP tool `scan_site`** (Solo) — one-shot full audit of any domain (crawl → extract → analyze → export) as a detached background job, mirroring `seo-intel scan`.
+- **`run_citability_audit` (MCP)** now performs the same AI-crawler-access check and returns an `ai_access` verdict per domain.
+- **Fix: `aeo` and `gap-intel` now emit clean JSON in `--format json`.** Both commands previously regenerated the dashboard after printing the JSON, and the dashboard step's progress logs (e.g. "Topic clusters loaded…") leaked onto stdout — breaking `JSON.parse` for agents and scripts. Dashboard regeneration is now skipped in JSON mode, so stdout contains only the JSON object.
+
 ## 1.5.46 (2026-05-29)
 
 ### Security — the local dashboard now accepts requests from localhost only

@@ -265,9 +265,12 @@ export function richResultProbability(headings, bodyText, schemaTypes, wordCount
  * @param {string[]} schemaTypes - schema type strings present on page
  * @param {object[]} schemas - full page_schemas rows
  * @param {string} searchIntent - from extraction
- * @returns {object} { score, breakdown, aiIntents, tier, richResult }
+ * @param {object} [aiAccess] - domain-level robots.txt verdict from ai-access.js
+ *   ({ score, blocked, verdict }). When provided, adds a 7th signal and applies
+ *   a hard-reality gate: pages whose AI crawlers are blocked can't be cited.
+ * @returns {object} { score, breakdown, aiIntents, tier, richResult, aiAccess, aiAccessGated }
  */
-export function scorePage(page, headings, entities, schemaTypes, schemas, searchIntent) {
+export function scorePage(page, headings, entities, schemaTypes, schemas, searchIntent, aiAccess = null) {
   const bodyText = page.body_text || '';
   const wordCount = page.word_count || bodyText.split(/\s+/).length;
 
@@ -280,19 +283,36 @@ export function scorePage(page, headings, entities, schemaTypes, schemas, search
     schema_coverage:    schemaCoverageScore(schemaTypes),
   };
 
-  // Weighted composite — entity authority and structured claims matter most for AI
-  const weights = {
-    entity_authority:   0.25,
-    structured_claims:  0.20,
-    answer_density:     0.20,
-    qa_proximity:       0.15,
-    freshness:          0.10,
-    schema_coverage:    0.10,
-  };
+  // Weighted composite — entity authority and structured claims matter most for AI.
+  // When a domain-level AI-access verdict is supplied we fold in a 7th signal and
+  // rebalance to sum to 1.0; otherwise the original 6-signal model is preserved
+  // exactly (callers without robots data are unaffected).
+  const hasAiAccess = aiAccess && typeof aiAccess.score === 'number';
+  let weights;
+  if (hasAiAccess) {
+    breakdown.ai_access = aiAccess.score;
+    weights = {
+      entity_authority: 0.22, structured_claims: 0.18, answer_density: 0.18,
+      qa_proximity: 0.14, freshness: 0.08, schema_coverage: 0.10, ai_access: 0.10,
+    };
+  } else {
+    weights = {
+      entity_authority: 0.25, structured_claims: 0.20, answer_density: 0.20,
+      qa_proximity: 0.15, freshness: 0.10, schema_coverage: 0.10,
+    };
+  }
 
-  const score = Math.round(
+  let score = Math.round(
     Object.entries(weights).reduce((sum, [k, w]) => sum + breakdown[k] * w, 0)
   );
+
+  // Hard-reality gate: if AI assistants are blocked from fetching the page,
+  // on-page quality is moot — they cannot cite what they cannot read.
+  let aiAccessGated = false;
+  if (aiAccess && aiAccess.blocked) {
+    score = Math.min(score, 30);
+    aiAccessGated = true;
+  }
 
   const aiIntents = classifyAiIntent(headings, bodyText, searchIntent);
   const richResult = richResultProbability(headings, bodyText, schemaTypes, wordCount);
@@ -304,5 +324,8 @@ export function scorePage(page, headings, entities, schemaTypes, schemas, search
   else if (score >= 35) tier = 'needs_work';
   else tier = 'poor';
 
-  return { score, breakdown, aiIntents, tier, richResult };
+  return {
+    score, breakdown, aiIntents, tier, richResult,
+    ...(hasAiAccess ? { aiAccess: { score: aiAccess.score, verdict: aiAccess.verdict, blocked: !!aiAccess.blocked }, aiAccessGated } : {}),
+  };
 }

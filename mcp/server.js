@@ -32,6 +32,8 @@ import { readProgress } from '../lib/progress.js';
 import { getProblems, getProblemCounts, markProblemStatus, getActiveStatusMap, PROBLEM_CATEGORIES, PROBLEM_STATUSES } from '../lib/problems.js';
 
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
+import { fetchAiAccessForDomains } from '../analyses/aeo/ai-access.js';
+import { runTechnicalAudit } from '../analysis/technical-audit.js';
 import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js';
 import { lightCrawl } from '../crawler/light.js';
 import { runContentLoop } from '../analyses/loop/orchestrator.js';
@@ -502,21 +504,31 @@ server.registerTool(
 server.registerTool(
   'run_citability_audit',
   {
-    description: 'Run AEO citability scoring across all crawled pages (6 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage). Persists scores to citability_scores and upserts citability_gap insights into the ledger. Pure function — fast, no LLM calls. Free tier — analysis of your own site is free.',
+    description: 'Run AEO citability scoring across all crawled pages (7 signals: entity authority, structured claims, answer density, Q&A proximity, freshness, schema coverage, and AI-crawler access). Also checks robots.txt per target domain — if it blocks answer-engine crawlers (ClaudeBot / GPTBot / PerplexityBot / Google-Extended), affected pages are gated low because AI assistants literally cannot read them. Persists scores to citability_scores and upserts citability_gap insights into the ledger. Free tier — analysis of your own site is free.',
     inputSchema: {
       project: z.string(),
       include_competitors: z.boolean().optional().describe('Score competitor pages too (default true)'),
+      check_ai_access: z.boolean().optional().describe('Fetch robots.txt per target domain to score AI-crawler access (default true). The only network call this tool makes; set false to keep it fully offline.'),
     },
   },
-  async ({ project, include_competitors = true }) => {
+  async ({ project, include_competitors = true, check_ai_access = true }) => {
     if (!loadProjectConfig(project)) {
       return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
     }
     try {
       const db = getDb();
-      const results = runAeoAnalysis(db, project, { includeCompetitors: include_competitors, log: () => {} });
+      let aiAccessByDomain = null;
+      if (check_ai_access) {
+        const targetDomains = db
+          .prepare("SELECT DISTINCT domain FROM domains WHERE project = ? AND role IN ('target','owned')")
+          .all(project).map(r => r.domain);
+        if (targetDomains.length) {
+          try { aiAccessByDomain = await fetchAiAccessForDomains(targetDomains); } catch { /* best-effort */ }
+        }
+      }
+      const results = runAeoAnalysis(db, project, { includeCompetitors: include_competitors, aiAccessByDomain, log: () => {} });
       persistAeoScores(db, results);
-      upsertCitabilityInsights(db, project, results.target);
+      upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess);
       const competitorPageCount = [...results.competitors.values()].reduce((a, list) => a + list.length, 0);
       const avgTargetScore = results.target.length
         ? Math.round(results.target.reduce((s, p) => s + p.score, 0) / results.target.length)
@@ -532,6 +544,8 @@ server.registerTool(
         target_pages_scored: results.target.length,
         competitor_pages_scored: competitorPageCount,
         avg_target_score: avgTargetScore,
+        ai_access: results.summary.aiAccess,
+        ai_access_gated_pages: results.summary.gatedPages,
         low_score_target_pages: lowScorePages,
         hint: 'Scores persisted to DB. Call get_intel(project, for=audit) to see the full citability matrix + insights ledger.',
       };
@@ -542,6 +556,107 @@ server.registerTool(
     } catch (err) {
       return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
     }
+  }
+);
+
+// ── Tool: tech_audit (FREE) ───────────────────────────────────────────────
+server.registerTool(
+  'tech_audit',
+  {
+    description: [
+      'Run the technical SEO audit on already-crawled data for a project — titles, meta descriptions, noindex/robots conflicts, redirect chains, canonical issues, and sitemap-vs-crawl diff. Returns severity-sorted findings (error / warn / info) with the affected URL and a description each.',
+      '',
+      'Reads from the local DB (no re-crawl). Optionally runs live HEAD checks against sitemap URLs (network) to catch broken/redirected entries. Free tier — covers your own target/owned domains.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      domain: z.string().optional().describe('Audit a single domain. Omit to audit all target/owned domains in the project.'),
+      sitemap_head: z.boolean().optional().describe('Also run live HEAD checks against sitemap URLs (network-heavy). Default false.'),
+      limit: z.number().int().positive().max(200).optional().describe('Max findings to return per domain (default 60).'),
+    },
+  },
+  async ({ project, domain, sitemap_head, limit = 60 }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const db = getDb();
+      const domainRows = domain
+        ? [{ domain }]
+        : db.prepare("SELECT domain FROM domains WHERE project = ? AND role IN ('target','owned')").all(project);
+      if (!domainRows.length) {
+        return { content: [{ type: 'text', text: `No target/owned domains found for project "${project}".` }], isError: true };
+      }
+      const order = { error: 0, warn: 1, info: 2 };
+      const domains = [];
+      for (const { domain: d } of domainRows) {
+        const res = await runTechnicalAudit(db, { project, domain: d, runSitemapHead: !!sitemap_head });
+        if (res.error) { domains.push({ domain: d, error: res.error }); continue; }
+        const findings = [...(res.findings || [])]
+          .sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3))
+          .slice(0, limit)
+          .map(f => ({ severity: f.severity, type: f.type, url: f.url || null, details: f.details }));
+        domains.push({ domain: d, stats: res.stats, findings, findings_truncated: (res.findings || []).length > limit });
+      }
+      const out = {
+        ok: true,
+        project,
+        domains,
+        hint: 'Findings read from the local crawl DB. Re-run `run_crawl` then this tool to verify fixes cleared. For AI-citability gaps, use run_citability_audit; for the prioritized fix queue, use list_problems.',
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: scan_site (PAID — one-shot full audit, no config) ───────────────
+// Mirrors `seo-intel scan <domain>`: crawl → extract → analyze → export. It is
+// heavyweight (browser crawl + extraction + cloud analysis), so it runs as a
+// detached subprocess like run_crawl and returns the report path to poll.
+server.registerTool(
+  'scan_site',
+  {
+    description: [
+      'One-shot full SEO audit of any domain with no project setup — crawl → extract → analyze → export. Spawns a detached background job (like run_crawl) and returns immediately with the report path; poll get_crawl_status for progress.',
+      '',
+      'Heavyweight: full browser crawl, local extraction, and cloud analysis. For a fast, ephemeral, offline read of a single URL use crawl_site instead. Paid tier (Solo).',
+    ].join('\n'),
+    inputSchema: {
+      domain: z.string().describe('Domain or URL to audit (e.g. "docs.carbium.sh").'),
+      pages: z.number().int().positive().max(500).optional().describe('Max pages to crawl (default 100).'),
+      stealth: z.boolean().optional().describe('Enable stealth browser mode for JS-heavy / anti-bot sites.'),
+      no_ai: z.boolean().optional().describe('Skip the AI-enriched export (deterministic markdown only).'),
+      model: z.enum(['gemini', 'claude', 'gpt']).optional().describe('Model for analysis + AI export (default gemini).'),
+    },
+  },
+  async ({ domain, pages, stealth, no_ai, model }) => {
+    if (!isPro()) return paidGate('scan_site');
+    const progress = readProgress();
+    if (progress?.status === 'running') {
+      return { content: [{ type: 'text', text: `A seo-intel job is already running (command="${progress.command}", pid=${progress.pid}). Wait or call get_crawl_status.` }], isError: true };
+    }
+    const bare = domain.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '');
+    const args = ['cli.js', 'scan', bare];
+    if (pages) args.push('--pages', String(pages));
+    if (stealth) args.push('--stealth');
+    if (no_ai) args.push('--no-ai');
+    if (model) args.push('--model', model);
+
+    const child = spawn(process.execPath, args, { cwd: ROOT, detached: true, stdio: 'ignore' });
+    child.unref();
+
+    const reportPath = join(ROOT, 'reports', `scan-${bare.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.md`);
+    const result = {
+      started: true,
+      pid: child.pid,
+      domain: bare,
+      command: `node ${args.join(' ')}`,
+      report_path: reportPath,
+      hint: 'Scan is running detached (crawl → extract → analyze → export). Poll get_crawl_status; when status="completed" read the markdown at report_path. The ephemeral project is "_scan-<domain>" — tech_audit/run_citability_audit can be run against it once the crawl lands.',
+    };
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: result };
   }
 );
 
@@ -989,7 +1104,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 17 tools — free: crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo (competitor synthesis): get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 19 tools — free: crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), tech_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

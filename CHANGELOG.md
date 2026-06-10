@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.49 (2026-06-08)
+
+### New skill: `seo-autofix` — autonomous audit → fix → verify loop
+SEO Intel already reports each problem with a concrete fix **and** a verification recipe. This skill turns that into a closed loop an AI code agent runs against a repo it has checked out — with the human in exactly one place: merging and deploying the branch.
+
+- **The loop:** `run_crawl` → `list_problems` → for each problem, map the affected URL to its source file, apply the `fix_template`, **verify against a local preview before deploying** (`crawl_site` against `localhost`), keep it only if the problem signal clears, then collect verified fixes on one branch and `mark_problem_status(fixed)`.
+- **Autonomy gate:** only `fix_difficulty ≤ 2` (deterministic structural fixes — missing meta/title, missing JSON-LD, orphan links, noindex conflicts) are applied autonomously. Judgment-heavy problems (positioning, content rewrites) are summarized for the human, never auto-applied.
+- **Hard rules:** verify every fix against a real crawl (a `fix_template` is guidance, the crawl is proof — unverified edits get reverted); one branch, no push to `main`, no deploy, no publishing. The blast radius is a branch the human reviews.
+- Lives in `skills/seo-autofix/` — distributed via the repo / skill directories.
+
+### Fixed
+- **CLI starts in ~100ms instead of loading the browser engine up front.** `cli.js` statically imported the crawl engine (Playwright + the HTML→markdown chain) at startup, so every command — even `seo-intel --version` — paid that import, which could stall for minutes on a cold module cache. The crawler now loads on first use (`crawl` / `run` / `scan`); all other commands skip it entirely. Measured: `--version` went from 143s (worst case observed) to ~110ms.
+
 ## 1.5.48 (2026-06-07)
 
 ### Local-model suggester — `seo-intel models` + `suggest_models` (MCP)

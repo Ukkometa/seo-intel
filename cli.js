@@ -20,7 +20,6 @@ import { totalmem } from 'os';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 
-import { crawlDomain } from './crawler/index.js';
 // Paid modules — loaded lazily inside gated commands only.
 let _extractPage, _buildAnalysisPrompt;
 async function getExtractPage() {
@@ -582,6 +581,8 @@ program
         },
       };
 
+      // Lazy: crawler/index.js pulls Playwright + turndown — keep them off CLI startup
+      const { crawlDomain } = await import('./crawler/index.js');
       for await (const page of crawlDomain(site.url, crawlOpts)) {
         if (page._blocked) {
           totalBlocked++;
@@ -1330,6 +1331,7 @@ program
     let pageCount = 0;
     let skipped = 0;
     let blocked = false;
+    const { crawlDomain } = await import('./crawler/index.js');
     for await (const page of crawlDomain(next.url, {
       onSitemapDiscovered: (urls) => {
         try { upsertSitemapUrls(db, domainId, urls.map(u => u.url), `${next.url}/sitemap.xml`); }
@@ -5298,6 +5300,7 @@ program
     const tag = chalk.cyan(`[${domain.split('.')[0]}]`);
 
     try {
+      const { crawlDomain } = await import('./crawler/index.js');
       for await (const page of crawlDomain(siteUrl, {
         maxPages, stealth: useStealth, tiered: true,
         onSitemapDiscovered: (urls) => {

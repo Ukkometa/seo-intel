@@ -35,6 +35,9 @@ export {
   recommendExtractionModel,
   recommendAnalysisModel,
   getModelRecommendations,
+  suggestExtractionModels,
+  CLOUD_EXTRACTION_DISCLAIMER,
+  CLOUD_EXTRACTION_DISCLAIMER_SHORT,
 } from './models.js';
 
 // Auto-installers

@@ -34,8 +34,15 @@ import { getProblems, getProblemCounts, markProblemStatus, getActiveStatusMap, P
 import { runAeoAnalysis, persistAeoScores, upsertCitabilityInsights } from '../analyses/aeo/index.js';
 import { fetchAiAccessForDomains } from '../analyses/aeo/ai-access.js';
 import { runTechnicalAudit } from '../analysis/technical-audit.js';
+// NOTE: model-suggestion helpers (setup/models.js, setup/checks.js) are loaded
+// lazily inside the suggest_models handler, NOT imported at top level — to keep
+// the setup subtree (and anything it transitively pulls) off the MCP boot path.
 import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js';
-import { lightCrawl } from '../crawler/light.js';
+// NOTE: lightCrawl (crawler/light.js) is loaded lazily inside the crawl_site
+// handler, NOT imported at top level. Its chain pulls turndown
+// (light.js → html-extract.js → sanitize.js → turndown), and a slow/hanging
+// turndown import would otherwise block the entire MCP stdio boot — no tools,
+// no banner, no handshake. Keep the crawler subtree off the boot path.
 import { runContentLoop } from '../analyses/loop/orchestrator.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
 
@@ -385,6 +392,9 @@ server.registerTool(
   },
   async ({ url, max_pages, include_citability, same_origin }) => {
     try {
+      // Lazy-load the crawler subtree (pulls turndown) only when crawl_site is
+      // actually invoked — keeps it off the MCP boot path. See note at top.
+      const { lightCrawl } = await import('../crawler/light.js');
       const r = await lightCrawl(url, {
         maxPages: max_pages ?? 10,
         includeCitability: include_citability ?? false,
@@ -603,6 +613,51 @@ server.registerTool(
         project,
         domains,
         hint: 'Findings read from the local crawl DB. Re-run `run_crawl` then this tool to verify fixes cleared. For AI-citability gaps, use run_citability_audit; for the prioritized fix queue, use list_problems.',
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: suggest_models (FREE) ───────────────────────────────────────────
+server.registerTool(
+  'suggest_models',
+  {
+    description: [
+      'Suggest LOCAL extraction models for the user\'s machine — the small models seo-intel runs once per crawled page to pull structured SEO data. Detects GPU/VRAM and which models are already in Ollama, then recommends from the curated set (Gemma 4 E2B / E4B / 12B, Qwen 3.5 4B / 9B).',
+      '',
+      'IMPORTANT: extraction should be done with a LOCAL model. The response always includes a cloud disclaimer — surface it to the user. Cloud extraction sends every page off-machine, costs money at scale, and rate-limits; a 4–8B local model handles this task well, offline. Free tier.',
+    ].join('\n'),
+    inputSchema: {
+      vram_gb: z.number().positive().optional().describe('Override detected VRAM (GB). Omit to auto-detect the host GPU/unified memory.'),
+    },
+  },
+  async ({ vram_gb }) => {
+    try {
+      const { suggestExtractionModels, CLOUD_EXTRACTION_DISCLAIMER } = await import('../setup/models.js');
+      let vramMB = 0, gpuName = null;
+      if (vram_gb) { vramMB = Math.round(vram_gb * 1024); gpuName = 'user-specified'; }
+      else { try { const { detectVRAM } = await import('../setup/checks.js'); const v = detectVRAM(); vramMB = v.vramMB || 0; gpuName = v.gpuName || null; } catch { /* unknown */ } }
+
+      let installed = [];
+      try {
+        const c = new AbortController();
+        const t = setTimeout(() => c.abort(), 1500);
+        const r = await fetch('http://localhost:11434/api/tags', { signal: c.signal });
+        clearTimeout(t);
+        if (r.ok) { const d = await r.json(); installed = (d.models || []).map(m => m.name); }
+      } catch { /* Ollama not reachable */ }
+
+      const { suggestions, recommendedId } = suggestExtractionModels(vramMB, installed);
+      const out = {
+        hardware: { gpu: gpuName, vram_gb: vramMB ? +(vramMB / 1024).toFixed(1) : null },
+        recommended: recommendedId,
+        install_hint: recommendedId ? `ollama pull ${recommendedId}` : null,
+        suggestions,
+        cloud_disclaimer: CLOUD_EXTRACTION_DISCLAIMER,
+        note: 'Extraction should be done with a LOCAL model — show cloud_disclaimer to the user before suggesting any cloud option.',
       };
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
     } catch (err) {
@@ -1104,7 +1159,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 19 tools — free: crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), tech_audit, prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 20 tools — free: crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), tech_audit, suggest_models (local-first), prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

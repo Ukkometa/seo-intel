@@ -43,6 +43,18 @@ export const EXTRACTION_MODELS = [
     recommended: true,
   },
   {
+    id: 'gemma4:12b',
+    name: 'Gemma 4 12B',
+    family: 'gemma4',
+    tier: 'quality',
+    vram: '~10 GB',
+    minVramMB: 8500,
+    speed: '~3s/page',
+    quality: 'excellent',
+    description: 'Dense 12B — a clear quality step up from E4B for tricky pages, still fast. Needs RTX 3080+/M-series 16GB+.',
+    recommended: false,
+  },
+  {
     id: 'gemma4:26b',
     name: 'Gemma 4 26B',
     family: 'gemma4',
@@ -428,6 +440,82 @@ export function recommendAnalysisModel(availableModels = [], vramMB = 0) {
     installed: false,
     note: 'Minimum viable model for local analysis.',
   };
+}
+
+// ── Cloud-extraction disclaimer ─────────────────────────────────────────────
+//
+// Extraction runs once per crawled page. At scale (thousands of pages) a cloud
+// provider means every page's content leaves the machine, costs real money, and
+// hits rate limits — for a task a small local model handles well. Surface this
+// EVERYWHERE a cloud model is offered/selected for extraction. Non-negotiable.
+
+export const CLOUD_EXTRACTION_DISCLAIMER =
+  'Extraction should be done with a LOCAL model. Cloud is a fallback, not the default: ' +
+  'it sends every page\'s content to a third-party API, costs money at scale (a 10k-page ' +
+  'site is real spend), and hits rate limits — all for a task a 4–8B local model does well, ' +
+  'offline, with your data never leaving the machine. Use cloud only if you have no local ' +
+  'GPU/Ollama and accept those tradeoffs.';
+
+// Short one-liner for tight UIs (status bars, JSON `notice` fields).
+export const CLOUD_EXTRACTION_DISCLAIMER_SHORT =
+  '⚠ Use a LOCAL model for extraction — cloud sends page content off-machine, costs money at scale, and rate-limits. Local is private, free, and offline.';
+
+// ── Curated extraction suggestions ──────────────────────────────────────────
+//
+// The headline "what should I run locally" set — the families we actually
+// recommend, smallest → largest. Drawn from EXTRACTION_MODELS so VRAM/speed/
+// quality stay in one place. Used by `seo-intel models` and the suggest_models
+// MCP tool so an agent in chat can recommend a model without the full wizard.
+
+const SUGGESTED_EXTRACTION_IDS = [
+  'gemma4:e2b',   // laptop / low VRAM
+  'qwen3.5:4b',   // budget alt
+  'gemma4:e4b',   // default — best quality/speed
+  'qwen3.5:9b',   // ~8B-class alt
+  'gemma4:12b',   // step-up quality, still fast
+];
+
+/**
+ * Curated local extraction-model suggestions, annotated for the detected
+ * hardware. Always returns the local set; the cloud disclaimer is attached so
+ * callers can surface it alongside.
+ *
+ * @param {number} [vramMB] - detected VRAM in MB (0/unknown = show all, no fit filter)
+ * @param {string[]} [installed] - model tags currently in Ollama
+ * @returns {{ suggestions: object[], recommendedId: string|null, vramMB: number, disclaimer: string }}
+ */
+export function suggestExtractionModels(vramMB = 0, installed = []) {
+  const isInstalled = (id) => {
+    const [fam, size] = id.split(':');
+    return installed.some(m => m.startsWith(fam) && (!size || m.includes(size)));
+  };
+
+  const suggestions = SUGGESTED_EXTRACTION_IDS
+    .map(id => EXTRACTION_MODELS.find(m => m.id === id))
+    .filter(Boolean)
+    .map(m => ({
+      id: m.id,
+      name: m.name,
+      tier: m.tier,
+      vram: m.vram,
+      speed: m.speed,
+      quality: m.quality,
+      fitsVram: !vramMB || vramMB >= m.minVramMB,
+      installed: isInstalled(m.id),
+      note: m.description,
+    }));
+
+  // Recommend the largest suggested model that fits VRAM (or the default if VRAM unknown).
+  let recommendedId = 'gemma4:e4b';
+  if (vramMB) {
+    const fitting = suggestions.filter(s => s.fitsVram);
+    recommendedId = fitting.length ? fitting[fitting.length - 1].id : (suggestions[0]?.id ?? null);
+  }
+  // Prefer an already-installed fitting model if there is one.
+  const installedFitting = suggestions.find(s => s.installed && s.fitsVram);
+  if (installedFitting) recommendedId = installedFitting.id;
+
+  return { suggestions, recommendedId, vramMB, disclaimer: CLOUD_EXTRACTION_DISCLAIMER };
 }
 
 /**

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.50 (2026-06-11)
+
+### New MCP tool: `setup_project` — zero → configured → audited, entirely from chat
+The last setup gap in chat-native coverage: projects could previously only be created via the CLI or web wizard. An AI agent can now take a user from nothing to a configured, crawled, audited project without leaving the conversation.
+
+- **`setup_project(project_name, target_url, …)`** writes the same project config the wizard produces — target domain, competitors, owned domains, analysis context (industry / audience / goal), crawl budget, and extraction model. Pairs with `suggest_models` for picking the local model first.
+- Refuses to overwrite an existing project unless `overwrite=true`.
+- MCP server now exposes **21 tools**; the full lifecycle (set up → crawl → extract → audit → problems → fix → draft → re-audit) is reachable from any MCP host.
+- Model catalog: cloud analysis entry refreshed to **Claude Opus 4.8**.
+
 ## 1.5.49 (2026-06-08)
 
 ### New skill: `seo-autofix` — autonomous audit → fix → verify loop

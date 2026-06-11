@@ -666,6 +666,80 @@ server.registerTool(
   }
 );
 
+// ── Tool: setup_project (FREE — project creation from chat) ───────────────
+// Closes the "setting up" gap: before this, projects could only be created via
+// the CLI/web wizard. An agent can now take a user from zero → configured →
+// crawled → audited entirely in chat.
+server.registerTool(
+  'setup_project',
+  {
+    description: [
+      'Create (or update) a SEO Intel project from chat — no CLI wizard needed. Writes the project config that run_crawl / run_citability_audit / tech_audit / get_intel operate on.',
+      '',
+      'Minimum: project_name + target_url. Add competitors to unlock the Solo competitive surface later. Industry/audience/goal feed the analysis prompts — better context, better insights. Use suggest_models first to pick a local extraction model for the user\'s hardware.',
+      '',
+      'Refuses to overwrite an existing project unless overwrite=true. Free tier.',
+    ].join('\n'),
+    inputSchema: {
+      project_name: z.string().describe('Human name — slugified for the project id (e.g. "Carbium Docs" → carbium-docs).'),
+      target_url: z.string().describe('The site to optimize (scheme optional).'),
+      site_name: z.string().optional().describe('Brand/site display name (defaults to project_name).'),
+      industry: z.string().optional().describe('What the site/business does — feeds analysis context.'),
+      audience: z.string().optional().describe('Who the site serves — feeds analysis context.'),
+      goal: z.string().optional().describe('What success looks like — feeds analysis context.'),
+      competitors: z.array(z.string()).optional().describe('Competitor URLs/domains to track (Solo features use these).'),
+      owned: z.array(z.string()).optional().describe('Other owned domains/subdomains to include.'),
+      pages_per_domain: z.number().int().positive().optional().describe('Max pages per domain per crawl (default 50).'),
+      extraction_model: z.string().optional().describe('Local extraction model tag (e.g. gemma4:e4b). Get a recommendation from suggest_models.'),
+      overwrite: z.boolean().optional().describe('Allow overwriting an existing project config (default false).'),
+    },
+  },
+  async ({ project_name, target_url, site_name, industry, audience, goal, competitors = [], owned = [], pages_per_domain, extraction_model, overwrite = false }) => {
+    try {
+      const { buildProjectConfig, writeProjectConfig, validateConfig, slugify } = await import('../setup/config-builder.js');
+      const slug = slugify(project_name);
+      const existing = join(CONFIG_DIR, `${slug}.json`);
+      if (existsSync(existing) && !overwrite) {
+        return { content: [{ type: 'text', text: `Project "${slug}" already exists. Pass overwrite=true to replace it, or use list_projects to see what's configured.` }], isError: true };
+      }
+
+      const config = buildProjectConfig({
+        projectName: project_name,
+        targetUrl: target_url,
+        siteName: site_name || project_name,
+        industry: industry || '',
+        audience: audience || '',
+        goal: goal || '',
+        competitors: competitors.map(u => ({ url: u })),
+        owned: owned.map(u => ({ url: u })),
+        pagesPerDomain: pages_per_domain || 50,
+        extractionModel: extraction_model,
+      });
+
+      const validation = validateConfig(config);
+      if (!validation.valid) {
+        return { content: [{ type: 'text', text: `Config validation failed: ${validation.errors.join('; ')}` }], isError: true };
+      }
+
+      const written = writeProjectConfig(config, ROOT);
+      const out = {
+        ok: true,
+        project: config.project,
+        config_path: written.path,
+        overwritten: written.overwritten,
+        target: config.target?.domain,
+        competitors: (config.competitors || []).map(c => c.domain),
+        owned: (config.owned || []).map(o => o.domain),
+        extraction_model: config.crawl?.extractionModel || '(default)',
+        hint: `Project ready. Next: run_crawl("${config.project}") to crawl, then run_citability_audit + tech_audit + list_problems. For a local extraction model, see suggest_models.`,
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 // ── Tool: scan_site (PAID — one-shot full audit, no config) ───────────────
 // Mirrors `seo-intel scan <domain>`: crawl → extract → analyze → export. It is
 // heavyweight (browser crawl + extraction + cloud analysis), so it runs as a
@@ -1159,7 +1233,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 20 tools — free: crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), tech_audit, suggest_models (local-first), prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 21 tools — free: setup_project (zero→configured from chat), crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), tech_audit, suggest_models (local-first), prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

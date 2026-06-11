@@ -273,8 +273,8 @@ export const ANALYSIS_MODELS = [
     description: 'Google\'s latest frontier model. Massive 2M context handles the largest competitive datasets. Best value for cloud analysis.',
   },
   {
-    id: 'claude-opus-4.6',
-    name: 'Claude Opus 4.6',
+    id: 'claude-opus-4-8',
+    name: 'Claude Opus 4.8',
     family: 'claude',
     type: 'cloud',
     provider: 'anthropic',

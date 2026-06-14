@@ -24,14 +24,17 @@ function modelMatches(available, target) {
 // ── LM Studio support (OpenAI-compatible API) ──────────────────────────────
 
 /**
- * Ping an LM Studio host. Uses GET /api/v1/models instead of Ollama's /api/tags.
+ * Ping an LM Studio host. Uses the OpenAI-compatible GET /v1/models (returns
+ * { data: [{ id }] } and lists models that are actually loaded/servable) —
+ * NOT the native /api/v1/models, which returns a different shape ({ models:
+ * [{ key }] }) and lists every downloaded model regardless of load state.
  */
 export async function pingLmStudioHost(host, model, timeoutMs = OLLAMA_PREFLIGHT_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`${host}/api/v1/models`, { signal: controller.signal });
+    const res = await fetch(`${host}/v1/models`, { signal: controller.signal });
     if (!res.ok) {
       return { host, model, reachable: false, modelAvailable: false, type: 'lmstudio',
         error: `HTTP ${res.status} ${res.statusText}`.trim() };
@@ -62,14 +65,17 @@ async function callLmStudio(route, prompt) {
   const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${route.host}/api/v1/chat`, {
+    const res = await fetch(`${route.host}/v1/chat/completions`, {
       signal: controller.signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: route.model,
         messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
+        // LM Studio rejects OpenAI's 'json_object'; it accepts only 'json_schema'
+        // or 'text'. The prompt already demands JSON and the response is run
+        // through extractLastJsonObject/repairJson, so 'text' is the portable choice.
+        response_format: { type: 'text' },
         temperature: 0,
         max_tokens: 1200,
         stream: false,
@@ -427,10 +433,20 @@ JSON output:`;
       console.log(`[extractor] used ${route.label} for ${url}`);
       break;
     } catch (err) {
-      route.failures = (route.failures || 0) + 1;
       console.warn(`[extractor] ${route.label} failed for ${url}: ${describeOllamaError(err, route)}`);
-      if (route.failures >= OLLAMA_HOST_FAILURE_LIMIT) {
-        removeRouteFromActivePool(runtimeState, route);
+      // Only TRANSPORT failures (host down/unreachable) should retire a host for
+      // the run. CONTENT failures (a small model returns unparseable JSON for one
+      // long page) must NOT disable the host — that page degrades on its own; the
+      // next page may extract fine. Conflating the two killed local extraction
+      // after a couple of hard pages.
+      const msg = String(err?.message || '');
+      const transportFail = err?.name === 'AbortError'
+        || /fetch failed|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|socket hang up|network|timeout|HTTP 5\d\d/i.test(msg);
+      if (transportFail) {
+        route.failures = (route.failures || 0) + 1;
+        if (route.failures >= OLLAMA_HOST_FAILURE_LIMIT) {
+          removeRouteFromActivePool(runtimeState, route);
+        }
       }
     }
   }

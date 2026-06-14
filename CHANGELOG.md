@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.51 (2026-06-11)
+
+### Fixed — LM Studio extraction now actually works (it was silently degrading)
+Local extraction via LM Studio never functioned: every page fell back to degraded (regex) mode, so entity-level signals (entity authority, intent, keywords) came back empty even when a model was loaded and serving. Four stacked bugs:
+
+- **Preflight hit the wrong endpoint.** It probed `/api/v1/models` (LM Studio's *native* API, shape `{models:[{key}]}`) but parsed it as the OpenAI shape `{data:[{id}]}` — so it always concluded "no models loaded." Now uses the OpenAI-compatible `/v1/models`.
+- **Inference hit the wrong endpoint.** It POSTed to `/api/v1/chat` (returns `400 'input' is required`). Now uses `/v1/chat/completions`.
+- **Unsupported `response_format`.** It sent `{type:'json_object'}`, which LM Studio rejects (`must be 'json_schema' or 'text'`). Now sends `text` and relies on the existing JSON-extraction/repair pass.
+- **A few bad pages disabled the whole model.** Content/parse failures (a small model returning unparseable JSON for one long page) were counted as host failures and retired the local model for the rest of the run. Now only *transport* failures (host unreachable/timeout/5xx) retire a host; a single unparseable page just degrades itself.
+
+Point at a loaded LM Studio model with `LMSTUDIO_MODEL=<model-id>` (e.g. `google/gemma-4-e2b`). Note: very small models (≈2B) still struggle to emit clean JSON for very long pages — use a 4B+ extraction model (Gemma E4B, Qwen 3.5) for higher coverage, or see `seo-intel models`.
+
 ## 1.5.50 (2026-06-11)
 
 ### New MCP tool: `setup_project` — zero → configured → audited, entirely from chat

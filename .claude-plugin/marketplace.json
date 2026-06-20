@@ -1,0 +1,37 @@
+{
+  "name": "ukkometa",
+  "owner": {
+    "name": "Ukkometa",
+    "email": "ukko@ukkometa.fi"
+  },
+  "description": "Ukkometa's Claude Code plugins.",
+  "metadata": {
+    "description": "Ukkometa's Claude Code plugins — SEO Intel: local, AI-native SEO/AEO tooling exposed over MCP."
+  },
+  "plugins": [
+    {
+      "name": "seo-intel",
+      "source": "./",
+      "description": "Local SEO + AEO data layer for AI agents — crawl, AI-citability (AEO) scoring, keyword intel, technical audit, structured-data gaps, all exposed as MCP tools. Free for your own site; runs locally, your data stays on your machine.",
+      "version": "1.5.51",
+      "author": {
+        "name": "Ukkometa",
+        "email": "ukko@ukkometa.fi"
+      },
+      "homepage": "https://ukkometa.fi",
+      "repository": "https://github.com/Ukkometa/seo-intel",
+      "category": "seo",
+      "keywords": [
+        "seo",
+        "aeo",
+        "ai-citability",
+        "mcp",
+        "crawler",
+        "keyword-research",
+        "structured-data",
+        "llms-txt",
+        "technical-audit"
+      ]
+    }
+  ]
+}

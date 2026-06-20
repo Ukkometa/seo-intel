@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Claude Code plugin — install seo-intel + its MCP server in one command
+- Added a Claude Code plugin marketplace. Claude Code users can install seo-intel and wire its MCP server with `/plugin marketplace add Ukkometa/seo-intel` then `/plugin install seo-intel@ukkometa` — no manual `claude mcp add` or config editing.
+- The existing `claude mcp add seo-intel "npx seo-intel-mcp"` (and Cursor/Cline setup) still works unchanged.
+
 ## 1.5.51 (2026-06-11)
 
 ### Fixed — LM Studio extraction now actually works (it was silently degrading)

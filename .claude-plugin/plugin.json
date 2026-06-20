@@ -1,0 +1,26 @@
+{
+  "name": "seo-intel",
+  "version": "1.5.51",
+  "description": "Local SEO + AEO data layer for AI agents — crawl, AI-citability (AEO) scoring, keyword intel, technical audit, and structured-data gaps, exposed as MCP tools. Free for your own site; runs locally.",
+  "author": {
+    "name": "Ukkometa",
+    "email": "ukko@ukkometa.fi"
+  },
+  "homepage": "https://ukkometa.fi",
+  "repository": "https://github.com/Ukkometa/seo-intel",
+  "keywords": [
+    "seo",
+    "aeo",
+    "ai-citability",
+    "mcp",
+    "crawler",
+    "keyword-research",
+    "structured-data"
+  ],
+  "mcpServers": {
+    "seo-intel": {
+      "command": "npx",
+      "args": ["-y", "seo-intel-mcp"]
+    }
+  }
+}

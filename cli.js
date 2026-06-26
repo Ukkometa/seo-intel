@@ -4634,6 +4634,39 @@ program
     }
   });
 
+// ── RESCORE (single-URL re-check, closes the agent loop) ──────────────────
+program
+  .command('rescore <project> <url>')
+  .description("Re-check one URL's AI citability after a fix — read-only, raw-HTML (bot's-eye) score + delta vs baseline")
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, url, opts) => {
+    const isJson = opts.format === 'json';
+    const { getDb } = await import('./db/db.js');
+    const { rescorePage } = await import('./analyses/aeo/rescore.js');
+    const db = getDb();
+    const res = await rescorePage(db, project, url, {
+      log: isJson ? undefined : (m) => console.log(chalk.gray('  ' + m)),
+    });
+    if (isJson) {
+      console.log(JSON.stringify(res, null, 2));
+      return;
+    }
+    const tone = (s) => (s == null ? chalk.gray : s >= 60 ? chalk.green : s >= 35 ? chalk.yellow : chalk.red);
+    console.log('');
+    console.log(chalk.bold(`  🔁 Re-score — ${url}`));
+    console.log(chalk.gray(`     lens: raw HTML (what bots see) · HTTP ${res.status_code ?? '—'}`));
+    if (res.after == null) {
+      console.log(chalk.red(`     ✗ ${res.note || 'could not score'}`));
+    } else {
+      const b = res.before == null ? chalk.gray('—') : tone(res.before)(String(res.before));
+      const a = tone(res.after)(String(res.after));
+      const arrow =
+        res.delta == null ? '' : res.delta > 0 ? chalk.green(`  ▲ +${res.delta}`) : res.delta < 0 ? chalk.red(`  ▼ ${res.delta}`) : chalk.gray('  ±0');
+      console.log(`     citability  ${b} → ${a}${arrow}   (${res.status_before ?? '—'} → ${res.status_after ?? '—'})`);
+    }
+    console.log('');
+  });
+
 // ── SITE WATCH ──────────────────────────────────────────────────────────
 program
   .command('watch <project>')

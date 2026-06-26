@@ -1,17 +1,20 @@
 /**
- * froggo.js — Agent-facing API for SEO Intel
+ * agent-harness.js — Agent-harness API for SEO Intel
  *
- * Single entry point for agentic platforms. Three usage levels:
+ * Single entry point any agent platform can "ride" (Hermes, MCP hosts, custom
+ * orchestrators). Self-describing via `capabilities` + `pipeline`. Three usage levels:
  *
  * 1. Unified runner (recommended):
- *    import { run, capabilities } from 'seo-intel/froggo';
+ *    import { run, capabilities } from 'seo-intel/agent-harness';
  *    const result = await run('aeo', 'myproject');
  *
  * 2. Direct function imports:
- *    import { aeo, gapIntel } from 'seo-intel/froggo';
+ *    import { aeo, gapIntel } from 'seo-intel/agent-harness';
  *
  * 3. Deep imports (tree-shakeable):
  *    import { runAeoAnalysis } from 'seo-intel/aeo';
+ *
+ * Back-compat: the legacy `seo-intel/froggo` export still resolves here.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
@@ -155,6 +158,17 @@ export const capabilities = [
     phase: 'analyze',
     tier: 'free',
     dependsOn: ['crawl'],
+  },
+  {
+    id: 'rescore',
+    name: 'Re-score a URL (close the loop)',
+    description: "Re-check one URL's AI citability after a fix. Read-only re-measurement on the RAW-HTML (what-bots-see) lens — returns before/after/delta so an agent can verify its own change. If the fix is server-rendered the score moves; if JS-only, it correctly does not.",
+    requires: [],
+    inputs: { project: 'string', options: { url: 'string (required)' } },
+    outputs: { url: 'string', before: 'number', after: 'number', delta: 'number', improved: 'boolean', signals: 'object', lens: 'string' },
+    phase: 'verify',
+    tier: 'free',
+    dependsOn: ['aeo'],
   },
   {
     id: 'watch',
@@ -348,6 +362,7 @@ export const pipeline = {
     crawl: [],
     extract: ['crawl'],
     aeo: ['crawl'],
+    rescore: ['aeo'],
     watch: ['crawl'],
     'gap-intel': ['crawl', 'extract'],
     shallow: ['crawl'],
@@ -405,6 +420,13 @@ export async function run(command, project, opts = {}) {
           ...opts,
           log: opts.log || (() => {}),
         });
+        return wrap(result);
+      }
+
+      case 'rescore': {
+        if (!opts.url) return fail('rescore requires opts.url (the page to re-check)');
+        const { rescorePage } = await import('./analyses/aeo/rescore.js');
+        const result = await rescorePage(db, project, opts.url, { log: opts.log });
         return wrap(result);
       }
 

@@ -25,7 +25,8 @@
   },
   "exports": {
     ".": "./cli.js",
-    "./froggo": "./froggo.js",
+    "./agent-harness": "./agent-harness.js",
+    "./froggo": "./agent-harness.js",
     "./aeo": "./analyses/aeo/index.js",
     "./aeo/scorer": "./analyses/aeo/scorer.js",
     "./gap-intel": "./analyses/gap-intel/index.js",
@@ -44,6 +45,7 @@
   },
   "files": [
     "cli.js",
+    "agent-harness.js",
     "server.js",
     "scheduler.js",
     "seo-audit.js",

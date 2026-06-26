@@ -743,7 +743,7 @@ ORDER BY cs.total_score ASC;
 All commands support `--format json` for structured output. For deep integration, use the programmatic API:
 
 ```javascript
-import { run, capabilities, pipeline } from 'seo-intel/froggo';
+import { run, capabilities, pipeline } from 'seo-intel/agent-harness';
 
 // Unified runner — one function, all commands
 const aeoResult = await run('aeo', 'myproject');

@@ -5,7 +5,7 @@ Machine-readable guide for AI agents using SEO Intel as a module.
 ## Quick Start
 
 ```javascript
-import { run, capabilities, pipeline } from 'seo-intel/froggo';
+import { run, capabilities, pipeline } from 'seo-intel/agent-harness';
 
 // Run any command — always returns structured JSON
 const result = await run('aeo', 'myproject');
@@ -318,7 +318,7 @@ Wrangler diffs against the last deployment — only changed files are uploaded.
 ### Full Analyze → Fix → Deploy Pattern
 
 ```javascript
-import { run } from 'seo-intel/froggo';
+import { run } from 'seo-intel/agent-harness';
 import { execSync } from 'child_process';
 
 const project = 'myproject';
@@ -402,7 +402,7 @@ if (!result.ok) {
 ## Dashboard Embedding
 
 ```javascript
-import { getDashboardHtml } from 'seo-intel/froggo';
+import { getDashboardHtml } from 'seo-intel/agent-harness';
 const { html } = await getDashboardHtml('myproject');
 // Render in iframe, panel, or webview
 ```

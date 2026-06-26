@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### New: `rescore <project> <url>` — close the agent loop
+- Re-check a single URL's AI citability after a fix. Read-only re-measurement on the raw-HTML ("what bots see") lens, returning `before / after / delta` + the per-signal breakdown — so an agent (or you) can verify a change actually moved the score. Server-rendered fixes move it; JS-only fixes correctly don't.
+- Available via the CLI (`--format json`) and the agent-harness (`run('rescore', project, { url })`).
+
+### Improved: `intel --for audit` now emits ranked opportunities
+- The audit slice now includes a ranked `opportunities[]` (each tagged `side: fix | attack` with real value/status/confidence/suggested_action/proof) plus a `summary` (counts + per-signal averages) — decision-ready data any agent or dashboard can act on directly. Flows through to the MCP `get_intel` and the agent-harness automatically.
+
+### Renamed: `froggo.js` → `agent-harness.js`
+- The agent integration entry point is now `seo-intel/agent-harness` (clearer name). The legacy `seo-intel/froggo` import still resolves to it, so existing code keeps working.
+
 ### Claude Code plugin — install the MCP server *and* skill in one command
 - Added a Claude Code plugin marketplace. Claude Code users can install seo-intel with `/plugin marketplace add Ukkometa/seo-intel` then `/plugin install seo-intel@ukkometa` — one step wires both the MCP server **and** the seo-intel skill, with no manual `claude mcp add` or config editing.
 - The existing `claude mcp add seo-intel "npx seo-intel-mcp"` (and Cursor/Cline setup) still works unchanged.

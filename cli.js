@@ -16,7 +16,7 @@ import { program } from 'commander';
 import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
-import { totalmem } from 'os';
+import { totalmem, homedir } from 'os';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 
@@ -52,6 +52,24 @@ import { isPro, loadLicense, activateLicense } from './lib/license.js';
 import { getCurrentVersion, checkForUpdates, printUpdateNotice, forceUpdateCheck } from './lib/updater.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Self-register where this checkout/install lives, in ~/.seo-intel/install.json.
+// Any local agent harness (Hermes, a future Claude Code plugin, anything) can
+// read this one file to find SEO Intel — no env vars, no hardcoded paths, no
+// per-harness wiring. Cheap to refresh on every run; last run to execute wins,
+// which is the right default for the common one-checkout-per-machine case.
+function registerInstallLocation() {
+  try {
+    const dir = join(homedir(), '.seo-intel');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'install.json'), JSON.stringify({
+      root: __dirname,
+      version: getCurrentVersion(),
+      updatedAt: new Date().toISOString(),
+    }, null, 2));
+  } catch { /* non-fatal — harnesses fall back to PATH resolution */ }
+}
+registerInstallLocation();
 
 // Start background update check (non-blocking, never slows startup)
 checkForUpdates();

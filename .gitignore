@@ -2,9 +2,12 @@
 node_modules/
 
 # ─── Personal project configs (never commit) ───
-config/carbium.json
-config/ukkometa.json
-config/risunouto.json
+# Allowlist, not a per-client list — every real project config matches
+# config/*.json and is excluded by default; only example.json ships. This way
+# a brand-new client config can never slip through just because nobody
+# remembered to add its filename here.
+config/*.json
+!config/example.json
 carbium
 carbium/
 
@@ -26,12 +29,14 @@ seo-intel.db*
 .extraction-progress.json
 
 # ─── Reports output (generated, not source) ───
-reports/*.json
-reports/*.html
-reports/*.md
-reports/*.txt
-reports/*.csv
-reports/ready/
+# Allowlist — everything under reports/ is generated client output by default
+# (including nested subdirectories like reports/<client>-fixes/), except the
+# handful of generator scripts that actually ship with the package.
+reports/*
+!reports/d3.v7.min.js
+!reports/generate-html.js
+!reports/generate-site-graph.js
+!reports/gsc-loader.js
 
 # ─── Crawl/session data ───
 gsc/

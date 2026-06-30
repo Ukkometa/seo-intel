@@ -1,5 +1,6 @@
 {
   "project": "myproject",
+  "sourcePath": "/absolute/path/to/the/site/source — a repo or a plain folder, both work. Omit if you don't want agent dispatch to know where the code lives.",
   "context": {
     "siteName": "My Project",
     "url": "https://example.com",

@@ -13,7 +13,7 @@ description: >
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.50)
+# SEO Intel (v1.5.52)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 

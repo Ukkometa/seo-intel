@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.5.52 (2026-07-01)
+
+### New: per-project `sourcePath` — agent dispatch knows where the code lives
+- Project configs can now declare `sourcePath` (an absolute path to the site's source — a git repo or a plain folder, both work; git-ness is auto-detected, never declared). Any local agent integration can use this to dispatch a fix directly into the right codebase instead of guessing.
+- seo-intel itself self-registers its own install location to `~/.seo-intel/install.json` on every CLI run, so any local agent harness can find it without environment variables or hardcoded paths.
+
+### Updated: product logo — gold to intel-blue
+- The product mark now uses the brand's intel-blue accent instead of gold, matching the dashboard and site. Shows up as the dashboard favicon and in the npm package.
 
 ### New: `rescore <project> <url>` — close the agent loop
 - Re-check a single URL's AI citability after a fix. Read-only re-measurement on the raw-HTML ("what bots see") lens, returning `before / after / delta` + the per-signal breakdown — so an agent (or you) can verify a change actually moved the score. Server-rendered fixes move it; JS-only fixes correctly don't.

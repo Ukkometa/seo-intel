@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.53 (2026-07-01)
+
+### Fixed: dependency security patches (hono, qs)
+- Bumped transitive dependencies pulled in by the MCP SDK's optional HTTP transport (`hono` → 4.12.27, `qs` → 6.15.3), closing 10 published advisories (1 high, 9 moderate — CORS/cookie/auth-bypass issues in `hono`, a DoS in `qs.stringify`). seo-intel's MCP server only ever runs over stdio and never starts an HTTP listener, so none of these were actually reachable — this is a hygiene patch, not a fix for an exploited path. Lockfile-only change, no source edits.
+
 ## 1.5.52 (2026-07-01)
 
 ### New: per-project `sourcePath` — agent dispatch knows where the code lives

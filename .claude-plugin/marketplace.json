@@ -13,7 +13,7 @@
       "name": "seo-intel",
       "source": "./",
       "description": "Local SEO + AEO data layer for AI agents — crawl, AI-citability (AEO) scoring, keyword intel, technical audit, structured-data gaps, all exposed as MCP tools. Free for your own site; runs locally, your data stays on your machine.",
-      "version": "1.5.52",
+      "version": "1.5.53",
       "author": {
         "name": "Ukkometa",
         "email": "ukko@ukkometa.fi"

@@ -1,0 +1,28 @@
+{
+  "name": "seo-intel",
+  "label": "SEO Intel",
+  "description": "Read-only growth and competitive-intelligence cockpit powered by the local seo-intel CLI.",
+  "icon": "BarChart3",
+  "version": "1.5.53",
+  "tab": {
+    "path": "/seo-intel",
+    "position": "end"
+  },
+  "desktop": {
+    "sidebar": {
+      "id": "seo-intel",
+      "label": "SEO Intel",
+      "icon": "graph",
+      "route": "/seo-intel",
+      "children": [
+        { "id": "floor", "label": "Intelligence Floor" },
+        { "id": "ledger", "label": "Gap Ledger" },
+        { "id": "fix", "label": "Fix Queue" },
+        { "id": "attack", "label": "Attack" },
+        { "id": "citability", "label": "Citability" },
+        { "id": "actions", "label": "Action Board" }
+      ]
+    }
+  },
+  "api": "plugin_api.py"
+}

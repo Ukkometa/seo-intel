@@ -53,11 +53,12 @@ import { getCurrentVersion, checkForUpdates, printUpdateNotice, forceUpdateCheck
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Self-register where this checkout/install lives, in ~/.seo-intel/install.json.
-// Any local agent harness (Hermes, a future Claude Code plugin, anything) can
-// read this one file to find SEO Intel — no env vars, no hardcoded paths, no
-// per-harness wiring. Cheap to refresh on every run; last run to execute wins,
-// which is the right default for the common one-checkout-per-machine case.
+// Self-register this checkout/install in ~/.seo-intel/install.json — a
+// capability manifest, not just a pointer. Any local agent harness (Hermes,
+// a Claude Code plugin, Cursor, anything) reads this ONE file and knows both
+// where SEO Intel lives and every way to invoke it — no env vars, no
+// hardcoded paths, no per-harness wiring. Refreshed on every run; last run
+// to execute wins, the right default for one-checkout-per-machine.
 function registerInstallLocation() {
   try {
     const dir = join(homedir(), '.seo-intel');
@@ -66,6 +67,18 @@ function registerInstallLocation() {
       root: __dirname,
       version: getCurrentVersion(),
       updatedAt: new Date().toISOString(),
+      entrypoints: {
+        // Subprocess — any language. Structured output via --format json.
+        cli: { command: 'node', args: [join(__dirname, 'cli.js')], jsonFlag: '--format json' },
+        // MCP over stdio — any MCP host. Same server `npx seo-intel-mcp` runs.
+        mcp: { command: 'node', args: [join(__dirname, 'mcp', 'server.js')], transport: 'stdio' },
+        // In-process for Node harnesses: import { run } from this path.
+        harness: { import: join(__dirname, 'agent-harness.js'), entry: 'run(command, project, opts)' },
+      },
+      docs: {
+        agentGuide: join(__dirname, 'skill', 'AGENT_GUIDE.md'),
+        skills: join(__dirname, 'skills'),
+      },
     }, null, 2));
   } catch { /* non-fatal — harnesses fall back to PATH resolution */ }
 }
@@ -1481,6 +1494,33 @@ program
       if (isJson) { console.log(JSON.stringify({ error: err.message })); process.exit(1); }
       console.error(chalk.red('intel failed: ') + err.message);
       process.exit(1);
+    }
+  });
+
+// ── HERMES PLUGIN (optional local integration) ──────────────────────────────
+program
+  .command('hermes')
+  .description('Install or remove the optional Hermes Desktop plugin bundle')
+  .argument('[action]', 'install | remove', 'install')
+  .option('--target <dir>', 'Override plugin destination (default: ~/.hermes/plugins/seo-intel)')
+  .action(async (action, opts) => {
+    if (!['install', 'remove'].includes(action)) {
+      console.error(chalk.red(`Unknown Hermes action "${action}". Use: install | remove`));
+      process.exit(1);
+    }
+
+    const { installHermesPlugin } = await import('./lib/hermes-plugin.js');
+    const result = installHermesPlugin({ remove: action === 'remove', targetDir: opts.target || null });
+
+    if (!result.ok) {
+      console.error(chalk.red(result.error || 'Hermes plugin operation failed'));
+      process.exit(1);
+    }
+
+    const verb = result.action === 'removed' ? 'Removed' : 'Installed';
+    console.log(chalk.green(`  ✓ ${verb} Hermes plugin: ${result.destination}`));
+    if (result.action === 'installed') {
+      console.log(chalk.dim('  Next: hermes plugins enable seo-intel && hermes desktop --force-build'));
     }
   });
 

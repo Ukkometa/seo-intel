@@ -2,6 +2,11 @@
 
 ## 1.5.53 (2026-07-01)
 
+### New: Hermes Desktop cockpit bundle
+- Added a sale-safe Hermes plugin bundle under `hermes/seo-intel/` with generic sidebar metadata, backend API bridge, and no personal paths or secrets.
+- Added `seo-intel hermes install|remove` to copy the bundle into `~/.hermes/plugins/seo-intel`, using the existing `~/.seo-intel/install.json` resolver so npm installs and source checkouts both work.
+- The bundle keeps SEO Intel read-only as the intelligence layer while Hermes remains the execution layer for agent briefs, tasks, and verification loops.
+
 ### Fixed: dependency security patches (hono, qs)
 - Bumped transitive dependencies pulled in by the MCP SDK's optional HTTP transport (`hono` → 4.12.27, `qs` → 6.15.3), closing 10 published advisories (1 high, 9 moderate — CORS/cookie/auth-bypass issues in `hono`, a DoS in `qs.stringify`). seo-intel's MCP server only ever runs over stdio and never starts an HTTP listener, so none of these were actually reachable — this is a hygiene patch, not a fix for an exploited path. Lockfile-only change, no source edits.
 

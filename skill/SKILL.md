@@ -110,7 +110,7 @@ export_intel(project)                             # default cap 1000 rows/table
 ## Pipeline
 
 ```
-Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → Export Actions → Implement
+Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO → Export Actions → Implement
 ```
 
 | Stage | Command | Gate | Best engine |
@@ -118,10 +118,10 @@ Crawl → Extract (Ollama local) → Analyze (OpenClaw cloud model) → AEO → 
 | **Scan** | `seo-intel scan <domain>` | Free | Full pipeline (no config) |
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
 | Extract | `seo-intel extract <project>` | Free | Ollama / Gemma 4 or Qwen local |
-| Analyze | `seo-intel analyze <project>` | Solo (competitor) | OpenClaw (Opus/Sonnet) |
+| Analyze | `seo-intel analyze <project>` | Solo (competitor) | Agent Harness (Opus/Sonnet) |
 | AEO | `seo-intel aeo <project>` | Free | Pure local (no AI needed) |
 | Watch | `seo-intel watch <project>` | Free | Pure local (diff engine) |
-| Keywords | `seo-intel keywords <project>` | Free | OpenClaw (Opus/Sonnet) |
+| Keywords | `seo-intel keywords <project>` | Free | Agent Harness (Opus/Sonnet) |
 | Blog Draft | `seo-intel blog-draft <project>` | Free | Cloud LLM (Gemini/Claude/GPT) |
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
@@ -150,7 +150,7 @@ When helping a docs writer, page builder, or implementation agent:
 
 ```bash
 seo-intel scan <domain>            # One-shot full audit (no config needed)
-seo-intel setup                    # First-time wizard — detects OpenClaw
+seo-intel setup                    # First-time wizard — detects the Agent Harness
 seo-intel crawl <project>          # Crawl target + competitors
 seo-intel extract <project>        # Local AI extraction (Ollama)
 seo-intel analyze <project>        # Strategic gap analysis → Intelligence Ledger
@@ -206,7 +206,7 @@ Use this section when an isolated agent needs the whole toolbox in one place.
 
 ```bash
 seo-intel scan <domain>            # One-shot full audit (no config needed)
-seo-intel setup                    # First-time wizard — detects OpenClaw
+seo-intel setup                    # First-time wizard — detects the Agent Harness
 seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel status                   # Data freshness + system summary
 seo-intel serve                    # Web dashboard at localhost:3000
@@ -565,9 +565,9 @@ Recommended sections:
 
 This is the simplest way to make downstream automation reliable. The SEO Intel job does the heavy analysis once; docs/product automations consume a short, fixed-format brief instead of rediscovering the entire workspace each run.
 
-## OpenClaw Workflow (Recommended)
+## Agent Harness Workflow (Recommended)
 
-When running inside OpenClaw, the full intelligence loop becomes conversational:
+When running inside the Agent Harness (Hermes, Claude Code, Cursor, or any MCP host), the full intelligence loop becomes conversational:
 
 ### "How citable is my site for AI assistants?"
 1. Run `seo-intel aeo <project>`
@@ -784,7 +784,7 @@ For ongoing operator summaries, treat `reports/` as a folder-aware signal surfac
 - optional `cross-debate-*`
 - optional briefs when they actually exist
 
-Wire via OpenClaw cron for proactive briefings delivered to your chat.
+Wire via your agent harness cron for proactive briefings delivered to your chat.
 
 ## Pricing
 

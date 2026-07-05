@@ -846,9 +846,9 @@ async function handleAgentChat(req, res) {
     const ready = await isGatewayReady();
     if (!ready) {
       jsonResponse(res, {
-        error: 'OpenClaw gateway not running',
+        error: 'Agent Harness gateway not running',
         available: false,
-        hint: 'Start OpenClaw with: openclaw gateway',
+        hint: 'Start the Agent Harness with: openclaw gateway',
       }, 503);
       return;
     }

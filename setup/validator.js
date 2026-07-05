@@ -351,8 +351,8 @@ export async function* runFullValidation(config) {
       latencyMs: result.latencyMs,
     };
   } else {
-    // Check if OpenClaw gateway is available as alternative
-    yield { step: 'api-key', status: 'running', detail: 'Checking OpenClaw gateway...' };
+    // Check if the Agent Harness gateway is available as alternative
+    yield { step: 'api-key', status: 'running', detail: 'Checking Agent Harness gateway...' };
     const openclawReady = await isGatewayReady();
     if (openclawReady) {
       // Verify models are accessible
@@ -369,10 +369,10 @@ export async function* runFullValidation(config) {
         }
       } catch {}
       steps.push({ name: 'API Key', status: 'pass' });
-      yield { step: 'api-key', status: 'pass', detail: `OpenClaw gateway connected${modelInfo}. Use frontier models (Opus, Gemini Pro, GPT-5.4) for analysis.` };
+      yield { step: 'api-key', status: 'pass', detail: `Agent Harness gateway connected${modelInfo}. Use frontier models (Opus, Gemini Pro, GPT-5.4) for analysis.` };
     } else {
       steps.push({ name: 'API Key', status: 'skip' });
-      yield { step: 'api-key', status: 'skip', detail: 'No API key or OpenClaw gateway found. Add a key in .env or install OpenClaw.' };
+      yield { step: 'api-key', status: 'skip', detail: 'No API key or Agent Harness gateway found. Add a key in .env or install the Agent Harness.' };
     }
   }
 

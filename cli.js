@@ -295,19 +295,19 @@ program
 // ── SETUP WIZARD ───────────────────────────────────────────────────────────
 program
   .command('setup')
-  .description('Interactive setup wizard — uses OpenClaw agent if available, otherwise standard CLI wizard')
+  .description('Interactive setup wizard — uses the Agent Harness if available, otherwise standard CLI wizard')
   .option('--project <name>', 'Project name to prefill')
-  .option('--classic', 'Force classic CLI wizard (skip OpenClaw agent)')
-  .option('--agent', 'Force OpenClaw agent setup (fail if not available)')
+  .option('--classic', 'Force classic CLI wizard (skip Agent Harness setup)')
+  .option('--agent', 'Force Agent Harness setup (fail if not available)')
   .action(async (opts) => {
-    // Check for OpenClaw unless --classic is forced
+    // Check for the Agent Harness unless --classic is forced
     if (!opts.classic) {
       try {
         const { checkOpenClaw } = await import('./setup/checks.js');
         const oc = checkOpenClaw();
 
         if (oc.installed && oc.gatewayRunning) {
-          console.log(chalk.dim('\n  OpenClaw detected — using agent-powered setup'));
+          console.log(chalk.dim('\n  Agent Harness detected — using agent-powered setup'));
           console.log(chalk.dim('  (use --classic for the standard wizard)\n'));
 
           const { fullSystemCheck } = await import('./setup/engine.js');
@@ -316,14 +316,14 @@ program
           await cliAgentSetup(status);
           return;
         } else if (opts.agent) {
-          console.error(chalk.red('\n  OpenClaw gateway not running.'));
+          console.error(chalk.red('\n  Agent Harness gateway not running.'));
           console.log(chalk.dim('  Start it with: openclaw gateway\n'));
           process.exit(1);
         }
         // Fall through to classic wizard
       } catch (err) {
         if (opts.agent) {
-          console.error(chalk.red(`\n  OpenClaw setup failed: ${err.message}\n`));
+          console.error(chalk.red(`\n  Agent Harness setup failed: ${err.message}\n`));
           process.exit(1);
         }
         // Fall through to classic wizard
@@ -1180,13 +1180,13 @@ function getOpenClawToken() {
 
 async function callOpenClaw(prompt, model = 'openclaw') {
   const token = getOpenClawToken();
-  if (!token) throw new Error('OpenClaw token not found');
+  if (!token) throw new Error('Agent Harness token not found');
 
   const timeoutMs = parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.GEMINI_TIMEOUT_MS || '120000', 10);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  // OpenClaw gateway expects 'openclaw' or 'openclaw/<agentId>'
+  // The Agent Harness gateway expects the model id 'openclaw' or 'openclaw/<agentId>'
   const clawModel = (!model || model === 'default') ? 'openclaw' : model;
 
   try {
@@ -1205,7 +1205,7 @@ async function callOpenClaw(prompt, model = 'openclaw') {
       }),
     });
 
-    if (!res.ok) throw new Error(`OpenClaw API error: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Agent Harness API error: ${res.status} ${await res.text()}`);
 
     const data = await res.json();
     return data.choices?.[0]?.message?.content || null;
@@ -1218,12 +1218,12 @@ async function callAnalysisModel(prompt, model = 'gemini') {
   const requestedModel = String(model || 'gemini').trim();
   const normalizedModel = requestedModel.toLowerCase();
 
-  // Non-Gemini model: try OpenClaw first, then fall back to Gemini CLI
+  // Non-Gemini model: try the Agent Harness first, then fall back to Gemini CLI
   if (normalizedModel !== 'gemini') {
     try {
       return await callOpenClaw(prompt, requestedModel);
     } catch (err) {
-      console.warn(chalk.dim(`  [openclaw] ${err.message}`));
+      console.warn(chalk.dim(`  [agent-harness] ${err.message}`));
       console.log(chalk.yellow(`  Falling back to Gemini CLI...\n`));
       // Fall through to Gemini CLI below
     }
@@ -1246,20 +1246,20 @@ async function callAnalysisModel(prompt, model = 'gemini') {
 
     return result.stdout;
   } catch (err) {
-    // Gemini CLI failed — try OpenClaw as last resort (if we haven't already)
+    // Gemini CLI failed — try the Agent Harness as last resort (if we haven't already)
     const fallbackModel = process.env.OPENCLAW_ANALYSIS_MODEL || 'openclaw';
     if (normalizedModel !== 'gemini') {
-      // Already tried OpenClaw above, show combined error
+      // Already tried the Agent Harness above, show combined error
       const geminiMsg = err.message || '';
       console.error(chalk.red('\n  ✗ Analysis failed — no model available\n'));
       console.error(chalk.dim(`  Gemini: ${geminiMsg}`));
-      console.error(chalk.dim(`  OpenClaw: already tried (${requestedModel})`));
+      console.error(chalk.dim(`  Agent Harness: already tried (${requestedModel})`));
       console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));
       return null;
     }
     try {
       console.warn(`[gemini] ${err.message}`);
-      console.log(chalk.yellow(`Gemini CLI unavailable, retrying via OpenClaw (${fallbackModel})...\n`));
+      console.log(chalk.yellow(`Gemini CLI unavailable, retrying via the Agent Harness (${fallbackModel})...\n`));
       return await callOpenClaw(prompt, fallbackModel);
     } catch (fallbackErr) {
       // Produce clear, actionable error messages
@@ -1278,11 +1278,11 @@ async function callAnalysisModel(prompt, model = 'gemini') {
       }
 
       if (isGatewayDown) {
-        console.error(chalk.yellow('  OpenClaw gateway is not running.'));
+        console.error(chalk.yellow('  Agent Harness gateway is not running.'));
         console.error(chalk.dim('  Start it:   ') + chalk.cyan('openclaw gateway'));
         console.error(chalk.dim('  Or set key: ') + chalk.cyan('echo "GEMINI_API_KEY=your-key" >> .env'));
       } else {
-        console.error(chalk.dim(`  OpenClaw: ${ocMsg}`));
+        console.error(chalk.dim(`  Agent Harness: ${ocMsg}`));
       }
 
       console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));

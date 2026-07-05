@@ -22,7 +22,7 @@ Self-contained HTML dashboards (Chart.js)
 # Install globally
 npm install -g seo-intel
 
-# Run the setup wizard (auto-detects OpenClaw for agent-powered setup)
+# Run the setup wizard (auto-detects the Agent Harness for agent-powered setup)
 seo-intel setup
 ```
 
@@ -40,7 +40,7 @@ The setup wizard handles everything: dependency checks, model selection, API key
 npm install -g seo-intel
 seo-intel setup --classic    # traditional CLI wizard
 # or
-seo-intel setup              # agent-powered if OpenClaw is running
+seo-intel setup              # agent-powered if the Agent Harness is running
 ```
 
 ## Usage
@@ -66,7 +66,7 @@ seo-intel suggest-usecases myproject --scope docs      # infer what pages/docs s
 
 | Command | Description |
 |---------|-------------|
-| `setup` | First-time wizard — auto-detects OpenClaw for agent-powered setup |
+| `setup` | First-time wizard — auto-detects the Agent Harness for agent-powered setup |
 | `crawl <project>` | Crawl target + competitor sites |
 | `status` | System status, crawl freshness, license info |
 | `html <project>` | Generate crawl-only dashboard |
@@ -147,7 +147,7 @@ The 6-step web wizard guides you through:
 5. **Pipeline Test** — Validates the full pipeline
 6. **Done** — Your first CLI commands
 
-If [OpenClaw](https://openclaw.ai) is running, you'll see an option for **agent-powered setup** that handles everything conversationally — including troubleshooting, dependency installation, and OAuth configuration.
+If the Agent Harness is running, you'll see an option for **agent-powered setup** that handles everything conversationally — including troubleshooting, dependency installation, and OAuth configuration.
 
 ## Model Configuration
 
@@ -223,9 +223,9 @@ Updates are checked automatically in the background and shown at the end of `seo
 - API keys are stored in `.env` (gitignored)
 - OAuth tokens stored in `.tokens/` (gitignored)
 
-## OpenClaw Integration
+## Agent Harness Integration
 
-If you have [OpenClaw](https://openclaw.ai) installed:
+If you have the Agent Harness installed (it plugs into Hermes, Claude Code, Cursor, or any MCP host):
 
 ```bash
 seo-intel setup              # auto-detects gateway, uses agent
@@ -233,7 +233,7 @@ seo-intel setup --agent      # require agent setup
 seo-intel setup --classic    # force manual wizard
 ```
 
-The OpenClaw agent provides:
+The Agent Harness provides:
 - Conversational setup with real-time troubleshooting
 - Automatic dependency installation
 - Smart model recommendations

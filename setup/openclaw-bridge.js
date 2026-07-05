@@ -1,7 +1,7 @@
 /**
- * SEO Intel — OpenClaw Setup Bridge
+ * SEO Intel — Agent Harness Setup Bridge
  *
- * When OpenClaw gateway is running, this module lets the setup process
+ * When the Agent Harness gateway is running, this module lets the setup process
  * delegate to the agent for a conversational, intelligent setup flow.
  *
  * Instead of a rigid wizard with fixed steps, the agent:
@@ -11,7 +11,7 @@
  *   4. Can troubleshoot errors in real-time
  *   5. Configures everything via the setup engine API
  *
- * Falls back to the standard wizard if OpenClaw is not available.
+ * Falls back to the standard wizard if the Agent Harness is not available.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -23,10 +23,10 @@ const ROOT = join(__dirname, '..');
 
 const OPENCLAW_API = 'http://127.0.0.1:18789';
 
-// ── OpenClaw Gateway Communication ─────────────────────────────────────────
+// ── Agent Harness Gateway Communication ────────────────────────────────────
 
 /**
- * Send a message to OpenClaw's agent via the OpenAI-compatible API.
+ * Send a message to the Agent Harness agent via the OpenAI-compatible API.
  * Returns the agent's text response.
  */
 async function askAgent(messages, opts = {}) {
@@ -51,7 +51,7 @@ async function askAgent(messages, opts = {}) {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`OpenClaw API error: ${res.status} ${err}`);
+      throw new Error(`Agent Harness API error: ${res.status} ${err}`);
     }
 
     const data = await res.json();
@@ -62,7 +62,7 @@ async function askAgent(messages, opts = {}) {
 }
 
 /**
- * Check if the OpenClaw gateway is reachable and ready.
+ * Check if the Agent Harness gateway is reachable and ready.
  */
 export async function isGatewayReady() {
   try {
@@ -210,7 +210,7 @@ EXTRACTION MODELS (local, free):
 
 /**
  * Start an agent-driven setup session.
- * Uses OpenClaw's agent to guide the user conversationally.
+ * Uses the Agent Harness agent to guide the user conversationally.
  *
  * @param {object} systemCheck - Result from fullSystemCheck()
  * @param {object} [opts]
@@ -273,8 +273,8 @@ export async function runAgentSetup(systemCheck, opts = {}) {
 // ── CLI Integration ────────────────────────────────────────────────────────
 
 /**
- * Run the OpenClaw-powered setup from the CLI.
- * Falls back to web wizard if OpenClaw isn't available.
+ * Run the agent-powered setup from the CLI.
+ * Falls back to web wizard if the Agent Harness isn't available.
  */
 export async function cliAgentSetup(systemCheck) {
   const readline = await import('readline');
@@ -286,7 +286,7 @@ export async function cliAgentSetup(systemCheck) {
   const ask = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
 
   console.log('\n  \x1b[36m\x1b[1m🦀 SEO Intel — Agent-Powered Setup\x1b[0m\n');
-  console.log('  \x1b[2mOpenClaw is guiding your setup. Type your answers, or "done" to finish.\x1b[0m\n');
+  console.log('  \x1b[2mThe Agent Harness is guiding your setup. Type your answers, or "done" to finish.\x1b[0m\n');
 
   try {
     await runAgentSetup(systemCheck, {

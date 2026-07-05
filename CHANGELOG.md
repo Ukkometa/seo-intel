@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Rebrand: OpenClaw is now the Agent Harness
+- All user-facing copy (skill, README, setup wizard, CLI messages) now says **Agent Harness** — the agent framework that plugs into Hermes, Claude Code, Cursor, or any MCP host. ClawHub keeps its name as the registry (`clawhub install seo-intel` unchanged), and existing `openclaw` gateway commands, config paths, and env vars keep working.
+
 ## 1.5.53 (2026-07-01)
 
 ### New: Hermes Desktop cockpit bundle

@@ -176,7 +176,7 @@ export const EXTRACTION_MODELS = [
 //   Output: structured JSON with strategic recommendations, positioning, gap analysis
 //   Complexity: high — comparative reasoning across multiple domains
 //   Minimum viable: 14B+ parameters for reliable strategic output
-//   Cloud models (Claude, GPT-5.4, Gemini) available via OpenClaw agent setup
+//   Cloud models (Claude, GPT-5.4, Gemini) available via Agent Harness agent setup
 
 export const ANALYSIS_MODELS = [
   {
@@ -258,7 +258,7 @@ export const ANALYSIS_MODELS = [
     description: 'MoE — 120B total but only 12B active params. Excellent reasoning at efficient compute. Needs 64GB+ unified memory or multi-GPU.',
   },
   // ── Cloud frontier models (require API key in .env) ──
-  // ── Cloud frontier models (require API key in .env or via OpenClaw) ──
+  // ── Cloud frontier models (require API key in .env or via the Agent Harness) ──
   {
     id: 'gemini-3.1-pro',
     name: 'Gemini 3.1 Pro',
@@ -431,7 +431,7 @@ export function recommendAnalysisModel(availableModels = [], vramMB = 0) {
     return {
       model: recModel,
       installed: false,
-      note: `Recommended for your hardware. Use OpenClaw for cloud models.`,
+      note: `Recommended for your hardware. Use the Agent Harness for cloud models.`,
     };
   }
 

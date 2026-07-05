@@ -911,7 +911,7 @@ input::placeholder {
 .cli-block .prompt { color: var(--color-success); }
 .cli-block .comment { color: var(--text-muted); }
 
-/* ─── OpenClaw Banner ────────────────────────────────────────────────── */
+/* ─── Agent Harness Banner ───────────────────────────────────────────── */
 .openclaw-banner {
   margin-top: 16px;
 }
@@ -1425,10 +1425,10 @@ input::placeholder {
             <span id="cloudHintEnvLine"></span>
             <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText(document.getElementById('cloudHintEnvLine').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
           </div>
-          <p style="font-size:0.6rem; color:var(--text-muted); margin-top:6px;">Or use <strong style="color:var(--accent-purple);">OpenClaw</strong> to manage API keys automatically.</p>
+          <p style="font-size:0.6rem; color:var(--text-muted); margin-top:6px;">Or use the <strong style="color:var(--accent-purple);">Agent Harness</strong> to manage API keys automatically.</p>
         </div>
         <div id="analysisPullLog" class="log-output"></div>
-        <!-- OpenClaw hint moved to standalone sidebar card -->
+        <!-- Agent Harness hint moved to standalone sidebar card -->
         <!-- Upgrade overlay (shown on free tier) -->
         <div class="upgrade-overlay">
           <div class="upgrade-overlay-bg"></div>
@@ -1516,7 +1516,7 @@ input::placeholder {
             <button class="btn btn-sm" onclick="saveCloudApiKeyFromUI()" style="white-space:nowrap; padding:4px 10px; font-size:0.62rem;"><i class="fa-solid fa-floppy-disk"></i> Save to .env</button>
           </div>
           <p id="cloudKeySaveStatus" style="font-size:0.62rem; color:var(--text-muted); min-height:1em;"></p>
-          <p style="font-size:0.6rem; color:var(--text-muted); margin-top:4px;">Or use <strong style="color:var(--accent-purple);">OpenClaw</strong> to skip API key management entirely</p>
+          <p style="font-size:0.6rem; color:var(--text-muted); margin-top:4px;">Or use the <strong style="color:var(--accent-purple);">Agent Harness</strong> to skip API key management entirely</p>
         </div>
       </div>
 
@@ -1904,7 +1904,7 @@ input::placeholder {
 
 </div><!-- /wizard-body -->
 
-<!-- ═══ Genie Card — fixed floating agent/OpenClaw helper ═══════════════ -->
+<!-- ═══ Genie Card — fixed floating Agent Harness helper ════════════════ -->
 <div class="card genie-card" id="genieCard" style="display:none;">
   <button class="genie-close" onclick="document.getElementById('genieCard').style.display='none'"><i class="fa-solid fa-xmark"></i></button>
   <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
@@ -1930,7 +1930,7 @@ input::placeholder {
     <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:10px;">Pick your agent. Copy the prompt. Done.</div>
 
     <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:10px;" id="genieRuntimeTabs">
-      <button class="btn btn-sm agent-runtime-tab active" data-runtime="openclaw" onclick="selectGenieRuntime('openclaw', this)" style="font-size:0.62rem; padding:4px 7px;">OpenClaw</button>
+      <button class="btn btn-sm agent-runtime-tab active" data-runtime="openclaw" onclick="selectGenieRuntime('openclaw', this)" style="font-size:0.62rem; padding:4px 7px;">Agent Harness</button>
       <button class="btn btn-sm agent-runtime-tab" data-runtime="claudecode" onclick="selectGenieRuntime('claudecode', this)" style="font-size:0.62rem; padding:4px 7px;">Claude Code</button>
       <button class="btn btn-sm agent-runtime-tab" data-runtime="codex" onclick="selectGenieRuntime('codex', this)" style="font-size:0.62rem; padding:4px 7px;">Codex</button>
       <button class="btn btn-sm agent-runtime-tab" data-runtime="perplexity" onclick="selectGenieRuntime('perplexity', this)" style="font-size:0.62rem; padding:4px 7px;">Perplexity</button>
@@ -1977,7 +1977,7 @@ input::placeholder {
   <!-- Cloud Models tab -->
   <div id="genieCloud" style="display:none;">
     <p style="font-size:0.75rem; color:var(--text-muted); line-height:1.6; margin-bottom:12px;">
-      Cloud frontier models for competitive analysis. Add API keys in the Models step, or use OpenClaw for automatic key management.
+      Cloud frontier models for competitive analysis. Add API keys in the Models step, or use the Agent Harness for automatic key management.
     </p>
     <div style="font-size:0.72rem; color:var(--text-secondary);">
       <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
@@ -1985,12 +1985,12 @@ input::placeholder {
       </div>
     </div>
     <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.5; margin-top:10px;">
-      Set up API keys in the <strong>Models &amp; Auth</strong> step, or use OpenClaw to skip key management entirely.
+      Set up API keys in the <strong>Models &amp; Auth</strong> step, or use the Agent Harness to skip key management entirely.
     </p>
   </div>
 </div>
 
-<!-- ─── Agent Chat Panel (shown when OpenClaw agent setup is chosen) ──── -->
+<!-- ─── Agent Chat Panel (shown when Agent Harness setup is chosen) ───── -->
 <div class="agent-panel" id="agentPanel">
   <div class="agent-chat">
     <div class="agent-chat-header">
@@ -1998,7 +1998,7 @@ input::placeholder {
       <button class="btn" onclick="exitAgentSetup()"><i class="fa-solid fa-list-check"></i> Switch to Manual</button>
     </div>
     <div class="agent-chat-messages" id="agentMessages">
-      <div class="agent-msg system">Connecting to OpenClaw agent...</div>
+      <div class="agent-msg system">Connecting to the Agent Harness...</div>
     </div>
     <div class="agent-typing" id="agentTyping"><i class="fa-solid fa-circle"></i> Agent is thinking...</div>
     <div class="agent-chat-input">
@@ -2133,7 +2133,7 @@ input::placeholder {
     { key: 'playwright', icon: 'fa-solid fa-globe',        name: 'Playwright' },
     { key: 'ollama',     icon: 'fa-solid fa-robot',        name: 'Ollama' },
     { key: 'vram',       icon: 'fa-solid fa-memory',       name: 'GPU / VRAM' },
-    { key: 'openclaw',   icon: 'fa-solid fa-wand-magic-sparkles', name: 'OpenClaw' },
+    { key: 'openclaw',   icon: 'fa-solid fa-wand-magic-sparkles', name: 'Agent Harness' },
   ];
 
   function depStatus(status, key) {
@@ -2201,7 +2201,7 @@ input::placeholder {
     const nextBtn = document.getElementById('step1Next');
     nextBtn.disabled = !status.node.meetsMinimum;
 
-    // Show genie card (floating agent/OpenClaw helper)
+    // Show genie card (floating Agent Harness helper)
     const genie = document.getElementById('genieCard');
     if (genie) genie.style.display = '';
   }
@@ -2524,10 +2524,10 @@ input::placeholder {
     const gwRunning = state.modelData?.openclaw?.gatewayRunning || false;
 
     // Determine connection status per cloud model
-    // A model is "connected" if: .env key exists OR OpenClaw gateway is active (routes all cloud models)
+    // A model is "connected" if: .env key exists OR the Agent Harness gateway is active (routes all cloud models)
     function isConnected(cm) {
       if (cm.configured) return { connected: true, via: 'key' };
-      // If OpenClaw gateway is running with models, all cloud models are available through it
+      // If the Agent Harness gateway is running with models, all cloud models are available through it
       if (gwRunning && gwModels.length > 0) return { connected: true, via: 'openclaw' };
       return { connected: false };
     }
@@ -2546,7 +2546,7 @@ input::placeholder {
       badge.className = 'cloud-status-badge';
 
       if (status.connected) {
-        const viaLabel = status.via === 'openclaw' ? 'via OpenClaw' : 'API key set';
+        const viaLabel = status.via === 'openclaw' ? 'via Agent Harness' : 'API key set';
         badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(142,203,168,0.15);border:1px solid rgba(142,203,168,0.3);font-size:0.6rem;font-weight:600;color:var(--color-success);letter-spacing:0.02em;"><i class="fa-solid fa-circle-check"></i> Connected <span style="font-weight:400;opacity:0.8;">— ${viaLabel}</span></span>`;
         badge.style.cssText = 'margin-top:8px;';
         card.style.borderColor = 'rgba(142,203,168,0.3)';
@@ -2568,7 +2568,7 @@ input::placeholder {
       for (const cm of cloudModels) {
         const status = isConnected(cm);
         if (status.connected) {
-          const via = status.via === 'openclaw' ? ' <span style="font-size:0.58rem;color:var(--text-muted);">via OpenClaw</span>' : '';
+          const via = status.via === 'openclaw' ? ' <span style="font-size:0.58rem;color:var(--text-muted);">via Agent Harness</span>' : '';
           html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <i class="fa-solid fa-circle-check" style="color:var(--color-success);font-size:0.62rem;width:12px;"></i> ${cm.name}${via}
           </div>`;
@@ -2580,7 +2580,7 @@ input::placeholder {
       }
       if (gwRunning) {
         html += `<div style="margin-top:8px;padding:6px 8px;background:rgba(124,109,235,0.08);border:1px solid rgba(124,109,235,0.2);border-radius:var(--radius);font-size:0.6rem;color:var(--accent-purple);">
-          <i class="fa-solid fa-plug" style="margin-right:4px;"></i> OpenClaw gateway active — ${gwModels.length} model(s)
+          <i class="fa-solid fa-plug" style="margin-right:4px;"></i> Agent Harness gateway active — ${gwModels.length} model(s)
         </div>`;
       }
       html += '</div>';
@@ -3499,7 +3499,7 @@ input::placeholder {
     });
   };
 
-  // ── OpenClaw Agent Setup ──────────────────────────────────────────────
+  // ── Agent Harness Setup ───────────────────────────────────────────────
 
   let agentHistory = [];
   let agentBusy = false;

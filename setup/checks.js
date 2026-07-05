@@ -470,7 +470,7 @@ export async function fullSystemCheck(options = {}) {
     checkGscData(project),
   ]);
 
-  // OpenClaw detection (sync, fast)
+  // Agent Harness detection (sync, fast)
   const openclaw = checkOpenClaw();
 
   const ready = node.meetsMinimum && npm.installed;
@@ -513,10 +513,10 @@ function commandExists(cmd) {
   }
 }
 
-// ── OpenClaw Detection ──────────────────────────────────────────────────────
+// ── Agent Harness Detection ─────────────────────────────────────────────────
 
 /**
- * Detect OpenClaw installation and capabilities.
+ * Detect an Agent Harness installation (`openclaw` binary) and capabilities.
  * Returns info about the gateway, available models, and agent readiness.
  */
 export function checkOpenClaw() {
@@ -529,7 +529,7 @@ export function checkOpenClaw() {
     hasSkillsDir: false,
     skillsPath: null,
     canAgentSetup: false,
-    gatewayModels: [],   // model IDs available via OpenClaw gateway
+    gatewayModels: [],   // model IDs available via the Agent Harness gateway
   };
 
   // 1. Check if openclaw binary exists

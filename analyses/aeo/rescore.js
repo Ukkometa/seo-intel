@@ -43,6 +43,17 @@ export async function rescorePage(db, project, url, opts = {}) {
   const after = cite ? cite.score : null;
   const delta = before != null && after != null ? after - before : null;
 
+  // Record the measurement in citability_history (append-only telemetry).
+  // The baseline in citability_scores stays untouched — rescore remains a
+  // read-only lens on the site and on latest scores; history is what lets
+  // trends and verified "lift captured" survive across measurements.
+  if (after != null) {
+    try {
+      const { appendCitabilityHistory } = await import('./index.js');
+      appendCitabilityHistory(db, project, [{ url, score: after, ...(cite.breakdown || {}) }], 'rescore');
+    } catch { /* history is telemetry — the measurement is still returned */ }
+  }
+
   return {
     url,
     status_code: page ? page.status_code : null,

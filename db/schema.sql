@@ -198,6 +198,28 @@ CREATE TABLE IF NOT EXISTS citability_scores (
 
 CREATE INDEX IF NOT EXISTS idx_citability_page ON citability_scores(page_id);
 
+-- Append-only citability measurement history (one row per scoring event).
+-- citability_scores keeps only the LATEST score per page (page_id UNIQUE);
+-- this table never overwrites — it powers trends, sparklines, and verified
+-- "lift captured" math. Denormalized (project + url, no FK) on purpose:
+-- it's telemetry, and it must survive page-row churn between crawls.
+CREATE TABLE IF NOT EXISTS citability_history (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  project           TEXT NOT NULL,
+  url               TEXT NOT NULL,
+  score             INTEGER NOT NULL,           -- composite 0-100
+  entity_authority  INTEGER,
+  structured_claims INTEGER,
+  answer_density    INTEGER,
+  qa_proximity      INTEGER,
+  freshness         INTEGER,
+  schema_coverage   INTEGER,
+  source            TEXT NOT NULL DEFAULT 'audit', -- audit (full AEO run) | rescore (single-URL verify)
+  measured_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cithist_proj_url ON citability_history(project, url, measured_at);
+
 -- Sitemap URL inventory (one row per URL declared in a sitemap)
 CREATE TABLE IF NOT EXISTS sitemap_urls (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -538,11 +538,11 @@ program
       }
     }
 
-    // ── Tier gate: Free tier = crawl-only, no AI extraction ──────────────
-    if (opts.extract !== false && !isPro()) {
-      console.log(chalk.dim('\n  ℹ  Free tier: crawl-only mode (AI extraction requires Solo/Agency)'));
-      opts.extract = false;
-    }
+    // ── No tier gate here ────────────────────────────────────────────────
+    // Extraction of your OWN site is free (see FREE_FEATURES in lib/gate.js,
+    // v1.5.41 monetization line). This path used to force crawl-only mode for
+    // free users, which contradicted `seo-intel extract` running free — the
+    // same pages just had to be extracted in a second command.
 
     // ── BUG-003/009: AI preflight — check Ollama availability before crawl ──
     if (opts.extract !== false) {
@@ -1461,8 +1461,8 @@ program
 // future surfaces. Free tier gets `raw`; paid slices are license-gated.
 program
   .command('intel <project>')
-  .description('Structured project intelligence for AI agents (raw=free; audit/blog/competitor=paid)')
-  .option('--for <slice>', 'Slice: raw | audit | blog | competitor', 'raw')
+  .description('Structured project intelligence for AI agents (own-site slices free; competitor needs Solo)')
+  .option('--for <slice>', 'Slice: raw | audit | blog | graph (free) | competitor (Solo)', 'raw')
   .option('--format <fmt>', 'Output format: json | md', 'json')
   .action(async (project, opts) => {
     const isJson = opts.format === 'json';
@@ -2140,7 +2140,7 @@ async function runAnalysis(project, db) {
 // ── EXTRACT ────────────────────────────────────────────────────────────────
 program
   .command('extract <project>')
-  .description('Run AI extraction on all crawled-but-not-yet-extracted pages (requires Solo/Agency)')
+  .description('Run AI extraction on all crawled-but-not-yet-extracted pages (free — local model, your own site)')
   .action(async (project) => {
     if (!requirePro('extract')) return;
     applyExtractionRuntimeConfig(loadConfig(project));
@@ -2424,7 +2424,7 @@ program
       process.exit(1);
     }
 
-    const tierLabel = isPro() ? '' : chalk.dim(' (crawl-only — upgrade to Solo for full dashboard)');
+    const tierLabel = isPro() ? '' : chalk.dim(' (competitor sections need Solo — everything about your own site is included)');
     console.log(chalk.bold.cyan(`\n📊 Generating dashboard...`) + tierLabel + '\n');
     configs.forEach(c => console.log(chalk.gray(`  • ${c.project} (${c.target.domain})`)));
     console.log();
@@ -2492,6 +2492,101 @@ program
     const outPath = generateMultiDashboard(db, configs);
 
     console.log(chalk.bold.green(`✅ All-projects dashboard generated: ${outPath}\n`));
+  });
+
+// ── PRUNE FRAGMENT PAGES ─────────────────────────────────────────────────
+// One-off repair for databases written before fragment stripping landed.
+// Crawls before that release stored `/pricing` and `/pricing#faq` as two
+// pages, which inflated page counts and scored the same document twice.
+// Reports by default; deleting rows requires --apply.
+program
+  .command('prune-fragments [project]')
+  .description('Remove pages stored under a URL fragment (#section) left by older crawls')
+  .option('--apply', 'Actually delete. Without this the command only reports.')
+  .option('--format <fmt>', 'Output format: text | json', 'text')
+  .action(async (project, opts) => {
+    const isJson = opts.format === 'json';
+    if (isJson) chalk.level = 0;
+    const db = getDb();
+
+    const scope = project ? 'AND d.project = ?' : '';
+    const args = project ? [project] : [];
+
+    const rows = db.prepare(`
+      SELECT p.id, p.url, d.project, p.domain_id,
+             substr(p.url, 1, instr(p.url, '#') - 1) AS base_url
+      FROM pages p
+      JOIN domains d ON d.id = p.domain_id
+      WHERE p.url LIKE '%#%' ${scope}
+      ORDER BY d.project, p.url
+    `).all(...args);
+
+    // A fragment row is "safe" when the page it points into is also stored:
+    // nothing is lost by deleting it. The rest would disappear until the next
+    // crawl re-fetches them under their real URL, so they are reported apart.
+    const hasBase = db.prepare('SELECT 1 FROM pages WHERE url = ? AND domain_id = ? LIMIT 1');
+    const safe = [];
+    const orphaned = [];
+    for (const r of rows) {
+      (hasBase.get(r.base_url, r.domain_id) ? safe : orphaned).push(r);
+    }
+
+    if (isJson) {
+      console.log(JSON.stringify({
+        ok: true, project: project || null, applied: Boolean(opts.apply),
+        total: rows.length, safe: safe.length, orphaned: orphaned.length,
+        deleted: opts.apply ? rows.length : 0,
+      }, null, 2));
+    } else {
+      console.log(chalk.bold.cyan('\n🧹 Fragment page cleanup\n'));
+      console.log(`  Fragment pages found: ${chalk.bold(rows.length)}${project ? chalk.dim(` (project: ${project})`) : chalk.dim(' (all projects)')}`);
+      console.log(`    ${chalk.green('•')} ${safe.length} whose real page is already stored — safe to drop`);
+      console.log(`    ${chalk.yellow('•')} ${orphaned.length} with no stored counterpart — the next crawl re-adds them properly`);
+      if (rows.length) {
+        console.log(chalk.dim('\n  Examples:'));
+        rows.slice(0, 5).forEach(r => console.log(chalk.dim(`    ${r.url}`)));
+      }
+    }
+
+    if (!rows.length) {
+      if (!isJson) console.log(chalk.green('\n  Nothing to clean.\n'));
+      return;
+    }
+
+    if (!opts.apply) {
+      if (!isJson) {
+        console.log(chalk.dim('\n  Nothing was deleted. Re-run with --apply to remove these rows.\n'));
+      }
+      return;
+    }
+
+    // Child rows first — these tables reference pages(id).
+    const ids = rows.map(r => r.id);
+    const holes = ids.map(() => '?').join(',');
+    let removed = 0;
+    db.exec('BEGIN');
+    try {
+      for (const [table, col] of [
+        ['extractions', 'page_id'], ['headings', 'page_id'], ['keywords', 'page_id'],
+        ['technical', 'page_id'], ['page_schemas', 'page_id'],
+        ['citability_scores', 'page_id'], ['links', 'source_id'],
+      ]) {
+        db.prepare(`DELETE FROM ${table} WHERE ${col} IN (${holes})`).run(...ids);
+      }
+      removed = db.prepare(`DELETE FROM pages WHERE id IN (${holes})`).run(...ids).changes;
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      if (!isJson) console.log(chalk.red(`\n  Failed, nothing was changed: ${e.message}\n`));
+      else console.log(JSON.stringify({ ok: false, error: e.message }));
+      process.exitCode = 1;
+      return;
+    }
+
+    if (!isJson) {
+      console.log(chalk.bold.green(`\n  ✅ Removed ${removed} fragment pages and their child rows.`));
+      console.log(chalk.dim('     Re-run `seo-intel html` to refresh the dashboard counts.\n'));
+    }
   });
 
 // ── SERVE DASHBOARD ──────────────────────────────────────────────────────
@@ -4500,8 +4595,8 @@ program
       return;
     }
 
-    // Persist scores
-    persistAeoScores(db, results);
+    // Persist scores (project → also appended to citability_history for trends)
+    persistAeoScores(db, results, project);
     upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess);
 
     const { summary } = results;

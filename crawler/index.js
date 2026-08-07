@@ -5,6 +5,7 @@ import { checkRobots, getCrawlDelay } from './robots.js';
 import { fetchSitemap } from './sitemap.js';
 import { parseJsonLd } from './schema-parser.js';
 import { loadSessionState, saveSessionState, discardSession } from './stealth.js';
+import { stripFragment } from '../lib/url.js';
 
 const CRAWL_DELAY  = parseInt(process.env.CRAWL_DELAY_MS  || '1500');
 const MAX_PAGES    = parseInt(process.env.CRAWL_MAX_PAGES  || '50');
@@ -180,8 +181,21 @@ function contentHash(text) {
 export async function* crawlDomain(startUrl, opts = {}) {
   const base = new URL(startUrl);
   const visited = new Set();
-  const queue = [{ url: startUrl, depth: 0 }];
+  // Everything entering the queue goes through stripFragment first, so a page
+  // is queued, fetched, counted and stored exactly once no matter how many
+  // anchor links point at it. The queued URL is also the one that ends up in
+  // the `pages` table, so this is the single place that decides page identity.
+  const queue = [{ url: stripFragment(startUrl), depth: 0 }];
   let count = 0;
+
+  /** Queue a URL unless it is already queued or already crawled. */
+  function enqueue(rawUrl, depth) {
+    const url = stripFragment(rawUrl);
+    if (visited.has(url)) return false;
+    if (queue.some(q => q.url === url)) return false;
+    queue.push({ url, depth });
+    return true;
+  }
 
   // ── Docs domains: some hosted docs platforms block unknown bots.
   // When hostname contains "docs.", spoof Googlebot UA to reduce WAF friction.
@@ -237,10 +251,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
           const robotsResult = await checkRobots(u).catch(() => ({ allowed: true }));
           if (!robotsResult.allowed) continue;
         }
-        if (!queue.some(q => q.url === u)) {
-          queue.push({ url: u, depth: 1 });
-          added++;
-        }
+        if (enqueue(u, 1)) added++;
       }
       if (unique.length > 0) {
         console.log(`[llms.txt] ${base.hostname} — discovered ${unique.length} URLs (${added} added to queue)`);
@@ -295,9 +306,9 @@ export async function* crawlDomain(startUrl, opts = {}) {
         : Math.max(maxPages * 2, 50);
 
       for (const entry of budgeted.slice(0, seedLimit)) {
-        if (!queue.some(q => q.url === entry.url) && entry.url !== startUrl) {
-          queue.push({ url: entry.url, depth: 1 }); // treat sitemap URLs as depth 1
-        }
+        // Sitemap URLs are treated as depth 1. enqueue() also covers the
+        // startUrl case, which is already sitting in the queue at depth 0.
+        enqueue(entry.url, 1);
       }
     }
   } catch (err) {
@@ -370,7 +381,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
 
       try {
         // Hard per-page deadline wrapping everything
-        const pageResult = await withTimeout(processPage(page, url, base, depth, queue, maxDepth), PAGE_BUDGET, url);
+        const pageResult = await withTimeout(processPage(page, url, base, depth, enqueue, maxDepth), PAGE_BUDGET, url);
 
         if (pageResult) {
           // ── Backoff: check for rate limit / WAF responses ──
@@ -437,7 +448,7 @@ export async function* crawlDomain(startUrl, opts = {}) {
   }
 }
 
-async function processPage(page, url, base, depth, queue, maxDepth) {
+async function processPage(page, url, base, depth, enqueue, maxDepth) {
   let status = 0;
   const t0 = Date.now();
 
@@ -566,7 +577,9 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
     return null;
   }).catch(() => null);
 
-  // Queue new URLs (section-aware: skip junk links early)
+  // Queue new URLs (section-aware: skip junk links early).
+  // enqueue() strips the fragment, so the dozens of `#section` links a nav
+  // emits all collapse onto the one page they actually point at.
   if (depth < maxDepth) {
     for (const link of internalLinks) {
       try {
@@ -575,9 +588,7 @@ async function processPage(page, url, base, depth, queue, maxDepth) {
         // Pre-filter: don't even enqueue URLs from skip sections
         const { tier } = classifyUrl(link.url);
         if (tier === 'skip') continue;
-        if (!queue.some(q => q.url === link.url)) {
-          queue.push({ url: link.url, depth: depth + 1 });
-        }
+        enqueue(link.url, depth + 1);
       } catch(e) {
       }
     }

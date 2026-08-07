@@ -12,6 +12,7 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { pageKey, canonicalizePages, isNavigable } from '../lib/url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const D3_CACHE = join(__dirname, 'd3.v7.min.js');
@@ -42,21 +43,24 @@ function querySiteGraphData(db, project, maxDepth = 99) {
     LEFT JOIN extractions e ON e.page_id = p.id
     LEFT JOIN keywords k ON k.page_id = p.id
     WHERE d.project = ?
-      AND d.role = 'target'
+      AND d.role IN ('target', 'owned')
       AND (? >= 99 OR p.click_depth <= ?)
     GROUP BY p.id
     ORDER BY p.click_depth ASC, p.word_count DESC
     LIMIT 500
   `).all(project, maxDepth, maxDepth);
 
-  // Build a set of node IDs for edge filtering
-  const nodeIds = new Set(nodes.map(n => n.id));
-  const urlToId = new Map(nodes.map(n => [n.url, n.id]));
-  // Also map normalized URLs (without trailing slash)
-  for (const n of nodes) {
-    const norm = n.url.replace(/\/$/, '');
-    if (!urlToId.has(norm)) urlToId.set(norm, n.id);
-  }
+  // Collapse www / index.html / #anchor variants of one real page into a
+  // single node. Without this each variant draws its own node, the inbound
+  // links land on whichever variant a link happened to be written against,
+  // and the rest are reported as orphans. See lib/url.js.
+  const { merged, idToCanonical, keyToId } = canonicalizePages(nodes, (winner, loser) => {
+    if (!winner.title && loser.title) winner.title = loser.title;
+    if (!winner.h1 && loser.h1) winner.h1 = loser.h1;
+    if (!winner.meta_desc && loser.meta_desc) winner.meta_desc = loser.meta_desc;
+    if (!winner.word_count && loser.word_count) winner.word_count = loser.word_count;
+    winner.keyword_count = Math.max(winner.keyword_count || 0, loser.keyword_count || 0);
+  });
 
   // Query 2: Edges — internal links between crawled pages in this project
   const rawEdges = db.prepare(`
@@ -69,50 +73,39 @@ function querySiteGraphData(db, project, maxDepth = 99) {
     JOIN domains d ON d.id = p_src.domain_id
     WHERE l.is_internal = 1
       AND d.project = ?
-      AND d.role = 'target'
+      AND d.role IN ('target', 'owned')
   `).all(project);
 
-  // Resolve target_url → target_id using our URL map
+  // Resolve each link onto canonical nodes, then dedupe.
   const links = [];
   const seen = new Set();
+  const inboundMap = new Map();
   for (const e of rawEdges) {
-    if (!nodeIds.has(e.source_id)) continue;
-
-    // Try exact match, then normalized
-    let targetId = urlToId.get(e.target_url);
-    if (!targetId) targetId = urlToId.get(e.target_url.replace(/\/$/, ''));
+    const sourceNode = idToCanonical.get(e.source_id);
+    if (!sourceNode) continue;
+    const targetId = keyToId.get(pageKey(e.target_url));
     if (!targetId) continue;
-    if (targetId === e.source_id) continue; // skip self-links
+    // After canonicalization a nav link like `/#pricing` points back at the
+    // page it sits on. Real, but not inbound authority.
+    if (targetId === sourceNode.id) continue;
 
-    const key = `${e.source_id}-${targetId}`;
+    const key = `${sourceNode.id}-${targetId}`;
     if (seen.has(key)) continue; // deduplicate
     seen.add(key);
 
     links.push({
-      source: e.source_id,
+      source: sourceNode.id,
       target: targetId,
       anchor: e.anchor_text || '',
     });
+    // Inbound is counted off the deduped edges, so it means "how many distinct
+    // pages link here" and always agrees with what the graph draws. The old
+    // query counted raw link rows via an exact URL join, so the number in the
+    // sidebar could not be reconciled with the edges on screen.
+    inboundMap.set(targetId, (inboundMap.get(targetId) || 0) + 1);
   }
 
-  // Query 3: Inbound link counts
-  const inboundRaw = db.prepare(`
-    SELECT
-      p_target.id AS page_id,
-      COUNT(*) AS inbound_count
-    FROM links l
-    JOIN pages p_src ON p_src.id = l.source_id
-    JOIN domains d ON d.id = p_src.domain_id
-    JOIN pages p_target ON p_target.url = l.target_url
-    WHERE l.is_internal = 1
-      AND d.project = ?
-      AND d.role = 'target'
-    GROUP BY p_target.id
-  `).all(project);
-
-  const inboundMap = new Map(inboundRaw.map(r => [r.page_id, r.inbound_count]));
-
-  return { nodes, links, inboundMap };
+  return { nodes: merged, links, inboundMap };
 }
 
 // ── Node Enrichment ─────────────────────────────────────────────────────────
@@ -172,7 +165,9 @@ function enrichNodes(nodes, inboundMap) {
       n.color_category = 'normal';
     }
 
-    if (n.inbound_count === 0 && n.click_depth > 0) {
+    // Machine-readable endpoints (llms.txt, skill.md, feeds) are never linked
+    // from nav by design, so counting them as orphans is a false instruction.
+    if (n.inbound_count === 0 && n.click_depth > 0 && isNavigable(n.url)) {
       orphans++;
     }
 
@@ -216,11 +211,62 @@ function buildSiteGraphHtml(data, d3src) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Site Graph — ${data.project}</title>
+<script>
+  // Stamp the stored theme before first paint to avoid a flash. Shares the
+  // seoIntelTheme key with the main dashboard, so the two stay in agreement.
+  (function () {
+    try {
+      var t = localStorage.getItem('seoIntelTheme');
+      if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* blocked storage — light default is fine */ }
+  })();
+</script>
 <style>
+  /* THEME TOKENS — light default, dark via [data-theme="dark"].
+     Matches the dashboard's approach (reports/generate-html.js) and
+     ukkometa.fi's light rotation. Node/edge/cluster colors are darkened for
+     light because they sit on a near-white canvas; the dark values are the
+     original palette, unchanged. */
   :root {
+    color-scheme: light;
+    --bg-primary: #fafaf8;
+    --bg-card: #ffffff;
+    --bg-elevated: #f3f2ec;
+    --border-card: #e3e1da;
+    --text-primary: #1a1a1a;
+    --text-muted: #75726a;
+    --text-dim: #8a877f;
+    --accent-gold: #8a6f2f;
+    --color-normal: #2c6e8f;
+    --color-opportunity: #2f7d4f;
+    --color-issue: #b3352f;
+    --color-noindex: #a8a59d;
+    --color-orphan: #a35a2b;
+    --edge-stroke: #a8a49a;
+    --node-stroke: rgba(0, 0, 0, 0.28);
+    --node-stroke-selected: #1a1a1a;
+    --label-fill: #55524a;
+    --label-opacity: 0.85;
+    --edge-opacity: 0.75;
+    --badge-bg: #eceae4;
+    --badge-target-bg: #e2efe6;
+    --badge-comp-bg: #f6e4e2;
+    --sidebar-width: 340px;
+    /* Subdomain cluster ring colors */
+    --cluster-www: #2c6e8f;
+    --cluster-docs: #6b4f9e;
+    --cluster-blog: #2f7d4f;
+    --cluster-app: #a35a2b;
+    --cluster-api: #a8306a;
+    --cluster-other: #75726a;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
     --bg-primary: #0a0a0a;
     --bg-card: #111111;
     --bg-elevated: #161616;
+    --border-card: #262626;
     --text-primary: #e8e8e8;
     --text-muted: #888888;
     --text-dim: #666666;
@@ -230,8 +276,15 @@ function buildSiteGraphHtml(data, d3src) {
     --color-issue: #d98e8e;
     --color-noindex: #444444;
     --color-orphan: #c79b6b;
-    --sidebar-width: 340px;
-    /* Subdomain cluster ring colors */
+    --edge-stroke: #1e1e1e;
+    --node-stroke: #000000;
+    --node-stroke-selected: #ffffff;
+    --label-fill: #666666;
+    --label-opacity: 0.55;
+    --edge-opacity: 0.6;
+    --badge-bg: #1a1a2a;
+    --badge-target-bg: #1a3a2a;
+    --badge-comp-bg: #3a1a1a;
     --cluster-www: #6ba3c7;
     --cluster-docs: #a78bfa;
     --cluster-blog: #8ecba8;
@@ -256,7 +309,7 @@ function buildSiteGraphHtml(data, d3src) {
     top: 0; left: 0; right: 0;
     height: 48px;
     background: var(--bg-card);
-    border-bottom: 1px solid #222;
+    border-bottom: 1px solid var(--border-card);
     display: flex;
     align-items: center;
     padding: 0 16px;
@@ -274,7 +327,7 @@ function buildSiteGraphHtml(data, d3src) {
   .toolbar .divider {
     width: 1px;
     height: 24px;
-    background: #333;
+    background: var(--border-card);
   }
 
   .filter-pills {
@@ -287,21 +340,21 @@ function buildSiteGraphHtml(data, d3src) {
     border-radius: 12px;
     font-size: 11px;
     cursor: pointer;
-    border: 1px solid #333;
+    border: 1px solid var(--border-card);
     background: transparent;
     color: var(--text-muted);
     transition: all 0.15s;
     white-space: nowrap;
   }
-  .pill:hover { border-color: #555; color: var(--text-primary); }
-  .pill.active { background: #222; color: var(--text-primary); border-color: #555; }
+  .pill:hover { border-color: var(--text-dim); color: var(--text-primary); }
+  .pill.active { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--text-dim); }
   .pill .count { opacity: 0.5; margin-left: 3px; }
 
   .search-box {
     margin-left: auto;
     padding: 5px 10px;
     border-radius: 6px;
-    border: 1px solid #333;
+    border: 1px solid var(--border-card);
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 12px;
@@ -309,7 +362,22 @@ function buildSiteGraphHtml(data, d3src) {
     outline: none;
   }
   .search-box:focus { border-color: var(--accent-gold); }
-  .search-box::placeholder { color: #555; }
+  .search-box::placeholder { color: var(--text-dim); }
+
+  .theme-toggle {
+    margin-left: 12px;
+    padding: 5px 12px;
+    border-radius: 100px;
+    border: 1px solid var(--border-card);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .theme-toggle:hover { border-color: var(--text-dim); color: var(--text-primary); }
+  .theme-toggle:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2px; }
 
   .depth-control {
     display: flex;
@@ -343,9 +411,9 @@ function buildSiteGraphHtml(data, d3src) {
   svg:active { cursor: grabbing; }
 
   .link {
-    stroke: #1e1e1e;
+    stroke: var(--edge-stroke);
     stroke-width: 0.5;
-    stroke-opacity: 0.6;
+    stroke-opacity: var(--edge-opacity);
   }
   .link.highlighted {
     stroke: var(--accent-gold);
@@ -356,7 +424,7 @@ function buildSiteGraphHtml(data, d3src) {
 
   .node {
     cursor: pointer;
-    stroke: #000;
+    stroke: var(--node-stroke);
     stroke-width: 0.5;
     transition: opacity 0.2s;
   }
@@ -365,7 +433,7 @@ function buildSiteGraphHtml(data, d3src) {
     stroke-width: 2;
   }
   .node.selected {
-    stroke: #fff;
+    stroke: var(--node-stroke-selected);
     stroke-width: 2.5;
   }
   .node.dimmed { opacity: 0.1; }
@@ -380,18 +448,18 @@ function buildSiteGraphHtml(data, d3src) {
 
   .node-label {
     font-size: 10px;
-    fill: var(--text-dim);
+    fill: var(--label-fill);
     pointer-events: none;
     text-anchor: middle;
     dominant-baseline: central;
-    opacity: 0.55;
+    opacity: var(--label-opacity);
     transition: opacity 0.3s;
     font-weight: 400;
   }
   .node-label.zoomed-far { opacity: 0; font-size: 10px; }
-  .node-label.zoomed-mid { opacity: 0.45; font-size: 10px; }
-  .node-label.zoomed-close { opacity: 0.75; font-size: 10px; }
-  .node-label.hub-label { font-weight: 600; opacity: 0.7; }
+  .node-label.zoomed-mid { opacity: calc(var(--label-opacity) * 0.8); font-size: 10px; }
+  .node-label.zoomed-close { opacity: calc(var(--label-opacity) * 1.15); font-size: 10px; }
+  .node-label.hub-label { font-weight: 600; opacity: calc(var(--label-opacity) * 1.1); }
 
   /* ── Sidebar ── */
   .sidebar {
@@ -401,7 +469,7 @@ function buildSiteGraphHtml(data, d3src) {
     bottom: 0;
     width: var(--sidebar-width);
     background: var(--bg-card);
-    border-left: 1px solid #222;
+    border-left: 1px solid var(--border-card);
     transform: translateX(100%);
     transition: transform 0.2s ease;
     overflow-y: auto;
@@ -441,11 +509,11 @@ function buildSiteGraphHtml(data, d3src) {
     font-weight: 600;
     margin-bottom: 12px;
   }
-  .role-badge.target { background: #1a3a2a; color: var(--color-opportunity); }
-  .role-badge.competitor { background: #3a1a1a; color: var(--color-issue); }
+  .role-badge.target { background: var(--badge-target-bg); color: var(--color-opportunity); }
+  .role-badge.competitor { background: var(--badge-comp-bg); color: var(--color-issue); }
 
   .sidebar .section {
-    border-top: 1px solid #222;
+    border-top: 1px solid var(--border-card);
     padding: 10px 0;
   }
 
@@ -466,7 +534,7 @@ function buildSiteGraphHtml(data, d3src) {
   }
   .entity-tag {
     padding: 2px 8px;
-    background: #1a1a2a;
+    background: var(--badge-bg);
     border-radius: 6px;
     font-size: 10px;
     color: var(--color-normal);
@@ -546,6 +614,8 @@ function buildSiteGraphHtml(data, d3src) {
   <div class="stats-bar">
     <span id="visibleCount">${data.stats.total_nodes}</span> nodes · <span id="edgeCount">${data.stats.total_edges}</span> edges
   </div>
+  <button id="themeToggle" class="theme-toggle" type="button" onclick="toggleTheme()"
+          aria-pressed="false" title="Switch between light and dark">Dark</button>
 </div>
 
 <div class="graph-container">
@@ -562,7 +632,7 @@ function buildSiteGraphHtml(data, d3src) {
   <div class="legend-item"><div class="legend-dot" style="background:var(--color-opportunity)"></div> Opportunity</div>
   <div class="legend-item"><div class="legend-dot" style="background:var(--color-issue)"></div> Issue</div>
   <div class="legend-item"><div class="legend-dot" style="background:var(--color-noindex)"></div> No-index</div>
-  <span style="color:#333;margin:0 6px">│</span>
+  <span style="color:var(--text-dim);margin:0 6px">│</span>
   <div class="legend-item"><div class="legend-dot" style="background:var(--cluster-www);opacity:0.5;border:1.5px solid var(--cluster-www)"></div> www</div>
   <div class="legend-item"><div class="legend-dot" style="background:var(--cluster-docs);opacity:0.5;border:1.5px solid var(--cluster-docs)"></div> docs</div>
   <div class="legend-item"><div class="legend-dot" style="background:var(--cluster-blog);opacity:0.5;border:1.5px solid var(--cluster-blog)"></div> blog</div>
@@ -587,12 +657,37 @@ ${d3src}
 const GRAPH_DATA = ${JSON.stringify(data)};
 
 // ── Color Map ──
-const COLOR_MAP = {
-  normal:      '${cssVar('--color-normal', '#6ba3c7')}',
-  opportunity: '${cssVar('--color-opportunity', '#8ecba8')}',
-  issue:       '${cssVar('--color-issue', '#d98e8e')}',
-  noindex:     '${cssVar('--color-noindex', '#444444')}',
-};
+// Read from the CSS tokens at runtime, not baked at generate time: SVG
+// presentation attributes set via d3 .attr() do not resolve var(), so the
+// palette has to be resolved in JS and re-applied when the theme flips.
+const readCssVar = (name, fallback) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+
+let COLOR_MAP = {};
+let CLUSTER_COLORS = {};
+function readGraphColors() {
+  COLOR_MAP = {
+    normal:      readCssVar('--color-normal', '#6ba3c7'),
+    opportunity: readCssVar('--color-opportunity', '#8ecba8'),
+    issue:       readCssVar('--color-issue', '#d98e8e'),
+    noindex:     readCssVar('--color-noindex', '#444444'),
+  };
+  // Subdomain cluster ring colors. Module scope on purpose — selectNode()
+  // renders these in the sidebar and previously could not see them, because
+  // clusterColor was declared inside initGraph().
+  CLUSTER_COLORS = {
+    www:  readCssVar('--cluster-www', '#6ba3c7'),
+    docs: readCssVar('--cluster-docs', '#a78bfa'),
+    blog: readCssVar('--cluster-blog', '#8ecba8'),
+    app:  readCssVar('--cluster-app', '#f59e0b'),
+    api:  readCssVar('--cluster-api', '#ec4899'),
+    other: readCssVar('--cluster-other', '#888888'),
+  };
+}
+function clusterColor(subdomain) {
+  return CLUSTER_COLORS[subdomain] || CLUSTER_COLORS.other;
+}
+readGraphColors();
 
 // ── State ──
 let currentFilter = 'all';
@@ -612,18 +707,6 @@ function initGraph() {
   const links = GRAPH_DATA.links.map(d => ({ ...d }));
 
   if (nodes.length === 0) return;
-
-  // Subdomain cluster colors
-  const CLUSTER_COLORS = {
-    www: 'var(--cluster-www)',
-    docs: 'var(--cluster-docs)',
-    blog: 'var(--cluster-blog)',
-    app: 'var(--cluster-app)',
-    api: 'var(--cluster-api)',
-  };
-  function clusterColor(subdomain) {
-    return CLUSTER_COLORS[subdomain] || 'var(--cluster-other)';
-  }
 
   // Compute cluster centers for subdomain grouping
   const clusterKeys = [...new Set(nodes.map(n => n.subdomain))];
@@ -801,8 +884,8 @@ function selectNode(node) {
     <h3>\${esc(node.title || node.path)}</h3>
     <div class="url-display">\${esc(node.url)}</div>
     <span class="role-badge \${roleClass}">\${node.role}</span>
-    <span class="role-badge" style="background:#1a1a2a;color:var(--color-normal);margin-left:4px">depth \${node.click_depth}</span>
-    <span class="role-badge" style="background:#1a1a2a;color:\${clusterColor(node.subdomain)};margin-left:4px">\${node.hostname || '—'}</span>
+    <span class="role-badge" style="background:var(--badge-bg);color:var(--color-normal);margin-left:4px">depth \${node.click_depth}</span>
+    <span class="role-badge" style="background:var(--badge-bg);color:\${clusterColor(node.subdomain)};margin-left:4px">\${node.hostname || '—'}</span>
 
     <div class="section">
       <div class="meta-grid">
@@ -908,7 +991,43 @@ function applyFilters() {
   document.getElementById('visibleCount').textContent = visible;
 }
 
+// ── Theme toggle ──
+// CSS handles the chrome. The SVG does not: node fills and cluster rings are
+// set as presentation attributes, which do not resolve var(), so they are
+// re-read and re-applied here rather than by re-running the whole simulation
+// (which would throw away the current layout).
+function syncThemeControl(theme) {
+  var btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  var isDark = theme === 'dark';
+  btn.textContent = isDark ? 'Light' : 'Dark';
+  btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+  btn.title = isDark ? 'Switch to light' : 'Switch to dark';
+}
+
+function toggleTheme() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var theme = isDark ? 'light' : 'dark';
+
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('seoIntelTheme', theme); } catch (e) { /* blocked storage */ }
+
+  syncThemeControl(theme);
+  readGraphColors();
+
+  if (nodeEls) nodeEls.attr('fill', d => COLOR_MAP[d.color_category] || COLOR_MAP.normal);
+  if (svgG) svgG.selectAll('.node-ring').attr('stroke', d => clusterColor(d.subdomain));
+
+  // Re-render an open sidebar so its inline colors match the new theme.
+  if (selectedNodeId != null) {
+    var node = GRAPH_DATA.nodes.find(n => n.id === selectedNodeId);
+    if (node) selectNode(node);
+  }
+}
+
 // ── Start ──
+syncThemeControl(document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
 if (GRAPH_DATA.nodes.length > 0) initGraph();
 </script>
 </body>

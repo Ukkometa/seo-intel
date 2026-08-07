@@ -2,8 +2,80 @@
 
 ## Unreleased
 
+### New: `npm run check` — layer coherence gate
+
+`scripts/check-layers.js` derives what is true from the source itself — `FREE_FEATURES` in `lib/gate.js`, every `requirePro()` call site, the `registerTool()` list in the MCP server, `TIERS` in `lib/license.js`, the AEO signal weights, and the `package.json` version — then verifies every surface that repeats those facts: README, LICENSE, SKILL.md and its three mirrors, the plugin manifests, both storefronts, and the `llms.txt` / `llms-ctx.txt` pairs.
+
+Four layers are enforced: **versions** agree everywhere, **mirrors** are byte-identical to `skill/SKILL.md`, **counts** (MCP tools, AEO signals) match the code, and **gating** contains no stale pre-v1.5.41 phrasing, no free feature inside a Solo pricing card, and a Solo card that actually mentions competitors.
+
+- `npm run check` reports and exits non-zero on drift, so it works as a release gate or CI step.
+- `npm run check:fix` repairs what is mechanically repairable — version strings and file mirrors. Prose is reported with `file:line` rather than rewritten, because a checker should not invent marketing copy.
+- `npm run check:json` emits `{ ok, truth, findings, fixed }` for scripting.
+- Site checks are skipped rather than failed when the site checkout is absent, so it runs anywhere. Set `UKKOMETA_SITE_ROOT` to point at a non-default location.
+
+On its first run it immediately caught two claims that the manual pass had missed: SKILL.md advertising "15 native MCP tools" (there are 22) and "6 citability signals" (there are 7 — AI-crawler access shipped in v1.5.47).
+
+This replaces `scripts/sync-version.js`, which no longer existed. It had been written into `scripts/`, which is gitignored, so it was never committed and was eventually lost — taking the release gate with it. `check-layers.js` and `sync-plugin.js` now carry explicit `.gitignore` exceptions.
+
+### Fixed: every surface now describes the actual free/paid split
+
+The v1.5.41 monetization line — everything about your own site is free, Solo adds competitors, scheduling and history — had only ever been applied to `lib/gate.js`. Every document describing the product still sold the pre-v1.5.41 model, which meant the free tier was advertised as far weaker than it is, and several genuinely free features were presented as paid.
+
+- **README:** the command tables listed `extract`, `keywords`, `orphans` and `js-delta` as Solo — all four are free. The Free table omitted `scan`, `crawl-url`, `aeo`, `rescore`, `blog-draft`, `loop`, `graph`, `watch` and `tech-audit` entirely. Both tables rewritten from `FREE_FEATURES`.
+- **README licensing section** claimed the free tier was capped at "1 project, 500 pages/domain". Free has always been `Infinity` on both in `lib/license.js`. Corrected to state no limits.
+- **LICENSE:** Part 2 declared `extractor/` and `reports/generate-html.js` proprietary and requiring a Solo license, so the legal text forbade free users from the local extraction and dashboard that `gate.js` grants them. Both moved to the MIT layer, with a note recording the correction.
+- **`seo-intel --help`** described `extract` as requiring Solo, and the dashboard generator called the free tier "crawl-only".
+- **SKILL.md** said the MCP server exposes 21 tools; it exposes 22, of which 20 are free.
+
+### Fixed: `crawl` no longer refuses to extract on the free tier
+- Extraction of your own site has been free since v1.5.41, and `seo-intel extract` has run free ever since — but `seo-intel crawl` still forced crawl-only mode for unlicensed users and printed "AI extraction requires Solo/Agency". Free users could get their pages extracted, they just had to know to run a second command. The gate is gone, so `crawl` extracts inline like it does with a license.
+- `seo-intel --help` described `extract` as "(requires Solo/Agency)" for the same reason, and the dashboard generator said the free tier was "crawl-only". Both now state the real line: everything about your own site is included, and Solo adds competitors, scheduling and history.
+
+### New: `seo-intel prune-fragments`
+- Removes page rows stored under a URL fragment by crawls predating the fix above. Reports by default and changes nothing; pass `--apply` to actually delete, and `--format json` for scripting. Rows whose real page is already stored are reported separately from those that would need a re-crawl.
+
+### Light mode is now the default, dark is one click away
+- The dashboard, setup wizard and site graph all open in a **light theme** by default, matching ukkometa.fi. Every surface keeps a **Dark** toggle in its header, and the choice persists (`localStorage`) and is **shared across all three** — pick dark in the dashboard and the site graph opens dark too. The theme is applied before first paint, so there is no flash on load.
+- The dark palette is unchanged from previous releases, so nothing is lost by switching back.
+- Light values were contrast-checked against both the page and card backgrounds; everything used for text clears WCAG AA. Muted text and the signal colors are deliberately darker than the marketing site's equivalents, because in a dashboard they label real data.
+- Charts, scatter plots and the force-directed graph re-color themselves on toggle rather than needing a reload. Chart series colors are darkened in light mode so they stay distinguishable on white.
+- The crawl terminal's **log pane** deliberately stays dark in both themes — a light log pane reads as a text box rather than as output. Its title bar and command toolbar (Crawl / Extract / Keywords / …) follow the theme like any other control, since those are buttons you click rather than output you read.
+
+### Fixed: page counts no longer inflated by `#anchor` links
+- The crawler treated `/pricing` and `/pricing#faq` as two different pages, so a site with anchor-based navigation was crawled, stored, scored and counted several times over. A fragment identifies a position **inside** a document, not a separate document, so it is now stripped before a URL is queued. On a typical one-page nav this removed 7 phantom pages from a single homepage.
+- This also inflated "Pages Crawled", made extraction re-run on the same document under each anchor name, and gave one page several citability scores.
+- **Existing databases:** run `seo-intel prune-fragments` to see how many of these rows you have (it only reports), then `seo-intel prune-fragments --apply` to remove them. Re-run `seo-intel html` afterwards to refresh the counts.
+
+### Fixed: pages that were linked fine are no longer reported as orphans
+- Orphan detection matched links to pages by exact URL string, so a link written as `/en/#contact`, or against `www` when the page was stored without it, never resolved to the page it pointed at. The page then showed zero inbound links and was reported as an orphan. On ukkometa.fi **every single reported orphan was a false positive.**
+- Links and pages are now matched on a normalized key (fragment, `www.`, protocol, trailing slash and a trailing `index.html` are all ignored), and rows describing the same real page are merged into one node instead of competing for its inbound links.
+- Machine-readable endpoints (`llms.txt`, `skill.md`, feeds, sitemaps) are no longer counted as orphans — nothing is meant to link to them.
+- When a project has no stored link data at all, orphan count now reports as unavailable with an explanation, instead of declaring every page an orphan.
+- The `graph` intel slice and the HTML site graph now produce identical numbers; previously they disagreed because they queried different domain roles and counted inbound links two different ways.
+
+### Fixed: free features were documented as paid
+- The `get_intel` MCP tool described its `audit` and `blog` slices as requiring Solo, and did not mention `graph` at all — but all three are free. Since a tool description is what an agent reads before deciding to call it, this hid free functionality from every MCP host. The CLI's `seo-intel intel --help` carried the same error. Both now match the actual gating: everything about your own site is free, only `competitor` needs Solo.
+- The skill description listed 13 of the server's 22 MCP tools, omitting `setup_project`, `crawl_site`, `scan_site`, `tech_audit`, `rescore_page` and others.
+
+### Fixed
+- Site graph: selecting a node no longer throws. The subdomain color helper was scoped so that the detail sidebar could not reach it, which broke the cluster and subdomain fields on click.
+- Site graph: internal-link edges and node labels are now legible instead of nearly invisible, on both themes.
+- Setup wizard: several colors were hardcoded past their design tokens (primary button hover, "AI Smart Export" text, model recommendation badges, the locked-feature overlay), so they ignored the theme. All now resolve through tokens.
+
 ### Rebrand: OpenClaw is now the Agent Harness
 - All user-facing copy (skill, README, setup wizard, CLI messages) now says **Agent Harness** — the agent framework that plugs into Hermes, Claude Code, Cursor, or any MCP host. ClawHub keeps its name as the registry (`clawhub install seo-intel` unchanged), and existing `openclaw` gateway commands, config paths, and env vars keep working.
+
+### New: `~/.seo-intel/install.json` is now a capability manifest
+- The self-registered install file now advertises **how** to invoke SEO Intel, not just where it lives: `entrypoints.cli` (subprocess + `--format json`), `entrypoints.mcp` (stdio server command), `entrypoints.harness` (in-process Node import), plus `docs` pointers to AGENT_GUIDE.md and the bundled skills. Any local agent harness can integrate from one file read — no env vars, no hardcoded paths.
+
+### New MCP tool: `rescore_page` — the verify step, from any MCP host
+- The per-URL citability re-check (before / after / delta on the raw-HTML "what bots see" lens) was previously reachable only via the CLI and the Node agent-harness. It's now an MCP tool, so Claude Code, Cursor, or any MCP host can close the act → verify loop directly. 22 tools total.
+
+### New: citability measurement history
+- Every AEO scoring run and every `rescore` now appends to a `citability_history` table (latest scores are unchanged — `citability_scores` still holds only the newest per page). This is what makes trends, per-page sparklines, and verified "lift captured" accounting possible across runs.
+
+### New intel slice: `graph` (free)
+- `seo-intel intel <project> --for graph` returns your site's internal-link graph — nodes (with latest citability score, role, inbound-link count) + edges + orphan detection. Feeds force-directed visualizations (the Hermes cockpit's new Site Graph view) and lets agents reason about structure: orphans, hubs, weak clusters. Available identically via MCP `get_intel(for=graph)` and the agent-harness.
 
 ## 1.5.53 (2026-07-01)
 

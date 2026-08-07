@@ -159,9 +159,11 @@ export function runAeoAnalysis(db, project, opts = {}) {
 }
 
 /**
- * Persist AEO scores to citability_scores table
+ * Persist AEO scores to citability_scores table.
+ * Pass `project` to also append each measurement to citability_history —
+ * citability_scores is latest-only (page_id UNIQUE), history never overwrites.
  */
-export function persistAeoScores(db, results) {
+export function persistAeoScores(db, results, project = null) {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO citability_scores
       (page_id, score, entity_authority, structured_claims, answer_density,
@@ -185,11 +187,59 @@ export function persistAeoScores(db, results) {
         JSON.stringify(r.aiIntents), r.tier, Date.now()
       );
     }
+    if (project) {
+      appendCitabilityHistory(db, project, allResults.map((r) => ({
+        url: r.url, score: r.score, ...r.breakdown,
+      })), 'audit');
+    }
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
   }
+}
+
+/**
+ * Append citability measurements to the history table (never overwrites).
+ * Plain INSERTs — composes with or without a caller-held transaction.
+ * @param {object} db
+ * @param {string} project
+ * @param {Array<{url: string, score: number, entity_authority?: number, structured_claims?: number, answer_density?: number, qa_proximity?: number, freshness?: number, schema_coverage?: number}>} rows
+ * @param {'audit'|'rescore'} source
+ */
+export function appendCitabilityHistory(db, project, rows, source = 'audit') {
+  const stmt = db.prepare(`
+    INSERT INTO citability_history
+      (project, url, score, entity_authority, structured_claims, answer_density,
+       qa_proximity, freshness, schema_coverage, source, measured_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = Date.now();
+  for (const r of rows) {
+    if (r.url == null || r.score == null) continue;
+    stmt.run(
+      project, r.url, r.score,
+      r.entity_authority ?? null, r.structured_claims ?? null, r.answer_density ?? null,
+      r.qa_proximity ?? null, r.freshness ?? null, r.schema_coverage ?? null,
+      source, now
+    );
+  }
+}
+
+/**
+ * Read measurement history, newest first — scoped to one URL (sparkline) or
+ * the whole project (trend line).
+ */
+export function getCitabilityHistory(db, project, { url = null, limit = 500 } = {}) {
+  const base = `
+    SELECT url, score, entity_authority, structured_claims, answer_density,
+           qa_proximity, freshness, schema_coverage, source, measured_at
+    FROM citability_history
+    WHERE project = ?`;
+  if (url) {
+    return db.prepare(`${base} AND url = ? ORDER BY measured_at DESC LIMIT ?`).all(project, url, limit);
+  }
+  return db.prepare(`${base} ORDER BY measured_at DESC LIMIT ?`).all(project, limit);
 }
 
 /**

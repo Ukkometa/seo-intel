@@ -142,11 +142,12 @@ server.registerTool(
       '',
       'Slices:',
       '  raw         (FREE)  page/keyword/heading/schema/sitemap inventory per domain',
-      '  audit       (paid)  citability scores + active insights ledger',
-      '  blog        (paid)  keyword gaps + long tails + drafting hints',
+      '  audit       (FREE)  citability scores + active insights ledger',
+      '  blog        (FREE)  keyword gaps + long tails + drafting hints',
+      '  graph       (FREE)  internal-link graph — nodes with citability + inbound counts, edges, orphan detection',
       '  competitor  (paid)  competitor summary + keyword matrix + positioning',
       '',
-      'Paid slices require an SEO Intel Solo license (set SEO_INTEL_LICENSE in env, or activate via the CLI). When unlicensed, the tool returns a clear upgrade message — no silent failure.',
+      'Everything about YOUR OWN site is free. Only the competitor slice — data an agent cannot gather for itself — requires an SEO Intel Solo license (set SEO_INTEL_LICENSE in env, or activate via the CLI). When unlicensed, that slice returns a clear upgrade message — no silent failure.',
       '',
       'Output envelope: { project, for, tier, generated_at, seo_intel_version, data }.',
     ].join('\n'),
@@ -537,7 +538,7 @@ server.registerTool(
         }
       }
       const results = runAeoAnalysis(db, project, { includeCompetitors: include_competitors, aiAccessByDomain, log: () => {} });
-      persistAeoScores(db, results);
+      persistAeoScores(db, results, project);
       upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess);
       const competitorPageCount = [...results.competitors.values()].reduce((a, list) => a + list.length, 0);
       const avgTargetScore = results.target.length
@@ -613,6 +614,46 @@ server.registerTool(
         project,
         domains,
         hint: 'Findings read from the local crawl DB. Re-run `run_crawl` then this tool to verify fixes cleared. For AI-citability gaps, use run_citability_audit; for the prioritized fix queue, use list_problems.',
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: rescore_page (FREE) ─────────────────────────────────────────────
+// Closes the agent loop from ANY MCP host: act → rescore_page → see the delta.
+server.registerTool(
+  'rescore_page',
+  {
+    description: [
+      'Re-check a single URL\'s AI citability after a fix — the verify step of the agent loop. Fetches the LIVE page over plain HTTP (raw-HTML / "what bots see" lens: server-rendered fixes move the score, JS-only fixes correctly do not), re-scores it, and returns before / after / delta against the stored baseline plus the per-signal breakdown.',
+      '',
+      'Read-only toward your site and toward stored scores — a measurement, not a mutation. Use after editing a page (e.g. via the seo-autofix loop) to prove the change actually landed. Free tier.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug (scopes the stored baseline). Use list_projects to discover.'),
+      url: z.string().describe('The exact URL to re-score, e.g. https://example.com/pricing'),
+    },
+  },
+  async ({ project, url }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      // Lazy import — rescore.js pulls the crawler subtree (light.js → turndown),
+      // which must stay off the MCP boot path (see crawl_site note above).
+      const { rescorePage } = await import('../analyses/aeo/rescore.js');
+      const db = getDb();
+      const result = await rescorePage(db, project, url);
+      const out = {
+        ok: true,
+        project,
+        ...result,
+        hint: result.before == null
+          ? 'No stored baseline for this URL — run run_crawl + run_citability_audit first to establish one; the after-score is still valid on its own.'
+          : 'Delta is measured on the raw-HTML lens. If your fix is client-side JS only, the score will not move — and that itself is the finding.',
       };
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }], structuredContent: out };
     } catch (err) {
@@ -1233,7 +1274,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 21 tools — free: setup_project (zero→configured from chat), crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), tech_audit, suggest_models (local-first), prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 22 tools — free: setup_project (zero→configured from chat), crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog/graph), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), rescore_page (verify a fix: before/after/delta on the raw-HTML lens), tech_audit, suggest_models (local-first), prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
 }
 
 main().catch(err => {

@@ -8,11 +8,84 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer">
+<script>
+  // Stamp the stored theme before first paint so a dark-mode user does not get
+  // a white flash. Shares the seoIntelTheme key with the dashboard and the
+  // site graph. Must stay inline and ahead of the stylesheet.
+  (function () {
+    try {
+      var t = localStorage.getItem('seoIntelTheme');
+      if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* blocked storage — light default is fine */ }
+  })();
+</script>
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
    DESIGN SYSTEM — matches SEO Intel dashboard exactly
+   Light is the default; dark is opt-in via the header toggle and shares the
+   `seoIntelTheme` localStorage key with the dashboard, so a user who picks
+   dark in one surface gets dark in the other. Token names and values are kept
+   in sync with reports/generate-html.js — change both together.
+   Channel triplets (--*-rgb) exist because CSS cannot pull channels out of a
+   hex; write rgba(var(--gold-rgb), 0.12), never a bare numeric triplet.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
+  color-scheme: light;
+  --bg-primary: #fafaf8;
+  --bg-card: #ffffff;
+  --bg-elevated: #f3f2ec;
+  --border-card: #e3e1da;
+  --border-subtle: #ebe9e2;
+  --accent-gold: #8a6f2f;
+  --accent-purple: #5a4bc4;
+  --color-success: #2f7d4f;
+  --color-danger: #b3352f;
+  --color-info: #2c6e8f;
+  --color-warning: #8a6a12;
+  --text-primary: #1a1a1a;
+  --text-secondary: #3d3c38;
+  --text-muted: #75726a;
+  --text-subtle: #6c6c68;
+  --text-dark: #fafaf8;
+  --gold-rgb: 138, 111, 47;
+  --purple-rgb: 90, 75, 196;
+  --success-rgb: 47, 125, 79;
+  --danger-rgb: 179, 53, 47;
+  --info-rgb: 44, 110, 143;
+  --warning-rgb: 138, 106, 18;
+  --wash-rgb: 0, 0, 0;
+  --shadow-rgb: 0, 0, 0;
+  --shadow-mult: 0.3;
+  --intel-blue: #2a2a2a;
+  --blue-rgb: 42, 42, 42;
+  --blue-light-rgb: 61, 61, 61;
+  --signal-bad-rgb: 192, 68, 42;
+  --neutral-rgb: 117, 114, 106;
+  --mint-rgb: 47, 125, 79;
+  --lilac-rgb: 107, 79, 158;
+  /* Second gold tone used by the decorative starfield */
+  --gold-alt-rgb: 138, 111, 47;
+  /* Recessed wells: code samples and command lines */
+  --code-well: #f3f2ec;
+  /* Modal scrim — authored per theme, it must actually dim */
+  --scrim: rgba(60, 58, 52, 0.55);
+  --overlay-scrim: rgba(250, 250, 248, 0.86);
+  /* Model recommendation badges */
+  --badge-best: #8a6f2f;
+  --badge-fast: #2a2a2a;
+  --badge-deep: #6b4f9e;
+  --badge-solid: #55524a;
+  --badge-budget: #2f7d4f;
+  --term-bg: #12120f;
+  --term-text: #e8e6df;
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --radius: 6px;
+  --max-width: 820px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary: #0a0a0a;
   --bg-card: #111111;
   --bg-elevated: #161616;
@@ -29,10 +102,33 @@
   --text-muted: #555555;
   --text-subtle: #888888;
   --text-dark: #0a0a0a;
-  --font-display: 'Syne', sans-serif;
-  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
-  --radius: 6px;
-  --max-width: 820px;
+  --gold-rgb: 232, 213, 163;
+  --purple-rgb: 124, 109, 235;
+  --success-rgb: 142, 203, 168;
+  --danger-rgb: 217, 142, 142;
+  --info-rgb: 139, 189, 217;
+  --warning-rgb: 217, 199, 139;
+  --wash-rgb: 255, 255, 255;
+  --shadow-rgb: 0, 0, 0;
+  --shadow-mult: 1;
+  --intel-blue: #3b82f6;
+  --blue-rgb: 59, 130, 246;
+  --blue-light-rgb: 96, 165, 250;
+  --signal-bad-rgb: 244, 123, 93;
+  --neutral-rgb: 156, 163, 175;
+  --mint-rgb: 52, 211, 153;
+  --lilac-rgb: 180, 160, 255;
+  --gold-alt-rgb: 183, 160, 110;
+  --code-well: rgba(10, 10, 10, 0.5);
+  --scrim: rgba(8, 8, 10, 0.75);
+  --overlay-scrim: rgba(8, 8, 10, 0.75);
+  --badge-best: #e8d5a3;
+  --badge-fast: #60a5fa;
+  --badge-deep: #a78bfa;
+  --badge-solid: #9ca3af;
+  --badge-budget: #34d399;
+  --term-bg: #0c0c0c;
+  --term-text: #f0f0f0;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -120,7 +216,7 @@ body {
   color: var(--text-dark);
 }
 .step-node.completed:hover {
-  background: rgba(232, 213, 163, 0.06);
+  background: rgba(var(--gold-rgb), 0.06);
 }
 .step-node.active {
   color: var(--text-primary);
@@ -203,9 +299,9 @@ body {
   gap: 12px;
   transition: border-color 0.25s ease;
 }
-.dep-card.ok    { border-color: rgba(142, 203, 168, 0.35); }
-.dep-card.warn  { border-color: rgba(217, 199, 139, 0.35); }
-.dep-card.fail  { border-color: rgba(217, 142, 142, 0.35); }
+.dep-card.ok    { border-color: rgba(var(--success-rgb), 0.35); }
+.dep-card.warn  { border-color: rgba(var(--warning-rgb), 0.35); }
+.dep-card.fail  { border-color: rgba(var(--danger-rgb), 0.35); }
 .dep-icon {
   width: 32px;
   height: 32px;
@@ -219,9 +315,9 @@ body {
   border: 1px solid var(--border-card);
   color: var(--text-muted);
 }
-.dep-card.ok   .dep-icon { color: var(--color-success); border-color: rgba(142,203,168,0.3); }
-.dep-card.warn .dep-icon { color: var(--color-warning); border-color: rgba(217,199,139,0.3); }
-.dep-card.fail .dep-icon { color: var(--color-danger);  border-color: rgba(217,142,142,0.3); }
+.dep-card.ok   .dep-icon { color: var(--color-success); border-color: rgba(var(--success-rgb), 0.3); }
+.dep-card.warn .dep-icon { color: var(--color-warning); border-color: rgba(var(--warning-rgb), 0.3); }
+.dep-card.fail .dep-icon { color: var(--color-danger);  border-color: rgba(var(--danger-rgb), 0.3); }
 .dep-info { flex: 1; min-width: 0; }
 .dep-name {
   font-weight: 500;
@@ -274,8 +370,8 @@ body {
   font-weight: 600;
 }
 .btn-gold:hover {
-  background: #d4c290;
-  border-color: #d4c290;
+  background: var(--accent-gold);
+  border-color: var(--accent-gold);
   color: var(--text-dark);
 }
 .btn-gold:disabled {
@@ -294,11 +390,11 @@ body {
 }
 .btn-danger {
   color: var(--color-danger);
-  border-color: rgba(217, 142, 142, 0.3);
+  border-color: rgba(var(--danger-rgb), 0.3);
 }
 .btn-danger:hover {
   border-color: var(--color-danger);
-  background: rgba(217, 142, 142, 0.08);
+  background: rgba(var(--danger-rgb), 0.08);
   color: var(--color-danger);
 }
 
@@ -347,14 +443,14 @@ body {
   right: 24px;
   width: 280px;
   z-index: 50;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
-  border-color: rgba(124,109,235,0.3);
+  box-shadow: 0 8px 40px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
+  border-color: rgba(var(--purple-rgb), 0.3);
   max-height: calc(100vh - 100px);
   overflow-y: auto;
   transition: opacity 0.2s;
 }
 .genie-card::-webkit-scrollbar { width: 3px; }
-.genie-card::-webkit-scrollbar-thumb { background: rgba(124,109,235,0.3); border-radius: 3px; }
+.genie-card::-webkit-scrollbar-thumb { background: rgba(var(--purple-rgb), 0.3); border-radius: 3px; }
 .genie-card .genie-close {
   position: absolute; top: 10px; right: 10px;
   background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.75rem;
@@ -395,7 +491,7 @@ body {
 .model-radio-card.selected {
   border-color: var(--accent-gold);
   border-left: 3px solid var(--accent-gold);
-  background: rgba(232, 213, 163, 0.04);
+  background: rgba(var(--gold-rgb), 0.04);
 }
 .model-radio-card.legacy {
   opacity: 0.55;
@@ -412,11 +508,11 @@ body {
 .model-radio-card.cloud-model.selected {
   border-color: var(--accent-purple);
   border-left: 3px solid var(--accent-purple);
-  background: rgba(168, 130, 232, 0.04);
+  background: rgba(var(--purple-rgb), 0.04);
 }
 .cloud-privacy-note {
   font-size: 0.6rem;
-  color: var(--color-warning, #e8a838);
+  color: var(--color-warning);
   margin-top: 4px;
   display: flex;
   align-items: center;
@@ -442,19 +538,19 @@ body {
   letter-spacing: 0.04em;
 }
 .model-badge.recommended {
-  background: rgba(232, 213, 163, 0.15);
+  background: rgba(var(--gold-rgb), 0.15);
   color: var(--accent-gold);
 }
 .model-badge.installed {
-  background: rgba(142, 203, 168, 0.15);
+  background: rgba(var(--success-rgb), 0.15);
   color: var(--color-success);
 }
 .model-badge.configured {
-  background: rgba(142, 203, 168, 0.15);
+  background: rgba(var(--success-rgb), 0.15);
   color: var(--color-success);
 }
 .model-badge.no-fit {
-  background: rgba(217, 142, 142, 0.12);
+  background: rgba(var(--danger-rgb), 0.12);
   color: var(--color-danger);
 }
 .model-card-meta {
@@ -498,22 +594,22 @@ body::after {
   pointer-events: none;
   z-index: 0;
   background-image:
-    radial-gradient(1.5px 1.5px at 13% 27%, rgba(232, 213, 163, 0.16) 50%, transparent 50%),
-    radial-gradient(1px 1px at 67% 83%, rgba(232, 213, 163, 0.09) 50%, transparent 50%),
-    radial-gradient(2px 2px at 41% 11%, rgba(232, 213, 163, 0.13) 50%, transparent 50%),
-    radial-gradient(1px 1px at 89% 53%, rgba(232, 213, 163, 0.07) 50%, transparent 50%),
-    radial-gradient(1.5px 1.5px at 7% 71%, rgba(232, 213, 163, 0.11) 50%, transparent 50%),
-    radial-gradient(1px 1px at 53% 37%, rgba(232, 213, 163, 0.08) 50%, transparent 50%);
+    radial-gradient(1.5px 1.5px at 13% 27%, rgba(var(--gold-rgb), 0.16) 50%, transparent 50%),
+    radial-gradient(1px 1px at 67% 83%, rgba(var(--gold-rgb), 0.09) 50%, transparent 50%),
+    radial-gradient(2px 2px at 41% 11%, rgba(var(--gold-rgb), 0.13) 50%, transparent 50%),
+    radial-gradient(1px 1px at 89% 53%, rgba(var(--gold-rgb), 0.07) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 7% 71%, rgba(var(--gold-rgb), 0.11) 50%, transparent 50%),
+    radial-gradient(1px 1px at 53% 37%, rgba(var(--gold-rgb), 0.08) 50%, transparent 50%);
   background-size: 220px 180px, 180px 260px, 310px 190px, 170px 290px, 260px 210px, 290px 170px;
   animation: bgDrift 25s linear infinite;
 }
 body::after {
   background-image:
-    radial-gradient(1px 1px at 31% 59%, rgba(183, 160, 110, 0.1) 50%, transparent 50%),
-    radial-gradient(1.5px 1.5px at 73% 17%, rgba(232, 213, 163, 0.11) 50%, transparent 50%),
-    radial-gradient(1px 1px at 19% 91%, rgba(232, 213, 163, 0.07) 50%, transparent 50%),
-    radial-gradient(1.5px 1.5px at 83% 43%, rgba(183, 160, 110, 0.09) 50%, transparent 50%),
-    radial-gradient(1px 1px at 47% 67%, rgba(232, 213, 163, 0.08) 50%, transparent 50%);
+    radial-gradient(1px 1px at 31% 59%, rgba(var(--gold-alt-rgb), 0.1) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 73% 17%, rgba(var(--gold-rgb), 0.11) 50%, transparent 50%),
+    radial-gradient(1px 1px at 19% 91%, rgba(var(--gold-rgb), 0.07) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 83% 43%, rgba(var(--gold-alt-rgb), 0.09) 50%, transparent 50%),
+    radial-gradient(1px 1px at 47% 67%, rgba(var(--gold-rgb), 0.08) 50%, transparent 50%);
   background-size: 250px 310px, 190px 230px, 330px 170px, 210px 280px, 270px 200px;
   animation: bgDrift2 35s linear infinite;
   opacity: 0.7;
@@ -540,7 +636,7 @@ body::after {
 .upgrade-overlay-bg {
   position: absolute;
   inset: 0;
-  background: rgba(8, 8, 10, 0.75);
+  background: var(--overlay-scrim);
   backdrop-filter: blur(2px);
 }
 /* Animated particle field */
@@ -557,22 +653,22 @@ body::after {
   width: 200%;
   height: 200%;
   background-image:
-    radial-gradient(1.5px 1.5px at 13% 27%, rgba(232, 213, 163, 0.45) 50%, transparent 50%),
-    radial-gradient(1px 1px at 67% 83%, rgba(232, 213, 163, 0.25) 50%, transparent 50%),
-    radial-gradient(2px 2px at 41% 11%, rgba(232, 213, 163, 0.4) 50%, transparent 50%),
-    radial-gradient(1px 1px at 89% 53%, rgba(232, 213, 163, 0.2) 50%, transparent 50%),
-    radial-gradient(1.5px 1.5px at 7% 71%, rgba(232, 213, 163, 0.35) 50%, transparent 50%),
-    radial-gradient(1px 1px at 53% 37%, rgba(232, 213, 163, 0.28) 50%, transparent 50%);
+    radial-gradient(1.5px 1.5px at 13% 27%, rgba(var(--gold-rgb), 0.45) 50%, transparent 50%),
+    radial-gradient(1px 1px at 67% 83%, rgba(var(--gold-rgb), 0.25) 50%, transparent 50%),
+    radial-gradient(2px 2px at 41% 11%, rgba(var(--gold-rgb), 0.4) 50%, transparent 50%),
+    radial-gradient(1px 1px at 89% 53%, rgba(var(--gold-rgb), 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 7% 71%, rgba(var(--gold-rgb), 0.35) 50%, transparent 50%),
+    radial-gradient(1px 1px at 53% 37%, rgba(var(--gold-rgb), 0.28) 50%, transparent 50%);
   background-size: 180px 150px, 150px 210px, 250px 160px, 140px 230px, 210px 170px, 230px 140px;
   animation: bgDrift 25s linear infinite;
 }
 .upgrade-overlay-dots::after {
   background-image:
-    radial-gradient(1px 1px at 31% 59%, rgba(183, 160, 110, 0.3) 50%, transparent 50%),
-    radial-gradient(1.5px 1.5px at 73% 17%, rgba(232, 213, 163, 0.35) 50%, transparent 50%),
-    radial-gradient(1px 1px at 19% 91%, rgba(232, 213, 163, 0.2) 50%, transparent 50%),
-    radial-gradient(1.5px 1.5px at 83% 43%, rgba(183, 160, 110, 0.25) 50%, transparent 50%),
-    radial-gradient(1px 1px at 47% 67%, rgba(232, 213, 163, 0.3) 50%, transparent 50%);
+    radial-gradient(1px 1px at 31% 59%, rgba(var(--gold-alt-rgb), 0.3) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 73% 17%, rgba(var(--gold-rgb), 0.35) 50%, transparent 50%),
+    radial-gradient(1px 1px at 19% 91%, rgba(var(--gold-rgb), 0.2) 50%, transparent 50%),
+    radial-gradient(1.5px 1.5px at 83% 43%, rgba(var(--gold-alt-rgb), 0.25) 50%, transparent 50%),
+    radial-gradient(1px 1px at 47% 67%, rgba(var(--gold-rgb), 0.3) 50%, transparent 50%);
   background-size: 200px 250px, 160px 190px, 270px 140px, 170px 230px, 220px 160px;
   animation: bgDrift2 35s linear infinite;
   opacity: 0.7;
@@ -585,7 +681,7 @@ body::after {
   width: 200px;
   height: 200px;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle, rgba(232, 213, 163, 0.08) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(var(--gold-rgb), 0.08) 0%, transparent 70%);
   animation: glowPulse 3s ease-in-out infinite;
   pointer-events: none;
 }
@@ -648,7 +744,7 @@ body::after {
   margin-top: 4px;
   padding: 9px 20px;
   background: var(--accent-gold);
-  color: #0a0a0a;
+  color: var(--text-dark);
   border: none;
   border-radius: var(--radius);
   font-family: var(--font-body);
@@ -810,9 +906,9 @@ input::placeholder {
   gap: 14px;
   transition: border-color 0.3s ease;
 }
-.test-card.running { border-color: rgba(139, 189, 217, 0.4); }
-.test-card.pass    { border-color: rgba(142, 203, 168, 0.4); }
-.test-card.fail    { border-color: rgba(217, 142, 142, 0.4); }
+.test-card.running { border-color: rgba(var(--info-rgb), 0.4); }
+.test-card.pass    { border-color: rgba(var(--success-rgb), 0.4); }
+.test-card.fail    { border-color: rgba(var(--danger-rgb), 0.4); }
 .test-card.skip    { border-color: var(--border-subtle); opacity: 0.5; }
 .test-icon {
   width: 34px;
@@ -828,9 +924,9 @@ input::placeholder {
   color: var(--text-muted);
   transition: all 0.3s ease;
 }
-.test-card.running .test-icon { color: var(--color-info);    border-color: rgba(139,189,217,0.3); }
-.test-card.pass    .test-icon { color: var(--color-success); border-color: rgba(142,203,168,0.3); }
-.test-card.fail    .test-icon { color: var(--color-danger);  border-color: rgba(217,142,142,0.3); }
+.test-card.running .test-icon { color: var(--color-info);    border-color: rgba(var(--info-rgb), 0.3); }
+.test-card.pass    .test-icon { color: var(--color-success); border-color: rgba(var(--success-rgb), 0.3); }
+.test-card.fail    .test-icon { color: var(--color-danger);  border-color: rgba(var(--danger-rgb), 0.3); }
 .test-info { flex: 1; min-width: 0; }
 .test-name {
   font-weight: 500;
@@ -919,8 +1015,8 @@ input::placeholder {
   display: flex;
   gap: 14px;
   padding: 18px 16px;
-  background: linear-gradient(135deg, rgba(124,109,235,0.08), rgba(124,109,235,0.02));
-  border: 1px solid rgba(124,109,235,0.3);
+  background: linear-gradient(135deg, rgba(var(--purple-rgb), 0.08), rgba(var(--purple-rgb), 0.02));
+  border: 1px solid rgba(var(--purple-rgb), 0.3);
   border-radius: var(--radius);
 }
 .openclaw-banner-minimal {
@@ -975,7 +1071,7 @@ input::placeholder {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: rgba(124,109,235,0.06);
+  background: rgba(var(--purple-rgb), 0.06);
   border-bottom: 1px solid var(--border-subtle);
 }
 .agent-chat-header h3 {
@@ -1006,14 +1102,14 @@ input::placeholder {
   word-break: break-word;
 }
 .agent-msg.assistant {
-  background: rgba(124,109,235,0.08);
-  border: 1px solid rgba(124,109,235,0.15);
+  background: rgba(var(--purple-rgb), 0.08);
+  border: 1px solid rgba(var(--purple-rgb), 0.15);
   color: var(--text-secondary);
   align-self: flex-start;
 }
 .agent-msg.user {
-  background: rgba(232,213,163,0.08);
-  border: 1px solid rgba(232,213,163,0.15);
+  background: rgba(var(--gold-rgb), 0.08);
+  border: 1px solid rgba(var(--gold-rgb), 0.15);
   color: var(--text-primary);
   align-self: flex-end;
 }
@@ -1027,13 +1123,13 @@ input::placeholder {
   max-width: 100%;
 }
 .agent-msg code {
-  background: rgba(0,0,0,0.3);
+  background: rgba(var(--shadow-rgb), calc(0.3 * var(--shadow-mult)));
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 0.74rem;
 }
 .agent-msg pre {
-  background: rgba(0,0,0,0.3);
+  background: rgba(var(--shadow-rgb), calc(0.3 * var(--shadow-mult)));
   padding: 8px 10px;
   border-radius: 4px;
   margin: 6px 0;
@@ -1073,10 +1169,10 @@ input::placeholder {
 .agent-chat-input input::placeholder { color: var(--text-muted); }
 .agent-chat-input .btn {
   background: var(--accent-purple);
-  color: #fff;
+  color: var(--text-dark);
   padding: 8px 14px;
 }
-.agent-chat-input .btn:hover { background: #6b5ce0; }
+.agent-chat-input .btn:hover { background: var(--accent-purple); filter: brightness(1.15); }
 
 /* ─── GSC Step ───────────────────────────────────────────────────────── */
 .gsc-status-box {
@@ -1108,7 +1204,7 @@ input::placeholder {
   transition: border-color 0.2s, background 0.2s;
 }
 .gsc-method-card:hover:not(.disabled) { border-color: var(--accent-gold); }
-.gsc-method-card.active { border-color: var(--accent-gold); background: rgba(232, 213, 163, 0.05); }
+.gsc-method-card.active { border-color: var(--accent-gold); background: rgba(var(--gold-rgb), 0.05); }
 .gsc-method-icon { font-size: 1.4rem; margin-bottom: 8px; color: var(--accent-gold); }
 .gsc-method-title { font-weight: 600; font-size: 0.82rem; margin-bottom: 4px; }
 .gsc-method-desc { font-size: 0.7rem; color: var(--text-muted); line-height: 1.5; }
@@ -1147,7 +1243,7 @@ input::placeholder {
 }
 .gsc-dropzone.dragover {
   border-color: var(--accent-gold);
-  background: rgba(232, 213, 163, 0.05);
+  background: rgba(var(--gold-rgb), 0.05);
 }
 .gsc-browse {
   color: var(--accent-gold);
@@ -1174,6 +1270,25 @@ input::placeholder {
 .gsc-file-chip.ok { border-color: var(--color-success); color: var(--color-success); }
 .gsc-file-chip.bad { border-color: var(--color-danger); color: var(--color-danger); }
 
+/* ─── Theme toggle ───────────────────────────────────────────────────── */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border-card);
+  border-radius: 100px;
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.theme-toggle:hover { border-color: var(--text-muted); color: var(--text-primary); }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2px; }
+
 /* ─── Responsive ─────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
   body { padding: 16px 12px; }
@@ -1199,8 +1314,13 @@ input::placeholder {
   <h1>SEO Intel</h1>
   <div class="subtitle">Setup Wizard</div>
   <div style="position:absolute;top:14px;right:18px;display:flex;gap:14px;align-items:center;">
-    <a href="/" title="Open Dashboard" style="font-size:0.68rem;color:var(--color-success,#8ecba8);text-decoration:none;opacity:0.8;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
-    <a href="http://localhost:3000/?autorun=setup-classic" title="Run setup in Terminal instead" style="font-size:0.68rem;color:var(--color-muted,#888);text-decoration:none;opacity:0.7;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i class="fa-solid fa-terminal"></i> Terminal setup</a>
+    <a href="/" title="Open Dashboard" style="font-size:0.68rem;color:var(--color-success);text-decoration:none;opacity:0.8;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'"><i class="fa-solid fa-chart-line"></i> Dashboard</a>
+    <a href="http://localhost:3000/?autorun=setup-classic" title="Run setup in Terminal instead" style="font-size:0.68rem;color:var(--text-muted);text-decoration:none;opacity:0.7;transition:opacity 0.15s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i class="fa-solid fa-terminal"></i> Terminal setup</a>
+    <button id="themeToggle" class="theme-toggle" type="button" onclick="toggleTheme()"
+            aria-pressed="false" title="Switch between light and dark">
+      <i class="fa-solid fa-moon" aria-hidden="true"></i>
+      <span class="theme-toggle-label">Dark</span>
+    </button>
   </div>
 </div>
 
@@ -1284,25 +1404,25 @@ input::placeholder {
           <i class="fa-solid fa-spider" style="font-size:1.1rem; color:var(--color-success); margin-bottom:6px; display:block;"></i>
           <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Crawl</div>
           <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Playwright fetches pages &rarr; SQLite</div>
-          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(142,203,168,.12); color:var(--color-success); margin-top:4px; display:inline-block;">FREE</span>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(var(--success-rgb), .12); color:var(--color-success); margin-top:4px; display:inline-block;">FREE</span>
         </div>
-        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(232,213,163,.15);">
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(var(--gold-rgb), .15);">
           <i class="fa-solid fa-brain" style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:6px; display:block;"></i>
           <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Extract</div>
           <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Ollama reads each page locally</div>
-          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(232,213,163,.12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(var(--gold-rgb), .12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
         </div>
-        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(232,213,163,.15);">
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(var(--gold-rgb), .15);">
           <i class="fa-solid fa-chart-column" style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:6px; display:block;"></i>
           <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Analyze</div>
           <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Cloud AI analyzes full dataset</div>
-          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(232,213,163,.12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(var(--gold-rgb), .12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
         </div>
-        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(232,213,163,.15);">
+        <div style="text-align:center; padding:12px 8px; background:var(--bg-card); border-radius:var(--radius); border:1px solid rgba(var(--gold-rgb), .15);">
           <i class="fa-solid fa-map" style="font-size:1.1rem; color:var(--accent-gold); margin-bottom:6px; display:block;"></i>
           <div style="font-size:0.72rem; font-weight:500; color:var(--text-primary);">Dashboard</div>
           <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Interactive HTML reports</div>
-          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(232,213,163,.12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
+          <span style="font-size:0.58rem; padding:1px 6px; border-radius:3px; background:rgba(var(--gold-rgb), .12); color:var(--accent-gold); margin-top:4px; display:inline-block;">SOLO</span>
         </div>
       </div>
     </div>
@@ -1418,10 +1538,10 @@ input::placeholder {
           <span id="analysisPullStatus" style="font-size:0.7rem; color:var(--text-muted);"></span>
         </div>
         <!-- Cloud model key hint (shown instead of pull for cloud models) -->
-        <div id="analysisCloudHint" style="display:none; margin-top:8px; padding:10px 12px; background:rgba(232,213,163,0.04); border:1px solid rgba(232,213,163,0.12); border-radius:var(--radius);">
+        <div id="analysisCloudHint" style="display:none; margin-top:8px; padding:10px 12px; background:rgba(var(--gold-rgb), 0.04); border:1px solid rgba(var(--gold-rgb), 0.12); border-radius:var(--radius);">
           <p style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;"><i class="fa-solid fa-key" style="color:var(--accent-gold); margin-right:6px;"></i><span id="cloudHintProvider"></span></p>
-          <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.5; margin-bottom:6px;">Add the API key to your <code style="background:rgba(232,213,163,0.08); padding:1px 4px; border-radius:3px;">.env</code> file:</p>
-          <div style="padding:6px 8px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.65rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px;">
+          <p style="font-size:0.65rem; color:var(--text-muted); line-height:1.5; margin-bottom:6px;">Add the API key to your <code style="background:rgba(var(--gold-rgb), 0.08); padding:1px 4px; border-radius:3px;">.env</code> file:</p>
+          <div style="padding:6px 8px; background:var(--code-well); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.65rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px;">
             <span id="cloudHintEnvLine"></span>
             <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText(document.getElementById('cloudHintEnvLine').textContent);this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500);">Copy</button>
           </div>
@@ -1454,7 +1574,7 @@ input::placeholder {
                 <div style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">gemini-3.1-pro</div>
                 <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">Google Gemini</div>
               </div>
-              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(232,213,163,0.15); color:#e8d5a3;">BEST</span>
+              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(var(--gold-rgb), 0.15); color:var(--badge-best);">BEST</span>
             </div>
             <div style="font-size:0.65rem; color:var(--text-muted); margin-top:6px;">Highest quality Gemini — best for deep competitive analysis</div>
             <div class="cloud-privacy-note"><i class="fa-solid fa-key"></i> GEMINI_API_KEY</div>
@@ -1466,7 +1586,7 @@ input::placeholder {
                 <div style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">claude-sonnet-4-6</div>
                 <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">Anthropic</div>
               </div>
-              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(96,165,250,0.15); color:#60a5fa;">FAST</span>
+              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(var(--blue-light-rgb), 0.15); color:var(--badge-fast);">FAST</span>
             </div>
             <div style="font-size:0.65rem; color:var(--text-muted); margin-top:6px;">Best cost/quality balance — fast and reliable</div>
             <div class="cloud-privacy-note"><i class="fa-solid fa-key"></i> ANTHROPIC_API_KEY</div>
@@ -1478,7 +1598,7 @@ input::placeholder {
                 <div style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">claude-opus-4-6</div>
                 <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">Anthropic</div>
               </div>
-              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(124,109,235,0.15); color:#a78bfa;">DEEP</span>
+              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(var(--purple-rgb), 0.15); color:var(--badge-deep);">DEEP</span>
             </div>
             <div style="font-size:0.65rem; color:var(--text-muted); margin-top:6px;">Deepest analysis, highest quality — slower</div>
             <div class="cloud-privacy-note"><i class="fa-solid fa-key"></i> ANTHROPIC_API_KEY</div>
@@ -1490,7 +1610,7 @@ input::placeholder {
                 <div style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">gpt-5.4</div>
                 <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">OpenAI</div>
               </div>
-              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(156,163,175,0.15); color:#9ca3af;">SOLID</span>
+              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(var(--neutral-rgb), 0.15); color:var(--badge-solid);">SOLID</span>
             </div>
             <div style="font-size:0.65rem; color:var(--text-muted); margin-top:6px;">Reliable, broad knowledge — solid all-around</div>
             <div class="cloud-privacy-note"><i class="fa-solid fa-key"></i> OPENAI_API_KEY</div>
@@ -1502,14 +1622,14 @@ input::placeholder {
                 <div style="font-weight:600; font-size:0.82rem; color:var(--text-primary);">deepseek-r1</div>
                 <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">DeepSeek</div>
               </div>
-              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(52,211,153,0.15); color:#34d399;">BUDGET</span>
+              <span style="font-size:0.55rem; font-weight:700; letter-spacing:0.06em; padding:2px 6px; border-radius:4px; background:rgba(var(--mint-rgb), 0.15); color:var(--badge-budget);">BUDGET</span>
             </div>
             <div style="font-size:0.65rem; color:var(--text-muted); margin-top:6px;">Best reasoning model at budget price</div>
             <div class="cloud-privacy-note"><i class="fa-solid fa-key"></i> DEEPSEEK_API_KEY</div>
           </div>
         </div>
         <!-- API Key input area (shown when a cloud card is selected) -->
-        <div id="cloudKeyArea" style="display:none; margin-top:12px; padding:12px; background:rgba(124,109,235,0.04); border:1px solid rgba(124,109,235,0.18); border-radius:var(--radius);">
+        <div id="cloudKeyArea" style="display:none; margin-top:12px; padding:12px; background:rgba(var(--purple-rgb), 0.04); border:1px solid rgba(var(--purple-rgb), 0.18); border-radius:var(--radius);">
           <label style="font-size:0.7rem; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:6px;"><i class="fa-solid fa-key" style="color:var(--accent-purple); margin-right:5px;"></i> API Key</label>
           <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
             <input type="password" id="cloudApiKeyInput" placeholder="" style="flex:1; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); padding:6px 8px; color:var(--text-primary); font-family:var(--font-mono); font-size:0.7rem;">
@@ -1523,7 +1643,7 @@ input::placeholder {
     </div>
     <div id="modelsModuleStatus" style="margin-top:10px; font-size:0.68rem; color:var(--text-muted);"></div>
     <!-- Unified upgrade card (free tier only) -->
-    <div id="unifiedUpgrade" style="display:none; position:relative; margin-top:0; padding:48px 32px; border:1px solid rgba(232,213,163,0.15); border-radius:var(--radius); overflow:hidden; text-align:center;">
+    <div id="unifiedUpgrade" style="display:none; position:relative; margin-top:0; padding:48px 32px; border:1px solid rgba(var(--gold-rgb), 0.15); border-radius:var(--radius); overflow:hidden; text-align:center;">
       <div class="upgrade-overlay-bg" style="position:absolute;inset:0;"></div>
       <div class="upgrade-overlay-dots" style="position:absolute;inset:0;"><div class="glow-orb"></div></div>
       <div style="position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; gap:14px;">
@@ -1570,7 +1690,7 @@ input::placeholder {
       </div>
     </div>
 
-    <div id="existingProjectBar" style="display:none;margin-bottom:1.25rem;padding:10px 14px;background:rgba(232,213,163,0.06);border:1px solid rgba(232,213,163,0.15);border-radius:8px;">
+    <div id="existingProjectBar" style="display:none;margin-bottom:1.25rem;padding:10px 14px;background:rgba(var(--gold-rgb), 0.06);border:1px solid rgba(var(--gold-rgb), 0.15);border-radius:8px;">
       <label style="font-size:0.72rem;font-weight:600;color:var(--text-muted);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;display:block;">Active project</label>
       <select id="existingProjectSelect" onchange="loadExistingProject(this.value)" style="width:100%;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:6px;color:var(--text-primary);font-size:0.82rem;font-family:var(--font-body);">
         <option value="">New project</option>
@@ -1646,7 +1766,7 @@ input::placeholder {
         <div style="padding:8px 10px; background:var(--bg-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius); font-size:0.68rem; color:var(--text-muted); line-height:1.5;">
           <strong style="color:var(--text-secondary);">Playwright</strong> — Headless Chromium. Fast (~1.5s/page). Respects robots.txt. Works on most sites.
           <span style="display:block; margin-top:4px; font-size:0.6rem; color:var(--text-muted);">
-            <i class="fa-solid fa-terminal" style="margin-right:3px;"></i> For JS-heavy or blocking sites, use <code style="background:rgba(255,255,255,0.05);padding:1px 3px;border-radius:3px;">seo-intel crawl --stealth</code>
+            <i class="fa-solid fa-terminal" style="margin-right:3px;"></i> For JS-heavy or blocking sites, use <code style="background:rgba(var(--wash-rgb), 0.05);padding:1px 3px;border-radius:3px;">seo-intel crawl --stealth</code>
           </span>
         </div>
 
@@ -1696,6 +1816,8 @@ input::placeholder {
   <div class="card">
     <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin-bottom:16px;">
       <div>
+        <!-- #4285F4 is Google's own brand blue, not a theme color. It stays
+             literal in both themes by design — do not tokenize it. -->
         <h2 style="margin-bottom:6px;"><i class="fa-brands fa-google" style="color:#4285F4;"></i> Google Search Console</h2>
         <div class="hint" style="margin-bottom:0;">
           GSC data powers your ranking insights, CTR analysis, and wasted impressions detection.
@@ -1863,8 +1985,8 @@ input::placeholder {
     </table>
 
     <!-- ── Daily notification scheduler (v1.5.40) ────────────────────────── -->
-    <div id="notifyCronCard" style="margin-top:20px; padding:14px 16px; background:var(--bg-elevated); border:1px solid rgba(59,130,246,0.18); border-radius:var(--radius); display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
-      <i class="fa-solid fa-bell" style="font-size:1rem; color:#3b82f6;"></i>
+    <div id="notifyCronCard" style="margin-top:20px; padding:14px 16px; background:var(--bg-elevated); border:1px solid rgba(var(--blue-rgb), 0.18); border-radius:var(--radius); display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+      <i class="fa-solid fa-bell" style="font-size:1rem; color:var(--intel-blue);"></i>
       <div style="flex:1; min-width:200px;">
         <div style="font-size:0.8rem; font-weight:600; color:var(--text-primary); margin-bottom:2px;">Daily problem notifications</div>
         <div id="notifyCronHint" style="font-size:0.66rem; color:var(--text-muted); line-height:1.4;">
@@ -1883,7 +2005,7 @@ input::placeholder {
 
     <!-- Action cards instead of empty CLI -->
     <div id="doneActions" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
-      <a href="/" style="text-decoration:none; display:block; padding:14px; background:var(--bg-elevated); border:1px solid rgba(142,203,168,0.2); border-radius:var(--radius); text-align:center; transition:border-color 0.2s;" onmouseover="this.style.borderColor='rgba(142,203,168,0.5)'" onmouseout="this.style.borderColor='rgba(142,203,168,0.2)'">
+      <a href="/" style="text-decoration:none; display:block; padding:14px; background:var(--bg-elevated); border:1px solid rgba(var(--success-rgb), 0.2); border-radius:var(--radius); text-align:center; transition:border-color 0.2s;" onmouseover="this.style.borderColor='rgba(var(--success-rgb), 0.5)'" onmouseout="this.style.borderColor='rgba(var(--success-rgb), 0.2)'">
         <i class="fa-solid fa-chart-line" style="font-size:1.2rem; color:var(--color-success); display:block; margin-bottom:6px;"></i>
         <div style="font-size:0.78rem; font-weight:500; color:var(--text-primary);">Open Dashboard</div>
         <div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px;">Start crawling from the UI</div>
@@ -1937,12 +2059,12 @@ input::placeholder {
     </div>
 
     <div id="genieRuntime-openclaw" class="genie-runtime-panel">
-      <div style="padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+      <div style="padding:7px 9px; background:var(--code-well); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary); display:flex; align-items:center; gap:6px; margin-bottom:8px;">
         <span style="color:var(--text-muted);">$</span>
         <span>clawhub install ukkometa/seo-intel</span>
         <button class="btn btn-sm" style="margin-left:auto; padding:2px 6px; font-size:0.55rem;" onclick="navigator.clipboard.writeText('clawhub install ukkometa/seo-intel');this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
-      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+      <div style="position:relative; padding:7px 9px; background:var(--code-well); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
         <div id="genie-oc-prompt">Set up SEO Intel (npm package: seo-intel) on my machine. Steps: 1) Verify Node.js ≥22.5 and npm are installed. 2) Install Ollama and pull the gemma4:e4b model (default extraction engine, ~4GB). 3) Run `seo-intel setup` to create a project config — ask me for my website URL and up to 3 competitor URLs. 4) Run a test crawl with `seo-intel crawl &lt;project&gt;` to verify everything works. 5) Run `seo-intel extract &lt;project&gt;` to test local AI extraction. Report any errors with full context.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(document.getElementById('genie-oc-prompt').textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
@@ -1953,21 +2075,21 @@ input::placeholder {
     </div>
 
     <div id="genieRuntime-claudecode" class="genie-runtime-panel" style="display:none;">
-      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+      <div style="position:relative; padding:7px 9px; background:var(--code-well); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
         <div>Set up the npm package `seo-intel` on this machine. Requirements: Node.js ≥22.5, Ollama with gemma4:e4b model (~4GB download). Create a project config for my website — ask me for my URL and competitor domains. Then run a test crawl (`seo-intel crawl &lt;project&gt;`) and extraction (`seo-intel extract &lt;project&gt;`). The tool stores data in SQLite locally. If Ollama isn't installed, install it from ollama.com. After setup, open the dashboard with `seo-intel serve`.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
     </div>
 
     <div id="genieRuntime-codex" class="genie-runtime-panel" style="display:none;">
-      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+      <div style="position:relative; padding:7px 9px; background:var(--code-well); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
         <div>Install and configure the `seo-intel` npm package. Needs: Node.js ≥22.5, Ollama running locally with `gemma4:e4b` pulled. Create a JSON config at configs/&lt;project&gt;.json with target URL + competitor URLs (ask me). Run the full pipeline: `seo-intel crawl &lt;project&gt;` → `seo-intel extract &lt;project&gt;` → `seo-intel serve` to open the dashboard. Needs full disk access for Playwright browser automation.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
     </div>
 
     <div id="genieRuntime-perplexity" class="genie-runtime-panel" style="display:none;">
-      <div style="position:relative; padding:7px 9px; background:rgba(10,10,10,0.5); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
+      <div style="position:relative; padding:7px 9px; background:var(--code-well); border:1px solid var(--border-subtle); border-radius:var(--radius); font-family:var(--font-mono); font-size:0.62rem; color:var(--text-secondary); line-height:1.5;">
         <div>I want to install SEO Intel (seo-intel on npm), a local-first SEO competitor analysis tool. Walk me through: 1) Installing Node.js 22.5+ if I don't have it. 2) Installing Ollama and downloading the Gemma 4 e4b model for AI extraction. 3) Running `npx seo-intel setup` to configure my first project. I need to provide my website URL and competitor URLs. 4) Testing the crawl pipeline. Ask me for my website URL to get started.</div>
         <button class="btn btn-sm" style="position:absolute; top:5px; right:5px; padding:2px 5px; font-size:0.52rem;" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent.trim());this.textContent='OK';setTimeout(()=>this.textContent='Copy',1200);">Copy</button>
       </div>
@@ -2263,14 +2385,14 @@ input::placeholder {
       const isLmStudio = h.mode === 'lmstudio' || port === '1234';
       const dot = h.reachable ? 'color:var(--color-success)' : 'color:var(--color-danger); opacity:0.5';
       const status = h.reachable ? `${h.models.length} model(s)` : 'unreachable';
-      const typeLabel = isLmStudio ? '<span style="font-size:0.5rem; padding:1px 4px; border-radius:3px; background:rgba(180,160,255,0.12); color:#b4a0ff; margin-left:4px;">LM Studio</span>' : '';
+      const typeLabel = isLmStudio ? '<span style="font-size:0.5rem; padding:1px 4px; border-radius:3px; background:rgba(var(--lilac-rgb), 0.12); color:var(--badge-deep); margin-left:4px;">LM Studio</span>' : '';
       const active = h.host === state.systemStatus.ollama.host;
       return `
-        <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:${active ? 'rgba(142,203,168,0.06)' : 'transparent'}; border:1px solid ${active ? 'rgba(142,203,168,0.15)' : 'var(--border-subtle)'}; border-radius:6px;">
+        <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; background:${active ? 'rgba(var(--success-rgb), 0.06)' : 'transparent'}; border:1px solid ${active ? 'rgba(var(--success-rgb), 0.15)' : 'var(--border-subtle)'}; border-radius:6px;">
           <i class="fa-solid fa-circle" style="font-size:0.45rem; ${dot}"></i>
           <span style="font-family:var(--font-mono); font-size:0.68rem; color:var(--text-secondary);">${hostname}:${port}</span>${typeLabel}
           <span style="font-size:0.6rem; color:var(--text-muted); margin-left:auto;">${status}</span>
-          ${active ? '<span style="font-size:0.55rem; padding:1px 6px; border-radius:3px; background:rgba(142,203,168,0.12); color:#8ecba8;">active</span>' : ''}
+          ${active ? '<span style="font-size:0.55rem; padding:1px 6px; border-radius:3px; background:rgba(var(--success-rgb), 0.12); color:var(--color-success);">active</span>' : ''}
           ${!h.reachable && h.mode !== 'local' ? `<button class="btn btn-sm" style="padding:1px 5px; font-size:0.5rem;" onclick="removeOllamaHost('${h.host}')"><i class="fa-solid fa-xmark"></i></button>` : ''}
         </div>`;
     }).join('');
@@ -2547,11 +2669,11 @@ input::placeholder {
 
       if (status.connected) {
         const viaLabel = status.via === 'openclaw' ? 'via Agent Harness' : 'API key set';
-        badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(142,203,168,0.15);border:1px solid rgba(142,203,168,0.3);font-size:0.6rem;font-weight:600;color:var(--color-success);letter-spacing:0.02em;"><i class="fa-solid fa-circle-check"></i> Connected <span style="font-weight:400;opacity:0.8;">— ${viaLabel}</span></span>`;
+        badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(var(--success-rgb), 0.15);border:1px solid rgba(var(--success-rgb), 0.3);font-size:0.6rem;font-weight:600;color:var(--color-success);letter-spacing:0.02em;"><i class="fa-solid fa-circle-check"></i> Connected <span style="font-weight:400;opacity:0.8;">— ${viaLabel}</span></span>`;
         badge.style.cssText = 'margin-top:8px;';
-        card.style.borderColor = 'rgba(142,203,168,0.3)';
+        card.style.borderColor = 'rgba(var(--success-rgb), 0.3)';
       } else {
-        badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);font-size:0.6rem;color:var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> No API key</span>`;
+        badge.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(var(--wash-rgb), 0.03);border:1px solid var(--border-subtle);font-size:0.6rem;color:var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> No API key</span>`;
         badge.style.cssText = 'margin-top:8px;';
         card.style.borderColor = '';
       }
@@ -2579,7 +2701,7 @@ input::placeholder {
         }
       }
       if (gwRunning) {
-        html += `<div style="margin-top:8px;padding:6px 8px;background:rgba(124,109,235,0.08);border:1px solid rgba(124,109,235,0.2);border-radius:var(--radius);font-size:0.6rem;color:var(--accent-purple);">
+        html += `<div style="margin-top:8px;padding:6px 8px;background:rgba(var(--purple-rgb), 0.08);border:1px solid rgba(var(--purple-rgb), 0.2);border-radius:var(--radius);font-size:0.6rem;color:var(--accent-purple);">
           <i class="fa-solid fa-plug" style="margin-right:4px;"></i> Agent Harness gateway active — ${gwModels.length} model(s)
         </div>`;
       }
@@ -3447,13 +3569,13 @@ input::placeholder {
       if (s.installed) {
         statusEl.innerHTML = `<span style="color:var(--color-success);"><i class="fa-solid fa-check"></i> Active · ${s.schedule}</span>`;
         btn.innerHTML = '<i class="fa-solid fa-bell-slash"></i> Disable';
-        btn.style.borderColor = 'rgba(244,123,93,0.4)';
-        btn.style.color = '#f47b5d';
+        btn.style.borderColor = 'rgba(var(--signal-bad-rgb), 0.4)';
+        btn.style.color = 'var(--color-danger)';
       } else {
         statusEl.innerHTML = `<span style="color:var(--text-muted);">Not scheduled</span>`;
         btn.innerHTML = '<i class="fa-solid fa-bell"></i> Enable';
-        btn.style.borderColor = 'rgba(59,130,246,0.4)';
-        btn.style.color = '#3b82f6';
+        btn.style.borderColor = 'rgba(var(--blue-rgb), 0.4)';
+        btn.style.color = 'var(--intel-blue)';
       }
       btn.disabled = false;
     } catch (err) {
@@ -3794,6 +3916,36 @@ input::placeholder {
   checkLicenseStatus();
 
 })();
+
+// ── THEME TOGGLE ─────────────────────────────────────────────────────────
+// Outside the IIFE because the button uses an inline onclick handler, which
+// resolves against the global scope. Nothing here needs repainting: the wizard
+// has no charts or canvases, so flipping data-theme is enough.
+function syncThemeControl(theme) {
+  var btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  var isDark = theme === 'dark';
+  var icon = btn.querySelector('i');
+  var label = btn.querySelector('.theme-toggle-label');
+  // The button advertises what you will GET, not where you are.
+  if (icon) icon.className = isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+  if (label) label.textContent = isDark ? 'Light' : 'Dark';
+  btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+  btn.title = isDark ? 'Switch to light' : 'Switch to dark';
+}
+
+function toggleTheme() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var theme = isDark ? 'light' : 'dark';
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('seoIntelTheme', theme); } catch (e) { /* blocked storage */ }
+  syncThemeControl(theme);
+}
+
+syncThemeControl(
+  document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
+);
 </script>
 </body>
 </html>

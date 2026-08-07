@@ -263,34 +263,143 @@ function buildHtmlTemplate(data, opts = {}) {
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    // Stamp the stored theme BEFORE first paint, otherwise a dark-mode user
+    // gets a white flash on every load. Must stay inline and stay ahead of the
+    // stylesheet — do not move this into the deferred script block.
+    (function () {
+      try {
+        var t = localStorage.getItem('seoIntelTheme');
+        if (t === 'dark' || t === 'light') {
+          document.documentElement.setAttribute('data-theme', t);
+        }
+      } catch (e) { /* private mode / blocked storage — light default is fine */ }
+    })();
+  </script>
   <style>
     /* ═══════════════════════════════════════════════════════════════════════
        DESIGN SYSTEM - Edit these values to customize the dashboard
        ═══════════════════════════════════════════════════════════════════════ */
+    /* ═══════════════════════════════════════════════════════════════════════
+       THEME TOKENS — light is the default, dark is opt-in
+       ═══════════════════════════════════════════════════════════════════════
+       Rotated to a light default in v1.5.54 to match ukkometa.fi (see that
+       repo's REDESIGN_PLAN.md). The dashboard is a working tool, not a
+       marketing page, so unlike the site the dark palette is KEPT and stays
+       reachable via the header toggle — it is byte-for-byte the pre-rotation
+       palette, so the v1.6 marketing look is untouched under data-theme=dark.
+
+       Two rules for anyone editing colors here:
+
+       1. Never write a raw hex or rgba() outside these two blocks. Every
+          color in the CSS below resolves through a token, which is what makes
+          one toggle flip the whole surface.
+       2. Every color used at partial alpha ALSO needs a channel-triplet
+          token (the --*-rgb ones), because CSS cannot extract channels from
+          a hex. Write rgba(var(--gold-rgb), 0.12) and never a bare numeric
+          triplet, or that one color will not follow the theme.
+
+       NOTE: this whole file is a JS template literal. Do not use backticks
+       in these comments — a stray one closes the literal and the CSS below
+       starts being parsed as JavaScript.
+
+       Light values were contrast-checked against both --bg-primary (#fafaf8)
+       and --bg-card (#ffffff); everything used for text clears WCAG AA 4.5:1.
+       --text-muted and the signal colors were darkened from the site's values
+       to earn that, since in a dashboard they label real data. */
     :root {
-      /* Grey scale */
-      --bg-primary: #0a0a0a;
-      --bg-card: #111111;
-      --bg-elevated: #161616;
+      color-scheme: light;
+
+      /* Grey scale — warm off-white page, pure white cards */
+      --bg-primary: #fafaf8;
+      --bg-card: #ffffff;
+      --bg-elevated: #f3f2ec;
 
       /* Border colors */
-      --border-card: #222222;
-      --border-subtle: #262626;
+      --border-card: #e3e1da;
+      --border-subtle: #ebe9e2;
 
-      /* Accent colors — warm gold + muted purple */
-      --accent-gold: #e8d5a3;
-      --accent-purple: #7c6deb;
-      --color-success: #8ecba8;
-      --color-danger: #d98e8e;
-      --color-info: #8bbdd9;
-      --color-warning: #d9c78b;
+      /* Accent colors — dark gold reads on white where #e8d5a3 could not */
+      --accent-gold: #8a6f2f;
+      --accent-purple: #5a4bc4;
+      --color-success: #2f7d4f;
+      --color-danger: #b3352f;
+      --color-info: #2c6e8f;
+      --color-warning: #8a6a12;
 
-      /* Text colors — soft greys */
-      --text-primary: #f0f0f0;
-      --text-secondary: #b8b8b8;
-      --text-muted: #555555;
-      --text-subtle: #888888;
-      --text-dark: #0a0a0a;
+      /* Text colors */
+      --text-primary: #1a1a1a;
+      --text-secondary: #3d3c38;
+      --text-muted: #75726a;
+      --text-subtle: #6c6c68;
+      --text-dark: #fafaf8;   /* text ON an accent/inverted surface */
+
+      /* Channel triplets for partial-alpha use */
+      --gold-rgb: 138, 111, 47;
+      --gold-deep-rgb: 138, 111, 47;
+      --purple-rgb: 90, 75, 196;
+      --success-rgb: 47, 125, 79;
+      --danger-rgb: 179, 53, 47;
+      --info-rgb: 44, 110, 143;
+      --warning-rgb: 138, 106, 18;
+      --emerald-rgb: 47, 125, 79;
+      --red-rgb: 179, 53, 47;
+      --stop-rgb: 179, 53, 47;
+      --restart-rgb: 42, 42, 42;
+      --blue-rgb: 42, 42, 42;
+      --blue-light-rgb: 61, 61, 61;
+      --blue-pale-rgb: 90, 90, 90;
+      --signal-good-rgb: 47, 125, 79;
+      --signal-warn-rgb: 138, 104, 0;
+      --signal-bad-rgb: 192, 68, 42;
+
+      /* Directional tints. --wash is the "subtle lift off the surface" used
+         for hover/zebra rows: dark ink on light, white on dark. --shadow is
+         always black, but far weaker on light where big black glows look like
+         smudges rather than depth. */
+      --wash-rgb: 0, 0, 0;
+      --shadow-rgb: 0, 0, 0;
+      /* Shadow alphas are authored at dark-theme strength and scaled by this
+         multiplier, so relative depth between elements survives the rotation
+         while the light theme avoids black smudges. */
+      --shadow-mult: 0.3;
+      /* Neon glow is a dark-mode idiom; on white it reads as blur. */
+      --glow-mult: 0.28;
+
+      /* Modal scrim. Not a shadow — it must actually dim the page in both
+         themes, so it is authored per-theme instead of being alpha-scaled. */
+      --scrim: rgba(60, 58, 52, 0.55);
+
+      /* "AI Citation Gold" showcase card + the keyword-type chips. These were
+         the only components carrying their own one-off palette rather than
+         reusing the greys, so they get named tokens instead of raw hex. */
+      --feature-bg: #f5f3fc;
+      --feature-text: #443a72;
+      --feature-note: #5f5192;
+      --chip-trad-bg: #eceae4;
+      --chip-trad-text: #55524a;
+      --chip-perp-bg: #e4eef3;
+      --chip-perp-text: #1f5e75;
+      --chip-agent-bg: #f0e8f7;
+      --chip-agent-text: #6b2d8a;
+
+      /* Inset surfaces: code blocks, log panes, modal wells. Slightly recessed
+         from the card in light, slightly darker than page in dark. */
+      --bg-inset: #f3f2ec;
+      --bg-well: #ebe9e2;
+
+      /* Rank medals. Semantic (1st/2nd/3rd), not brand, but the dark-theme
+         values vanish on white so they are darkened for light. */
+      --medal-gold: #8a6f2f;
+      --medal-silver: #6f6c64;
+      --medal-bronze: #8a5230;
+
+      /* Terminal keeps a dark chrome in BOTH themes — a terminal that is not
+         dark reads as a text box, and the crawl log is the one place operators
+         expect console conventions. Only its frame follows the theme. */
+      --term-bg: #12120f;
+      --term-bar: #1e1e1a;
+      --term-text: #e8e6df;
 
       /* Typography */
       --font-display: 'Syne', sans-serif;
@@ -301,31 +410,168 @@ function buildHtmlTemplate(data, opts = {}) {
       --radius: 6px;
       --max-width: 1200px;
 
-      /* ── v1.6 Visual Brief — Intel Blue System (added v1.5.33) ──────────
-         These tokens are ADDITIVE alongside the existing --accent-gold /
-         --accent-purple palette. Subsequent patches migrate per-page UI
-         to the intel-blue accent; existing pages stay on the gold accent
-         until explicitly migrated. Anti-pattern: never mix gold + blue
-         in the same component. */
-      --intel-blue: #3b82f6;
-      --intel-blue-soft: rgba(59, 130, 246, 0.18);
-      --intel-blue-faint: rgba(59, 130, 246, 0.06);
-      --intel-blue-border: rgba(59, 130, 246, 0.25);
-      --intel-blue-glow: rgba(59, 130, 246, 0.45);
+      /* ── v1.6 Visual Brief — accent system (added v1.5.33) ──────────
+         Anti-pattern: never mix gold + this accent in the same component.
+         In the LIGHT theme this collapses to graphite, per ukkometa.fi's
+         locked "no blue accents" decision — light-theme UI chrome is gold or
+         graphite only. It stays true blue under data-theme=dark. */
+      --intel-blue: #2a2a2a;
+      --intel-blue-soft: rgba(var(--blue-rgb), 0.14);
+      --intel-blue-faint: rgba(var(--blue-rgb), 0.05);
+      --intel-blue-border: rgba(var(--blue-rgb), 0.22);
+      --intel-blue-glow: rgba(var(--blue-rgb), 0.28);
 
-      /* Brief severity palette (brighter/more saturated than legacy --color-*).
-         For new score gradients + severity dots. */
+      /* Brief severity palette. For score gradients + severity dots. */
+      --signal-good: #2f7d4f;
+      --signal-warn: #8a6800;
+      --signal-bad:  #c0442a;
+
+      /* Brief background tones — aliases of the greys above so brief-era
+         naming and legacy naming both resolve. */
+      --surface-page: var(--bg-primary);
+      --surface-card: var(--bg-card);
+      --surface-off:  var(--bg-elevated);
+      --surface-border: var(--border-subtle);
+
+      /* Chart series. Must stay mutually distinguishable AND clear 3:1 on the
+         card surface, so these are darkened rather than reused from the dark
+         theme's pastels. Data-viz hue variety is a legibility requirement and
+         is deliberately exempt from the "no blue accents" chrome rule. */
+      --series-1: #5a4bc4;
+      --series-2: #2c6e8f;
+      --series-3: #2f7d4f;
+      --series-4: #a35a2b;
+      --series-5: #6b4f9e;
+      --series-6: #2f7d75;
+      --series-7: #8a6a12;
+      --series-8: #3d6b7d;
+      --series-9: #8a4a7d;
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+
+      --bg-primary: #0a0a0a;
+      --bg-card: #111111;
+      --bg-elevated: #161616;
+
+      --border-card: #222222;
+      --border-subtle: #262626;
+
+      --accent-gold: #e8d5a3;
+      --accent-purple: #7c6deb;
+      --color-success: #8ecba8;
+      --color-danger: #d98e8e;
+      --color-info: #8bbdd9;
+      --color-warning: #d9c78b;
+
+      --text-primary: #f0f0f0;
+      --text-secondary: #b8b8b8;
+      --text-muted: #555555;
+      --text-subtle: #888888;
+      --text-dark: #0a0a0a;
+
+      --gold-rgb: 232, 213, 163;
+      --gold-deep-rgb: 212, 175, 55;
+      --purple-rgb: 124, 109, 235;
+      --success-rgb: 142, 203, 168;
+      --danger-rgb: 217, 142, 142;
+      --info-rgb: 139, 189, 217;
+      --warning-rgb: 217, 199, 139;
+      --emerald-rgb: 80, 200, 120;
+      --red-rgb: 239, 68, 68;
+      --stop-rgb: 220, 80, 80;
+      --restart-rgb: 100, 160, 220;
+      --blue-rgb: 59, 130, 246;
+      --blue-light-rgb: 96, 165, 250;
+      --blue-pale-rgb: 150, 200, 255;
+      --signal-good-rgb: 74, 222, 128;
+      --signal-warn-rgb: 245, 200, 66;
+      --signal-bad-rgb: 244, 123, 93;
+
+      --wash-rgb: 255, 255, 255;
+      --shadow-rgb: 0, 0, 0;
+      --shadow-mult: 1;
+      --glow-mult: 1;
+      --scrim: rgba(0, 0, 0, 0.85);
+
+      --feature-bg: #1a0a2e;
+      --feature-text: #d0c0f0;
+      --feature-note: #a78bcc;
+      --chip-trad-bg: #2a2a2a;
+      --chip-trad-text: #aaaaaa;
+      --chip-perp-bg: #0d2d3d;
+      --chip-perp-text: #7dd3e8;
+      --chip-agent-bg: #2a0a3e;
+      --chip-agent-text: #cc77ff;
+
+      --bg-inset: #0e0e0e;
+      --bg-well: #1a1a1a;
+
+      --medal-gold: #e8d5a3;
+      --medal-silver: #b8b8b8;
+      --medal-bronze: #c9916e;
+
+      --term-bg: #0c0c0c;
+      --term-bar: #161616;
+      --term-text: #f0f0f0;
+
+      --intel-blue: #3b82f6;
+      --intel-blue-soft: rgba(var(--blue-rgb), 0.18);
+      --intel-blue-faint: rgba(var(--blue-rgb), 0.06);
+      --intel-blue-border: rgba(var(--blue-rgb), 0.25);
+      --intel-blue-glow: rgba(var(--blue-rgb), 0.45);
+
       --signal-good: #4ade80;
       --signal-warn: #f5c842;
       --signal-bad:  #f47b5d;
 
-      /* Brief background tones — already match --bg-primary/--bg-elevated
-         above; re-aliased here so future patches can reference brief naming
-         without remembering the legacy variable names. */
-      --surface-page: #0a0a0a;
-      --surface-card: #161616;
-      --surface-off:  #111111;
-      --surface-border: #262626;
+      --series-1: #7c6deb;
+      --series-2: #8bbdd9;
+      --series-3: #8ecba8;
+      --series-4: #d9a88e;
+      --series-5: #b89ed9;
+      --series-6: #8bbdb8;
+      --series-7: #d9c78b;
+      --series-8: #a3b8d9;
+      --series-9: #c9a3d9;
+    }
+
+    /* ── Inverted island: the console pane only ───────────────────────────
+       Log OUTPUT stays dark in both themes — operators read logs with console
+       conventions, and a light log pane reads as a text input rather than as
+       output. The terminal's title bar and command toolbar are deliberately
+       NOT in here: those are buttons the user clicks, i.e. chrome, and they
+       follow the theme like every other control. Scoping the inversion to the
+       whole .terminal-panel left a black slab of action buttons sitting next
+       to the light export sidebar.
+
+       Rather than rewriting every descendant, this re-declares the GENERIC
+       tokens locally. Custom properties inherit, so any child already using
+       var(--text-muted) / var(--accent-gold) / etc. resolves against these
+       instead, and the console needs no per-element theme handling. Add new
+       console markup using the normal tokens and it will just work. */
+    .term-console {
+      --bg-card: var(--term-bg);
+      --bg-elevated: var(--term-bar);
+      --bg-inset: var(--term-bg);
+      --border-card: #2c2c27;
+      --border-subtle: #24241f;
+      --text-primary: var(--term-text);
+      --text-secondary: var(--term-text);
+      --text-muted: #8a8a80;
+      --text-subtle: #6a6a62;
+      --accent-gold: #e8d5a3;
+      --accent-purple: #b4a0ff;
+      --color-success: #8ecba8;
+      --color-danger: #d98e8e;
+      --color-info: #8bbdd9;
+      --gold-rgb: 232, 213, 163;
+      --wash-rgb: 255, 255, 255;
+      --shadow-mult: 1;
+      --glow-mult: 1;
+      color-scheme: dark;
+      background: var(--term-bg);
     }
 
     /* ── v1.6 Component utilities (added v1.5.33) ─────────────────────────
@@ -353,7 +599,7 @@ function buildHtmlTemplate(data, opts = {}) {
       height: 8px;
       border-radius: 50%;
       background: var(--intel-blue);
-      box-shadow: 0 0 12px var(--intel-blue-glow);
+      box-shadow: 0 0 12px var(--intel-blue-glow);  /* glow alpha lives in the token */
     }
 
     /* All-caps label — small typography accent */
@@ -378,9 +624,9 @@ function buildHtmlTemplate(data, opts = {}) {
       border-radius: 50%;
       vertical-align: middle;
     }
-    .vb-severity-dot.info { width: 10px; height: 10px; background: var(--signal-good); box-shadow: 0 0 14px rgba(74, 222, 128, 0.65); }
-    .vb-severity-dot.warn { width: 14px; height: 14px; background: var(--signal-warn); box-shadow: 0 0 14px rgba(245, 200, 66, 0.65); }
-    .vb-severity-dot.crit { width: 18px; height: 18px; background: var(--signal-bad);  box-shadow: 0 0 14px rgba(244, 123, 93, 0.65); }
+    .vb-severity-dot.info { width: 10px; height: 10px; background: var(--signal-good); box-shadow: 0 0 14px rgba(var(--signal-good-rgb), calc(0.65 * var(--glow-mult))); }
+    .vb-severity-dot.warn { width: 14px; height: 14px; background: var(--signal-warn); box-shadow: 0 0 14px rgba(var(--signal-warn-rgb), calc(0.65 * var(--glow-mult))); }
+    .vb-severity-dot.crit { width: 18px; height: 18px; background: var(--signal-bad);  box-shadow: 0 0 14px rgba(var(--signal-bad-rgb), calc(0.65 * var(--glow-mult))); }
 
     /* Big score numeric — citability/health hero numbers.
        Use .vb-score-big.good|warn|bad to drive color + glow. */
@@ -392,21 +638,21 @@ function buildHtmlTemplate(data, opts = {}) {
       letter-spacing: -0.03em;
       font-variant-numeric: tabular-nums;
     }
-    .vb-score-big.good { color: var(--signal-good); text-shadow: 0 0 28px rgba(74, 222, 128, 0.33); }
-    .vb-score-big.warn { color: var(--signal-warn); text-shadow: 0 0 28px rgba(245, 200, 66, 0.33); }
-    .vb-score-big.bad  { color: var(--signal-bad);  text-shadow: 0 0 28px rgba(244, 123, 93, 0.33); }
+    .vb-score-big.good { color: var(--signal-good); text-shadow: 0 0 28px rgba(var(--signal-good-rgb), calc(0.33 * var(--glow-mult))); }
+    .vb-score-big.warn { color: var(--signal-warn); text-shadow: 0 0 28px rgba(var(--signal-warn-rgb), calc(0.33 * var(--glow-mult))); }
+    .vb-score-big.bad  { color: var(--signal-bad);  text-shadow: 0 0 28px rgba(var(--signal-bad-rgb), calc(0.33 * var(--glow-mult))); }
 
     /* Featured/premium card — for the Solo upsell or hero blocks */
     .vb-card-featured {
       background:
-        linear-gradient(180deg, rgba(59,130,246,0.14) 0%, rgba(59,130,246,0.04) 100%),
+        linear-gradient(180deg, rgba(var(--blue-rgb), 0.14) 0%, rgba(var(--blue-rgb), 0.04) 100%),
         var(--surface-card);
       border: 1px solid var(--intel-blue-border);
       border-radius: 0;
       padding: 32px;
       box-shadow:
-        0 40px 100px rgba(0, 0, 0, 0.6),
-        0 0 90px rgba(59, 130, 246, 0.18);
+        0 40px 100px rgba(var(--shadow-rgb), calc(0.6 * var(--shadow-mult))),
+        0 0 90px rgba(var(--blue-rgb), 0.18);
     }
 
     /* Plain dashboard card per brief — sharp corners, deep shadow.
@@ -416,7 +662,7 @@ function buildHtmlTemplate(data, opts = {}) {
       border: 1px solid var(--surface-border);
       border-radius: 0;
       padding: 32px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 24px 60px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -444,14 +690,14 @@ function buildHtmlTemplate(data, opts = {}) {
       margin-bottom: 12px;
     }
     .update-banner.update-normal {
-      background: rgba(232,213,163,0.06);
-      border: 1px solid rgba(232,213,163,0.2);
+      background: rgba(var(--gold-rgb), 0.06);
+      border: 1px solid rgba(var(--gold-rgb), 0.2);
       color: var(--accent-gold);
     }
     .update-banner.update-security {
-      background: rgba(220,80,80,0.08);
-      border: 1px solid rgba(220,80,80,0.25);
-      color: #ff6b6b;
+      background: rgba(var(--stop-rgb), 0.08);
+      border: 1px solid rgba(var(--stop-rgb), 0.25);
+      color: var(--color-danger);
     }
     .update-banner .update-version { font-family: var(--font-mono); font-weight: 600; }
     .update-banner .update-changelog { font-size: 0.68rem; color: var(--text-muted); flex:1; }
@@ -466,7 +712,7 @@ function buildHtmlTemplate(data, opts = {}) {
       cursor: pointer;
       white-space: nowrap;
     }
-    .update-banner .update-btn:hover { background: rgba(255,255,255,0.06); }
+    .update-banner .update-btn:hover { background: rgba(var(--wash-rgb), 0.06); }
     .update-banner .update-dismiss {
       cursor: pointer; opacity: 0.5; font-size: 0.7rem;
     }
@@ -538,10 +784,10 @@ function buildHtmlTemplate(data, opts = {}) {
       background: var(--bg-elevated);
       color: var(--text-subtle);
     }
-    .status-badge.gold { border-color: rgba(232,213,163,0.3); color: var(--accent-gold); }
-    .status-badge.purple { border-color: rgba(124,109,235,0.3); color: var(--accent-purple); }
-    .status-badge.success { border-color: rgba(142,203,168,0.3); color: var(--color-success); }
-    .status-badge.info { border-color: rgba(139,189,217,0.3); color: var(--color-info); }
+    .status-badge.gold { border-color: rgba(var(--gold-rgb), 0.3); color: var(--accent-gold); }
+    .status-badge.purple { border-color: rgba(var(--purple-rgb), 0.3); color: var(--accent-purple); }
+    .status-badge.success { border-color: rgba(var(--success-rgb), 0.3); color: var(--color-success); }
+    .status-badge.info { border-color: rgba(var(--info-rgb), 0.3); color: var(--color-info); }
 
     /* ─── Dashboard Grid ─────────────────────────────────────────────────── */
     .dashboard {
@@ -596,7 +842,7 @@ function buildHtmlTemplate(data, opts = {}) {
       display: none; position: absolute; right: 0; top: 32px;
       background: var(--bg-card); border: 1px solid var(--border-card);
       border-radius: var(--radius); min-width: 150px; padding: 4px 0;
-      box-shadow: 0 8px 24px rgba(0,0,0,.4);
+      box-shadow: 0 8px 24px rgba(var(--shadow-rgb), calc(.4 * var(--shadow-mult)));
     }
     .card-export.open .card-export-dropdown { display: block; }
     .card-export-dropdown button {
@@ -622,7 +868,7 @@ function buildHtmlTemplate(data, opts = {}) {
       font-size: 0.78rem;
     }
     .extraction-status.is-running {
-      border-color: rgba(232,213,163,0.3);
+      border-color: rgba(var(--gold-rgb), 0.3);
     }
     .es-top-row {
       display: flex; align-items: center; gap: 16px; width: 100%;
@@ -643,8 +889,8 @@ function buildHtmlTemplate(data, opts = {}) {
       animation: pulse-dot 1.5s ease-in-out infinite;
     }
     @keyframes pulse-dot {
-      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(232,213,163,0.4); }
-      50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(232,213,163,0); }
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(var(--gold-rgb), 0.4); }
+      50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(var(--gold-rgb), 0); }
     }
     .es-domains {
       display: grid;
@@ -682,7 +928,7 @@ function buildHtmlTemplate(data, opts = {}) {
       margin-left: auto; white-space: nowrap;
     }
     .extraction-status.is-crashed {
-      border-color: rgba(239,68,68,0.3);
+      border-color: rgba(var(--red-rgb), 0.3);
     }
     .es-dot.crashed {
       background: var(--color-danger);
@@ -699,7 +945,7 @@ function buildHtmlTemplate(data, opts = {}) {
     }
     .es-meta-item { color: var(--text-muted); }
     .es-meta-item i { margin-right: 3px; font-size: 0.62rem; }
-    .es-meta-item.skipped { color: var(--accent-blue, #7dd3e8); }
+    .es-meta-item.skipped { color: var(--color-info); }
     .es-meta-item.blocked { color: var(--color-danger); }
     .es-domain.is-blocked .es-domain-name { color: var(--color-danger); text-decoration: line-through; }
     .es-domain.is-blocked .es-bar-fill { background: var(--color-danger); }
@@ -726,11 +972,11 @@ function buildHtmlTemplate(data, opts = {}) {
     .es-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
     .es-btn-stop { border-color: var(--border-card); color: var(--text-muted); }
     .es-btn-stop:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
-    .es-btn-stop.active { border-color: rgba(220,80,80,0.5); color: #dc5050; animation: stopPulse 2s ease-in-out infinite; }
-    .es-btn-stop.active:hover { border-color: #dc5050; color: #ff6b6b; background: rgba(220,80,80,0.08); }
-    @keyframes stopPulse { 0%,100% { border-color: rgba(220,80,80,0.3); } 50% { border-color: rgba(220,80,80,0.7); } }
-    .es-btn-restart { border-color: rgba(100,160,220,0.3); color: #6ca0dc; }
-    .es-btn-restart:hover { border-color: #6ca0dc; color: #8fc0f0; background: rgba(100,160,220,0.08); }
+    .es-btn-stop.active { border-color: rgba(var(--stop-rgb), 0.5); color: var(--color-danger); animation: stopPulse 2s ease-in-out infinite; }
+    .es-btn-stop.active:hover { border-color: var(--color-danger); color: var(--color-danger); background: rgba(var(--stop-rgb), 0.08); }
+    @keyframes stopPulse { 0%,100% { border-color: rgba(var(--stop-rgb), 0.3); } 50% { border-color: rgba(var(--stop-rgb), 0.7); } }
+    .es-btn-restart { border-color: rgba(var(--restart-rgb), 0.3); color: rgba(var(--restart-rgb), 1); }
+    .es-btn-restart:hover { border-color: rgba(var(--restart-rgb), 1); color: rgba(var(--restart-rgb), 1); background: rgba(var(--restart-rgb), 0.08); }
     .es-btn:disabled {
       opacity: 0.4; cursor: not-allowed;
       border-color: var(--border-card);
@@ -745,7 +991,7 @@ function buildHtmlTemplate(data, opts = {}) {
       cursor: pointer; user-select: none;
     }
     .es-stealth-toggle input[type="checkbox"] {
-      accent-color: var(--accent-purple, #7c6deb);
+      accent-color: var(--accent-purple);
       width: 14px; height: 14px;
       cursor: pointer;
     }
@@ -799,7 +1045,7 @@ function buildHtmlTemplate(data, opts = {}) {
     th:first-child { border-radius: var(--radius) 0 0 0; }
     th:last-child { border-radius: 0 var(--radius) 0 0; }
     tr:hover td {
-      background: rgba(255,255,255,0.02);
+      background: rgba(var(--wash-rgb), 0.02);
     }
     td {
       color: var(--text-secondary);
@@ -815,11 +1061,11 @@ function buildHtmlTemplate(data, opts = {}) {
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .badge-high { background: rgba(217,142,142,0.15); color: var(--color-danger); }
-    .badge-medium { background: rgba(232,213,163,0.12); color: var(--accent-gold); }
-    .badge-low { background: rgba(142,203,168,0.12); color: var(--color-success); }
-    .badge-target { background: rgba(232,213,163,0.15); color: var(--accent-gold); }
-    .badge-competitor { background: rgba(124,109,235,0.15); color: var(--accent-purple); }
+    .badge-high { background: rgba(var(--danger-rgb), 0.15); color: var(--color-danger); }
+    .badge-medium { background: rgba(var(--gold-rgb), 0.12); color: var(--accent-gold); }
+    .badge-low { background: rgba(var(--success-rgb), 0.12); color: var(--color-success); }
+    .badge-target { background: rgba(var(--gold-rgb), 0.15); color: var(--accent-gold); }
+    .badge-competitor { background: rgba(var(--purple-rgb), 0.15); color: var(--accent-purple); }
 
     /* ─── Insight Actions (Intelligence Ledger) ──────────────────────────── */
     .insight-action { display: flex; gap: 4px; }
@@ -845,7 +1091,7 @@ function buildHtmlTemplate(data, opts = {}) {
     }
     .dot.present { background: var(--color-success); }
     .dot.partial { background: var(--accent-gold); }
-    .dot.missing { background: rgba(217,142,142,0.5); }
+    .dot.missing { background: rgba(var(--danger-rgb), 0.5); }
     .dot.na { background: var(--border-subtle); }
 
     /* ─── Scorecard Grid ─────────────────────────────────────────────────── */
@@ -967,7 +1213,7 @@ function buildHtmlTemplate(data, opts = {}) {
     }
     .positioning-block.highlight {
       border-left-color: var(--accent-gold);
-      background: rgba(232,213,163,0.03);
+      background: rgba(var(--gold-rgb), 0.03);
     }
     .positioning-block.full {
       grid-column: 1 / -1;
@@ -1013,7 +1259,7 @@ function buildHtmlTemplate(data, opts = {}) {
       vertical-align: top;
     }
     .analysis-table tr:last-child td { border-bottom: none; }
-    .analysis-table tr:hover td { background: rgba(255,255,255,0.015); }
+    .analysis-table tr:hover td { background: rgba(var(--wash-rgb), 0.015); }
     .analysis-table .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.72rem; color: var(--accent-gold); }
     .phrase-cell { color: var(--text-primary); font-style: italic; min-width: 200px; }
     .placement-cell { min-width: 140px; }
@@ -1029,9 +1275,9 @@ function buildHtmlTemplate(data, opts = {}) {
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .prop-main  { background: rgba(232,213,163,0.1); color: var(--accent-gold); }
-    .prop-blog  { background: rgba(124,109,235,0.1); color: var(--accent-purple); }
-    .prop-docs  { background: rgba(139,189,217,0.1); color: var(--color-info); }
+    .prop-main  { background: rgba(var(--gold-rgb), 0.1); color: var(--accent-gold); }
+    .prop-blog  { background: rgba(var(--purple-rgb), 0.1); color: var(--accent-purple); }
+    .prop-docs  { background: rgba(var(--info-rgb), 0.1); color: var(--color-info); }
     .type-tag {
       display: inline-block;
       padding: 2px 6px;
@@ -1044,7 +1290,7 @@ function buildHtmlTemplate(data, opts = {}) {
       display: inline-block;
       padding: 2px 6px;
       border-radius: 3px;
-      background: rgba(255,255,255,0.04);
+      background: rgba(var(--wash-rgb), 0.04);
       color: var(--text-secondary);
       font-size: 0.65rem;
       margin-right: 3px;
@@ -1143,7 +1389,7 @@ function buildHtmlTemplate(data, opts = {}) {
       height: 22px;
       padding: 0 7px;
       border-radius: 11px;
-      background: rgba(124,109,235,0.15);
+      background: rgba(var(--purple-rgb), 0.15);
       color: var(--accent-purple);
       font-size: 0.65rem;
       font-weight: 600;
@@ -1178,7 +1424,7 @@ function buildHtmlTemplate(data, opts = {}) {
       padding: 12px;
       border: 1px solid var(--border-card);
     }
-    .btn-tile.is-target { border-color: rgba(232,213,163,0.2); }
+    .btn-tile.is-target { border-color: rgba(var(--gold-rgb), 0.2); }
     .btn-tile-head {
       display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
     }
@@ -1214,10 +1460,10 @@ function buildHtmlTemplate(data, opts = {}) {
       font-size: 0.68rem; font-weight: 500; text-transform: capitalize;
     }
     .tier-tag small { opacity: 0.7; margin-left: 3px; }
-    .tier-free       { background: rgba(142,203,168,0.12); color: var(--color-success); }
-    .tier-freemium   { background: rgba(139,189,217,0.12); color: var(--color-info); }
-    .tier-paid       { background: rgba(232,213,163,0.12); color: var(--accent-gold); }
-    .tier-enterprise { background: rgba(217,142,142,0.12); color: var(--color-danger); }
+    .tier-free       { background: rgba(var(--success-rgb), 0.12); color: var(--color-success); }
+    .tier-freemium   { background: rgba(var(--info-rgb), 0.12); color: var(--color-info); }
+    .tier-paid       { background: rgba(var(--gold-rgb), 0.12); color: var(--accent-gold); }
+    .tier-enterprise { background: rgba(var(--danger-rgb), 0.12); color: var(--color-danger); }
 
     /* ─── Page Performance (inside btn-tile) ──────────────────────────── */
     .perf-avg { font-family: var(--font-display); font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
@@ -1256,8 +1502,8 @@ function buildHtmlTemplate(data, opts = {}) {
       display: inline-block; padding: 2px 8px; border-radius: 3px;
       font-size: 0.65rem; text-transform: capitalize;
     }
-    .entity-tag.shared { background: rgba(124,109,235,0.12); color: var(--accent-purple); }
-    .entity-tag.unique { background: rgba(255,255,255,0.04); color: var(--text-muted); }
+    .entity-tag.shared { background: rgba(var(--purple-rgb), 0.12); color: var(--accent-purple); }
+    .entity-tag.unique { background: rgba(var(--wash-rgb), 0.04); color: var(--text-muted); }
 
     /* ═══ GOOGLE SEARCH CONSOLE ═══ */
     .gsc-stat-bar {
@@ -1293,10 +1539,10 @@ function buildHtmlTemplate(data, opts = {}) {
       display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.68rem;
       font-weight: 600; font-family: 'SF Mono', 'Fira Code', monospace;
     }
-    .gsc-pos-top3 { background: rgba(142,203,168,0.15); color: var(--color-success); }
-    .gsc-pos-top10 { background: rgba(139,189,217,0.15); color: var(--color-info); }
-    .gsc-pos-top20 { background: rgba(217,199,139,0.15); color: var(--color-warning); }
-    .gsc-pos-deep { background: rgba(217,142,142,0.12); color: var(--color-danger); }
+    .gsc-pos-top3 { background: rgba(var(--success-rgb), 0.15); color: var(--color-success); }
+    .gsc-pos-top10 { background: rgba(var(--info-rgb), 0.15); color: var(--color-info); }
+    .gsc-pos-top20 { background: rgba(var(--warning-rgb), 0.15); color: var(--color-warning); }
+    .gsc-pos-deep { background: rgba(var(--danger-rgb), 0.12); color: var(--color-danger); }
     .gsc-device-grid {
       display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
     }
@@ -1337,7 +1583,7 @@ function buildHtmlTemplate(data, opts = {}) {
       display: none; position: absolute; left: -20px; top: 130%;
       width: 280px; padding: 12px 14px;
       background: var(--bg-card); border: 1px solid var(--border-card);
-      border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      border-radius: var(--radius); box-shadow: 0 8px 24px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
       font-size: 0.72rem; color: var(--text-secondary); line-height: 1.6;
       z-index: 100; text-align: left;
     }
@@ -1355,7 +1601,7 @@ function buildHtmlTemplate(data, opts = {}) {
       display: none; position: absolute; right: 0; top: 130%;
       width: 320px; padding: 14px 16px;
       background: var(--bg-card); border: 1px solid var(--border-card);
-      border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      border-radius: var(--radius); box-shadow: 0 8px 24px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
       font-size: 0.72rem; color: var(--text-secondary); line-height: 1.7;
       z-index: 100; text-align: left;
     }
@@ -1381,8 +1627,8 @@ function buildHtmlTemplate(data, opts = {}) {
       font-size: 0.58rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
       padding: 1px 6px; border-radius: 3px;
     }
-    .da-domain-chip.is-target .da-role { background: rgba(232,213,163,0.15); color: var(--accent-gold); }
-    .da-domain-chip.is-owned .da-role { background: rgba(139,189,217,0.12); color: var(--color-info); }
+    .da-domain-chip.is-target .da-role { background: rgba(var(--gold-rgb), 0.15); color: var(--accent-gold); }
+    .da-domain-chip.is-owned .da-role { background: rgba(var(--info-rgb), 0.12); color: var(--color-info); }
     .da-domain-name { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; color: var(--text-primary); }
     .da-domain-meta { font-size: 0.68rem; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
     .da-combined-bar {
@@ -1400,9 +1646,9 @@ function buildHtmlTemplate(data, opts = {}) {
       margin-bottom: 8px; font-size: 0.78rem; line-height: 1.55;
       border-left: 3px solid;
     }
-    .da-warning.severity-high { background: rgba(217,142,142,0.06); border-left-color: var(--color-danger); }
-    .da-warning.severity-medium { background: rgba(217,199,139,0.06); border-left-color: var(--color-warning); }
-    .da-warning.severity-low { background: rgba(139,189,217,0.06); border-left-color: var(--color-info); }
+    .da-warning.severity-high { background: rgba(var(--danger-rgb), 0.06); border-left-color: var(--color-danger); }
+    .da-warning.severity-medium { background: rgba(var(--warning-rgb), 0.06); border-left-color: var(--color-warning); }
+    .da-warning.severity-low { background: rgba(var(--info-rgb), 0.06); border-left-color: var(--color-info); }
     .da-warning-icon { flex-shrink: 0; margin-top: 2px; }
     .da-warning.severity-high .da-warning-icon { color: var(--color-danger); }
     .da-warning.severity-medium .da-warning-icon { color: var(--color-warning); }
@@ -1430,7 +1676,7 @@ function buildHtmlTemplate(data, opts = {}) {
     .gsc-insight-items { display: flex; flex-direction: column; gap: 4px; }
     .gsc-insight-item {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 4px 10px; border-radius: 3px; background: rgba(255,255,255,0.015);
+      padding: 4px 10px; border-radius: 3px; background: rgba(var(--wash-rgb), 0.015);
       font-size: 0.73rem;
     }
     .gsc-insight-item-label {
@@ -1528,21 +1774,21 @@ function buildHtmlTemplate(data, opts = {}) {
       line-height: 1.6;
     }
     .ki-agent-block {
-      background: #1a0a2e;
-      border: 2px solid #e8d5a3;
+      background: var(--feature-bg);
+      border: 2px solid var(--accent-gold);
       border-radius: var(--radius);
       padding: 1.25rem 1.5rem;
       margin-bottom: 1.5rem;
     }
     .ki-agent-block h3 {
       font-family: var(--font-display);
-      color: #e8d5a3;
+      color: var(--accent-gold);
       font-size: 1rem;
       margin-bottom: 0.5rem;
     }
     .ki-agent-note {
       font-size: 0.8rem;
-      color: #a78bcc;
+      color: var(--feature-note);
       margin-bottom: 1rem;
       font-style: italic;
     }
@@ -1553,11 +1799,11 @@ function buildHtmlTemplate(data, opts = {}) {
       gap: 0.5rem;
     }
     .ki-agent-list li {
-      background: rgba(124, 109, 235, 0.15);
-      border: 1px solid rgba(124, 109, 235, 0.3);
+      background: rgba(var(--purple-rgb), 0.15);
+      border: 1px solid rgba(var(--purple-rgb), 0.3);
       border-radius: 4px;
       padding: 0.5rem 0.85rem;
-      color: #d0c0f0;
+      color: var(--feature-text);
       font-size: 0.88rem;
       font-style: italic;
     }
@@ -1568,8 +1814,8 @@ function buildHtmlTemplate(data, opts = {}) {
       margin-bottom: 1.5rem;
     }
     .ki-pill {
-      background: rgba(232, 213, 163, 0.12);
-      border: 1px solid rgba(232, 213, 163, 0.3);
+      background: rgba(var(--gold-rgb), 0.12);
+      border: 1px solid rgba(var(--gold-rgb), 0.3);
       color: var(--accent-gold);
       border-radius: 999px;
       padding: 0.3rem 0.85rem;
@@ -1595,7 +1841,7 @@ function buildHtmlTemplate(data, opts = {}) {
     .ki-filter-btn.active {
       background: var(--accent-purple);
       border-color: var(--accent-purple);
-      color: #fff;
+      color: var(--text-dark);
     }
     .ki-type-badge {
       display: inline-block;
@@ -1604,9 +1850,9 @@ function buildHtmlTemplate(data, opts = {}) {
       font-size: 0.75rem;
       font-weight: 500;
     }
-    .ki-type-traditional { background: #2a2a2a; color: #aaa; }
-    .ki-type-perplexity  { background: #0d2d3d; color: #7dd3e8; }
-    .ki-type-agent       { background: #2a0a3e; color: #cc77ff; }
+    .ki-type-traditional { background: var(--chip-trad-bg); color: var(--chip-trad-text); }
+    .ki-type-perplexity  { background: var(--chip-perp-bg); color: var(--chip-perp-text); }
+    .ki-type-agent       { background: var(--chip-agent-bg); color: var(--chip-agent-text); }
     .ki-priority-high   { color: var(--color-success); font-weight: 600; }
     .ki-priority-medium { color: var(--color-warning); }
     .ki-priority-low    { color: var(--text-muted); }
@@ -1615,19 +1861,21 @@ function buildHtmlTemplate(data, opts = {}) {
     /* ─── Integrated terminal ────────────────────────────────────────── */
     .term-btn {
       font-size: 0.6rem; font-family: var(--font-body);
-      background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle);
-      color: var(--text-muted); padding: 3px 10px; border-radius: 4px;
+      background: rgba(var(--wash-rgb), 0.04); border: 1px solid var(--border-card);
+      /* --text-secondary, not --text-muted: these are actionable controls, and
+         muted grey on a light toolbar reads as disabled. */
+      color: var(--text-secondary); padding: 3px 10px; border-radius: 4px;
       cursor: pointer; transition: all 0.15s; white-space: nowrap;
     }
     .term-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
-    .term-btn:active { background: rgba(232,213,163,0.1); }
+    .term-btn:active { background: rgba(var(--gold-rgb), 0.1); }
     .term-btn i { margin-right: 3px; font-size: 0.55rem; }
-    .term-btn-intel { border-color: rgba(96,165,250,0.2); }
-    .term-btn-intel:hover { border-color: rgba(96,165,250,0.6); color: rgba(150,200,255,0.9); }
-    .term-btn-intel:active { background: rgba(96,165,250,0.08); }
+    .term-btn-intel { border-color: rgba(var(--blue-light-rgb), 0.2); }
+    .term-btn-intel:hover { border-color: rgba(var(--blue-light-rgb), 0.6); color: rgba(var(--blue-pale-rgb), 0.9); }
+    .term-btn-intel:active { background: rgba(var(--blue-light-rgb), 0.08); }
     .term-stealth { display:inline-flex; align-items:center; gap:4px; font-size:0.58rem; color:var(--text-muted); cursor:pointer; user-select:none; margin-left:2px; padding:2px 6px; border-radius:4px; border:1px solid transparent; transition:all 0.15s; }
-    .term-stealth:hover { border-color: rgba(124,109,235,0.3); color: var(--text-secondary); }
-    .term-stealth input[type="checkbox"] { accent-color: var(--accent-purple,#7c6deb); width:12px; height:12px; cursor:pointer; }
+    .term-stealth:hover { border-color: rgba(var(--purple-rgb), 0.3); color: var(--text-secondary); }
+    .term-stealth input[type="checkbox"] { accent-color: var(--accent-purple); width:12px; height:12px; cursor:pointer; }
 
     /* ─── Terminal + Export split layout ───────────────────────────────── */
     .term-split {
@@ -1641,7 +1889,7 @@ function buildHtmlTemplate(data, opts = {}) {
       min-width: 0;
     }
     .term-split .export-sidebar {
-      background: #0e0e0e;
+      background: var(--bg-inset);
       border: 1px solid var(--border-card);
       border-left: none;
       border-radius: 0 var(--radius) var(--radius) 0;
@@ -1653,7 +1901,7 @@ function buildHtmlTemplate(data, opts = {}) {
     }
     .export-sidebar-header {
       padding: 6px 12px;
-      background: #161616;
+      background: var(--bg-elevated);
       border-bottom: 1px solid var(--border-subtle);
       font-size: 0.6rem;
       color: var(--text-muted);
@@ -1673,7 +1921,7 @@ function buildHtmlTemplate(data, opts = {}) {
       border-bottom: 1px solid var(--border-subtle);
     }
     .export-btn {
-      background: #1a1a1a;
+      background: var(--bg-well);
       color: var(--text-secondary);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius);
@@ -1686,7 +1934,7 @@ function buildHtmlTemplate(data, opts = {}) {
     }
     .export-btn:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
     .export-btn i { margin-right: 5px; font-size: 0.6rem; }
-    .export-btn.active { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(232,213,163,0.06); }
+    .export-btn.active { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(var(--gold-rgb), 0.06); }
     .profile-export-picker { position: relative; }
     .profile-export-trigger { display: flex; align-items: center; width: 100%; }
     .profile-export-menu {
@@ -1694,12 +1942,12 @@ function buildHtmlTemplate(data, opts = {}) {
       position: absolute;
       bottom: calc(100% + 4px);
       left: 0; right: 0;
-      background: #1a1a1a;
+      background: var(--bg-well);
       border: 1px solid var(--accent-gold);
       border-radius: var(--radius);
       padding: 10px;
       z-index: 50;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      box-shadow: 0 8px 24px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
     }
     .draft-dropdown { position: relative; }
     .draft-trigger { display: flex; align-items: center; width: 100%; }
@@ -1708,12 +1956,12 @@ function buildHtmlTemplate(data, opts = {}) {
       position: absolute;
       top: calc(100% + 4px);
       left: 0; right: 0;
-      background: #1a1a1a;
+      background: var(--bg-well);
       border: 1px solid var(--accent-gold);
       border-radius: var(--radius);
       padding: 10px;
       z-index: 50;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      box-shadow: 0 8px 24px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
     }
     .draft-menu.open { display: block; }
     .draft-menu-section {
@@ -1735,12 +1983,12 @@ function buildHtmlTemplate(data, opts = {}) {
       border-radius: 4px;
       font-family: var(--font-body);
     }
-    .draft-option:hover { background: rgba(232,213,163,0.06); color: var(--text-primary); }
+    .draft-option:hover { background: rgba(var(--gold-rgb), 0.06); color: var(--text-primary); }
     .draft-option input[type="radio"] { accent-color: var(--accent-gold); width: 12px; height: 12px; }
     .draft-option i { font-size: 0.6rem; width: 14px; text-align: center; }
     .draft-topic-input {
       width: 100%;
-      background: #111;
+      background: var(--bg-inset);
       border: 1px solid var(--border-subtle);
       border-radius: 4px;
       padding: 6px 8px;
@@ -1771,7 +2019,7 @@ function buildHtmlTemplate(data, opts = {}) {
       top: 6px;
       right: 6px;
       z-index: 10;
-      background: rgba(255,255,255,0.06);
+      background: rgba(var(--wash-rgb), 0.06);
       border: 1px solid var(--border-subtle);
       color: var(--text-muted);
       width: 24px; height: 24px;
@@ -1789,17 +2037,17 @@ function buildHtmlTemplate(data, opts = {}) {
       top: 5vh; left: 5vw; right: 5vw; bottom: 5vh;
       max-height: none !important;
       z-index: 9999;
-      background: #111;
+      background: var(--bg-card);
       border: 1px solid var(--accent-gold);
       border-radius: var(--radius);
       padding: 24px;
       overflow-y: auto;
-      box-shadow: 0 0 80px rgba(0,0,0,0.8);
+      box-shadow: 0 0 80px rgba(var(--shadow-rgb), calc(0.8 * var(--shadow-mult)));
     }
     .export-viewer-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.7);
+      background: rgba(var(--shadow-rgb), calc(0.7 * var(--shadow-mult)));
       z-index: 9998;
       cursor: pointer;
     }
@@ -1819,7 +2067,7 @@ function buildHtmlTemplate(data, opts = {}) {
     .export-viewer h3 { font-size: 0.7rem; }
     .export-viewer ul { margin: 0 0 8px 14px; }
     .export-viewer li { margin-bottom: 4px; color: var(--text-secondary); }
-    .export-viewer pre { background: #0c0c0c; border: 1px solid var(--border-subtle); padding: 8px; border-radius: 4px; overflow: auto; font-size: 0.62rem; }
+    .export-viewer pre { background: var(--bg-inset); border: 1px solid var(--border-subtle); padding: 8px; border-radius: 4px; overflow: auto; font-size: 0.62rem; }
     .export-viewer code { color: var(--accent-gold); }
     .export-viewer p { margin-bottom: 8px; color: var(--text-secondary); }
     @media (max-width: 960px) {
@@ -1833,16 +2081,16 @@ function buildHtmlTemplate(data, opts = {}) {
     /* ── AI Smart Export Modal ── */
     .ai-export-overlay {
       position: fixed; inset: 0; z-index: 9999;
-      background: rgba(0,0,0,0.85); backdrop-filter: blur(12px);
+      background: var(--scrim); backdrop-filter: blur(12px);
       display: flex; align-items: center; justify-content: center;
       opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
     }
     .ai-export-overlay.active { opacity: 1; pointer-events: all; }
     .ai-export-card {
       position: relative; z-index: 2;
-      background: rgba(18,18,18,0.85); border: 1px solid rgba(212,175,55,0.2);
+      background: var(--bg-card); border: 1px solid rgba(var(--gold-deep-rgb), 0.2);
       border-radius: 16px; padding: 32px 40px 28px; text-align: center;
-      box-shadow: 0 0 60px rgba(212,175,55,0.08), 0 24px 48px rgba(0,0,0,0.5);
+      box-shadow: 0 0 60px rgba(var(--gold-deep-rgb), 0.08), 0 24px 48px rgba(var(--shadow-rgb), calc(0.5 * var(--shadow-mult)));
       min-width: 340px; max-width: 420px;
     }
     .ai-export-card h3 {
@@ -1858,13 +2106,13 @@ function buildHtmlTemplate(data, opts = {}) {
     }
     .ai-export-status i { color: var(--accent-gold); margin-right: 6px; }
     .ai-progress-track {
-      width: 100%; height: 4px; background: rgba(255,255,255,0.06);
+      width: 100%; height: 4px; background: rgba(var(--wash-rgb), 0.06);
       border-radius: 4px; overflow: hidden; margin-bottom: 20px;
       position: relative;
     }
     .ai-progress-bar {
       height: 100%; width: 0%; border-radius: 4px;
-      background: linear-gradient(90deg, var(--accent-gold), #f5c842, var(--accent-gold));
+      background: linear-gradient(90deg, var(--accent-gold), var(--signal-warn), var(--accent-gold));
       background-size: 200% 100%;
       animation: ai-shimmer 1.5s ease infinite;
       transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1994,17 +2242,21 @@ function buildHtmlTemplate(data, opts = {}) {
   <div class="term-split">
     <!-- LEFT: Terminal -->
     <div class="terminal-main">
-      <div class="terminal-panel" style="background:#0c0c0c;border:1px solid var(--border-card);border-radius:var(--radius) 0 0 var(--radius);overflow:hidden;">
-        <!-- Terminal title bar -->
-        <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:#161616;border-bottom:1px solid var(--border-subtle);">
+      <div class="terminal-panel" style="background:var(--bg-card);border:1px solid var(--border-card);border-radius:var(--radius) 0 0 var(--radius);overflow:hidden;">
+        <!-- Title bar and the command toolbar below it are CHROME: they follow
+             the theme like any other card, because they are controls the user
+             clicks. Only the output + input pane (.term-console) stays dark.
+             The three dots are deliberately literal — they are the macOS
+             window-control colors, not theme colors. Leave them alone. -->
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);">
           <span style="width:10px;height:10px;border-radius:50%;background:#ff5f57;"></span>
           <span style="width:10px;height:10px;border-radius:50%;background:#febc2e;"></span>
           <span style="width:10px;height:10px;border-radius:50%;background:#28c840;"></span>
           <span style="flex:1;text-align:center;font-size:0.6rem;color:var(--text-muted);font-family:var(--font-body);">seo-intel — ${project}</span>
           <span id="termStatus${suffix}" style="font-size:0.55rem;color:var(--text-muted);font-family:var(--font-body);"></span>
         </div>
-        <!-- Command buttons -->
-        <div style="padding:8px 12px;background:#111;border-bottom:1px solid var(--border-subtle);display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+        <!-- Command buttons — chrome, follows the theme -->
+        <div style="padding:8px 12px;background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
           <span style="font-size:0.6rem;color:var(--text-muted);margin-right:4px;"><i class="fa-solid fa-play" style="margin-right:3px;"></i>Run:</span>
           <button class="term-btn" data-cmd="crawl" data-project="${project}"><i class="fa-solid fa-spider"></i> Crawl</button>
           <label class="term-stealth"><input type="checkbox" id="stealthToggle${suffix}"${extractionStatus.liveProgress?.stealth ? ' checked' : ''}><i class="fa-solid fa-user-ninja"></i></label>
@@ -2016,18 +2268,25 @@ function buildHtmlTemplate(data, opts = {}) {
           ${showHistory ? `<button class="term-btn term-btn-intel" data-cmd="brief" data-project="${project}"><i class="fa-solid fa-file-lines"></i> Brief</button>` : ''}
           <button class="term-btn" data-cmd="status" data-project=""><i class="fa-solid fa-circle-info"></i> Status</button>
           <button class="term-btn" data-cmd="guide" data-project="${project}"><i class="fa-solid fa-map"></i> Guide</button>
-          <button class="term-btn" data-cmd="setup" data-project="" style="margin-left:auto;border-color:rgba(232,213,163,0.25);"><i class="fa-solid fa-gear"></i> Setup</button>
+          <button class="term-btn" data-cmd="setup" data-project="" style="margin-left:auto;border-color:rgba(var(--gold-rgb), 0.25);"><i class="fa-solid fa-gear"></i> Setup</button>
           ${!pro ? `<span style="font-size:0.55rem;color:var(--text-muted);margin-left:auto;"><i class="fa-solid fa-lock" style="color:var(--accent-gold);margin-right:3px;"></i><a href="https://ukkometa.fi/en/seo-intel/" target="_blank" style="color:var(--accent-gold);text-decoration:none;">Solo</a> for competitors, scheduling & history</span>` : ''}
         </div>
-        <!-- Terminal output -->
-        <div id="termOutput${suffix}" style="padding:12px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;line-height:1.7;color:var(--text-muted);max-height:400px;overflow-y:auto;min-height:60px;">
-          <div style="color:#555;">Ready. Click a command above or type below.</div>
-          <div style="color:#555;">Requires <span style="color:var(--text-secondary);">seo-intel serve</span> for live execution.</div>
-        </div>
-        <!-- Input line -->
-        <div style="display:flex;align-items:center;padding:4px 12px 8px;background:#0c0c0c;border-top:1px solid var(--border-subtle);gap:6px;">
-          <span style="color:var(--color-success);font-family:'SF Mono',monospace;font-size:0.72rem;">$</span>
-          <input id="termInput${suffix}" type="text" placeholder="seo-intel crawl ${project}" style="flex:1;background:none;border:none;color:var(--text-secondary);font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;outline:none;" />
+        <!-- The console: output + input. This is the one part that stays dark
+             in both themes, because it is log output and operators read logs
+             with console conventions. .term-console re-declares the generic
+             tokens locally, so children written with var(--text-muted) etc.
+             resolve against the dark set without per-element handling. -->
+        <div class="term-console">
+          <!-- Terminal output -->
+          <div id="termOutput${suffix}" style="padding:12px 16px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;line-height:1.7;color:var(--text-muted);max-height:400px;overflow-y:auto;min-height:60px;background:var(--term-bg);">
+            <div style="color:var(--text-muted);">Ready. Click a command above or type below.</div>
+            <div style="color:var(--text-muted);">Requires <span style="color:var(--text-secondary);">seo-intel serve</span> for live execution.</div>
+          </div>
+          <!-- Input line -->
+          <div style="display:flex;align-items:center;padding:4px 12px 8px;background:var(--term-bg);border-top:1px solid var(--border-subtle);gap:6px;">
+            <span style="color:var(--color-success);font-family:'SF Mono',monospace;font-size:0.72rem;">$</span>
+            <input id="termInput${suffix}" type="text" placeholder="seo-intel crawl ${project}" style="flex:1;background:none;border:none;color:var(--term-text);font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:0.68rem;outline:none;" />
+          </div>
         </div>
       </div>
     </div>
@@ -2079,7 +2338,7 @@ function buildHtmlTemplate(data, opts = {}) {
               <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="csv" /> <i class="fa-solid fa-table"></i> CSV</label>
               <label class="draft-option" style="flex:1;min-width:60px;"><input type="radio" name="exportFmt${suffix}" value="zip" /> <i class="fa-solid fa-file-zipper"></i> ZIP</label>
             </div>
-            <label class="draft-option" style="margin-top:8px;border-color:var(--accent-gold);background:rgba(212,175,55,0.04);"><input type="checkbox" name="aiExport${suffix}" value="1" /> <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-gold);"></i> AI Smart Export</label>
+            <label class="draft-option" style="margin-top:8px;border-color:var(--accent-gold);background:rgba(var(--gold-deep-rgb), 0.04);"><input type="checkbox" name="aiExport${suffix}" value="1" /> <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-gold);"></i> AI Smart Export</label>
             <div style="font-size:0.55rem;color:var(--text-muted);padding:2px 4px;">Fills gaps, adds priorities & action tips via AI</div>
             <button class="draft-generate-btn profile-download-btn" data-project="${project}" style="margin-top:10px;"><i class="fa-solid fa-download"></i> Download</button>
           </div>
@@ -2089,13 +2348,13 @@ function buildHtmlTemplate(data, opts = {}) {
     </div>
   </div>
   <div class="viewer-row" style="max-width:var(--max-width);margin:0 auto;">
-    <div style="position:relative;background:#0e0e0e;border:1px solid var(--border-card);border-radius:0 0 var(--radius) var(--radius);border-top:none;">
-      <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(80,200,120,0.06);border-bottom:1px solid rgba(80,200,120,0.15);font-family:'SF Mono',monospace;">
+    <div style="position:relative;background:var(--bg-inset);border:1px solid var(--border-card);border-radius:0 0 var(--radius) var(--radius);border-top:none;">
+      <div id="exportSaveStatus${suffix}" style="display:none;padding:4px 10px;font-size:.6rem;color:var(--color-success);background:rgba(var(--emerald-rgb), 0.06);border-bottom:1px solid rgba(var(--emerald-rgb), 0.15);font-family:'SF Mono',monospace;">
         <i class="fa-solid fa-check" style="margin-right:4px;"></i><span></span>
       </div>
       <button id="exportExpand${suffix}" class="export-expand-btn" title="Expand viewer"><i class="fa-solid fa-expand"></i></button>
       <div id="exportViewer${suffix}" class="export-viewer">
-        <div style="color:#444;padding:20px 0;text-align:center;">
+        <div style="color:var(--text-muted);padding:20px 0;text-align:center;">
           <i class="fa-solid fa-file-export" style="font-size:1.2rem;margin-bottom:8px;display:block;"></i>
           Click an export or generate a draft — output appears here.
         </div>
@@ -2648,7 +2907,7 @@ function buildHtmlTemplate(data, opts = {}) {
       <h2><span class="icon"><i class="fa-solid fa-chart-line"></i></span> Google Search Console</h2>
       <div class="gsc-date-range" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
         <span><i class="fa-regular fa-calendar"></i> ${escapeHtml(s.dateRange)}</span>
-        ${ageLabel ? `<span style="font-size:0.65rem;padding:2px 8px;border-radius:3px;background:rgba(0,0,0,0.3);color:${ageColor};">${ageLabel}</span>` : ''}
+        ${ageLabel ? `<span style="font-size:0.65rem;padding:2px 8px;border-radius:3px;background:rgba(var(--shadow-rgb), calc(0.3 * var(--shadow-mult)));color:${ageColor};">${ageLabel}</span>` : ''}
         <span class="gsc-update-wrap" style="margin-left:auto;position:relative;">
           <button onclick="this.parentElement.classList.toggle('open')" style="font-size:0.62rem;color:var(--text-muted);background:none;border:none;cursor:pointer;border-bottom:1px solid var(--border-subtle);padding:0;font-family:inherit;"><i class="fa-solid fa-arrows-rotate" style="margin-right:3px;"></i>Update GSC data</button>
           <div class="gsc-update-tooltip">
@@ -2657,7 +2916,7 @@ function buildHtmlTemplate(data, opts = {}) {
             2. Set date range to <strong>last 3&ndash;6 months</strong> for best results<br>
             3. Click <strong>Export &rarr; Download CSV</strong><br>
             4. Unzip and place the folder in:<br>
-            <code style="display:block;margin:6px 0;padding:4px 8px;background:rgba(0,0,0,0.3);border-radius:3px;font-size:0.7rem;">seo-intel/gsc/${project}-*/</code>
+            <code style="display:block;margin:6px 0;padding:4px 8px;background:rgba(var(--shadow-rgb), calc(0.3 * var(--shadow-mult)));border-radius:3px;font-size:0.7rem;">seo-intel/gsc/${project}-*/</code>
             5. Run <code>seo-intel html</code> to regenerate<br><br>
             <span style="color:var(--text-muted);font-size:0.6rem;"><i class="fa-solid fa-circle-info" style="margin-right:3px;"></i>Use daily (not hourly) export with 3&ndash;6 months for meaningful trend charts.</span>
           </div>
@@ -3119,7 +3378,7 @@ function buildHtmlTemplate(data, opts = {}) {
           <div class="placement-ranks">
             ${np.placement.slice(0, 3).map(p => `
             <div class="placement-rank rank-${p.rank}">
-              <span class="rank-num" style="font-weight:700;font-size:0.75rem;">${p.rank === 1 ? '<i class="fa-solid fa-medal" style="color:#e8d5a3;"></i>' : p.rank === 2 ? '<i class="fa-solid fa-medal" style="color:#b8b8b8;"></i>' : '<i class="fa-solid fa-medal" style="color:#c9916e;"></i>'}</span>
+              <span class="rank-num" style="font-weight:700;font-size:0.75rem;">${p.rank === 1 ? '<i class="fa-solid fa-medal" style="color:var(--medal-gold);"></i>' : p.rank === 2 ? '<i class="fa-solid fa-medal" style="color:var(--medal-silver);"></i>' : '<i class="fa-solid fa-medal" style="color:var(--medal-bronze);"></i>'}</span>
               <span class="rank-url">${escapeHtml(p.url || p.property || '—')}</span>
               <span class="rank-reason">${escapeHtml(p.reason || '')}</span>
             </div>`).join('')}
@@ -4917,6 +5176,39 @@ function buildMultiHtmlTemplate(allProjectData) {
       color: var(--text-muted);
     }
     .project-panel[data-project] { transition: opacity 0.15s ease; }
+
+    /* ─── Theme toggle ─── */
+    .theme-toggle {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-card);
+      border-radius: 100px;
+      font-family: var(--font-body);
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .theme-toggle:hover {
+      border-color: var(--text-muted);
+      color: var(--text-primary);
+      background: var(--bg-elevated);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent-gold);
+      outline-offset: 2px;
+    }
+    .theme-toggle i { font-size: 0.78rem; }
+    @media (max-width: 640px) {
+      .theme-toggle-label { display: none; }
+      .theme-toggle { padding: 7px 10px; }
+    }
   `;
   headHtml = headHtml.slice(0, styleCloseIdx) + multiCss + headHtml.slice(styleCloseIdx) + '\n</head>';
 
@@ -4958,17 +5250,23 @@ function buildMultiHtmlTemplate(allProjectData) {
   return `${headHtml}
 <body>
 
-  <!-- PROJECT SWITCHER (hidden for single project) -->
-  ${allProjectData.length > 1 ? `
+  <!-- TOP BAR — project switcher (2+ projects only) + theme toggle (always) -->
   <div class="project-switcher">
+    ${allProjectData.length > 1 ? `
     <label for="projectSelect"><i class="fa-solid fa-layer-group" style="margin-right:6px;"></i> Project</label>
     <select id="projectSelect" onchange="switchProject(this.value)">
       ${allProjectData.map((d, i) =>
         `<option value="${d.project}" ${i === 0 ? 'selected' : ''}>${d.project.toUpperCase()} — ${d.targetDomain}</option>`
       ).join('\n      ')}
     </select>
-    <span class="project-count">${allProjectData.length} projects</span>
-  </div>` : ''}
+    <span class="project-count">${allProjectData.length} projects</span>` : ''}
+    <button id="themeToggle" class="theme-toggle" type="button"
+            onclick="toggleTheme()" aria-pressed="false"
+            title="Switch between light and dark">
+      <i class="fa-solid fa-moon" aria-hidden="true"></i>
+      <span class="theme-toggle-label">Dark</span>
+    </button>
+  </div>
 
   <!-- PROJECT PANELS -->
   ${panels.join('\n')}
@@ -4978,16 +5276,45 @@ function buildMultiHtmlTemplate(allProjectData) {
     // MULTI-PROJECT DASHBOARD — Chart Init + Project Switching
     // ═══════════════════════════════════════════════════════════════════════════
 
-    const COLORS = {
-      gold: '#e8d5a3', purple: '#7c6deb', success: '#8ecba8', danger: '#d98e8e',
-      info: '#8bbdd9', textPrimary: '#f0f0f0', textMuted: '#555555', gridLines: '#222222',
-      competitors: ['#7c6deb','#8bbdd9','#8ecba8','#d9a88e','#b89ed9','#8bbdb8','#d9c78b','#a3b8d9','#c9a3d9']
+    // ── THEME BRIDGE ─────────────────────────────────────────────────────────
+    // Chart.js and <canvas> take real color strings; neither resolves var().
+    // So the chart palette is READ from the CSS tokens at render time instead
+    // of being duplicated here. Both objects are reassignable and rebuilt by
+    // applyTheme(), which is what lets one toggle re-color every visual.
+    const cssVar = (name, fallback) => {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return v || fallback;
     };
-    const VIZ_COLORS = {
-      target: '#e8d5a3',
-      comps: ['#7c6deb','#8bbdd9','#8ecba8','#d9a88e','#b89ed9','#8bbdb8','#d9c78b','#a3b8d9','#c9a3d9'],
-      bg: '#111111', grid: '#222222', text: '#b8b8b8', muted: '#555555'
-    };
+    const seriesPalette = () => [1,2,3,4,5,6,7,8,9].map(i => cssVar('--series-' + i, '#7c6deb'));
+    // Partial-alpha fills for canvas/Chart.js, built from the -rgb channel
+    // tokens. Read live rather than cached so it is correct after a toggle.
+    const rgbaVar = (name, alpha) => 'rgba(' + cssVar(name, '124,109,235') + ',' + alpha + ')';
+
+    let COLORS = {};
+    let VIZ_COLORS = {};
+    function readThemeColors() {
+      COLORS = {
+        gold: cssVar('--accent-gold', '#e8d5a3'),
+        purple: cssVar('--accent-purple', '#7c6deb'),
+        success: cssVar('--color-success', '#8ecba8'),
+        danger: cssVar('--color-danger', '#d98e8e'),
+        info: cssVar('--color-info', '#8bbdd9'),
+        textPrimary: cssVar('--text-primary', '#f0f0f0'),
+        textMuted: cssVar('--text-muted', '#555555'),
+        gridLines: cssVar('--border-card', '#222222'),
+        tooltipBg: cssVar('--bg-elevated', '#161616'),
+        competitors: seriesPalette(),
+      };
+      VIZ_COLORS = {
+        target: cssVar('--accent-gold', '#e8d5a3'),
+        comps: seriesPalette(),
+        bg: cssVar('--bg-card', '#111111'),
+        grid: cssVar('--border-card', '#222222'),
+        text: cssVar('--text-secondary', '#b8b8b8'),
+        muted: cssVar('--text-muted', '#555555'),
+      };
+    }
+    readThemeColors();
 
     const ALL_DATA = ${JSON.stringify(allChartData)};
 
@@ -5017,7 +5344,7 @@ function buildMultiHtmlTemplate(allProjectData) {
             datasets: d.radarData.datasets.map((ds, i) => ({
               ...ds,
               borderColor: ds.isTarget ? COLORS.gold : COLORS.competitors[i % COLORS.competitors.length],
-              backgroundColor: ds.isTarget ? 'rgba(232,213,163,0.1)' : COLORS.competitors[i % COLORS.competitors.length] + '18',
+              backgroundColor: ds.isTarget ? rgbaVar('--gold-rgb', 0.1) : COLORS.competitors[i % COLORS.competitors.length] + '18',
               borderWidth: ds.isTarget ? 3 : 2,
               pointBackgroundColor: ds.isTarget ? COLORS.gold : COLORS.competitors[i % COLORS.competitors.length],
               pointBorderColor: ds.isTarget ? COLORS.gold : COLORS.competitors[i % COLORS.competitors.length],
@@ -5027,7 +5354,7 @@ function buildMultiHtmlTemplate(allProjectData) {
           options: {
             responsive: true, maintainAspectRatio: false,
             scales: { r: { beginAtZero: true, max: 100, grid: { color: COLORS.gridLines }, angleLines: { color: COLORS.gridLines }, ticks: { color: COLORS.textMuted, backdropColor: 'transparent', stepSize: 20 }, pointLabels: { color: COLORS.textPrimary, font: { size: 11, weight: '500' } } } },
-            plugins: { legend: { position: 'bottom', labels: { color: COLORS.textPrimary, usePointStyle: true, padding: 20, font: { size: 11 } } }, tooltip: { backgroundColor: '#161616', titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 4, padding: 12 } }
+            plugins: { legend: { position: 'bottom', labels: { color: COLORS.textPrimary, usePointStyle: true, padding: 20, font: { size: 11 } } }, tooltip: { backgroundColor: COLORS.tooltipBg, titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 4, padding: 12 } }
           }
         }));
       }
@@ -5035,10 +5362,14 @@ function buildMultiHtmlTemplate(allProjectData) {
       // Content Volume
       const volEl = document.getElementById('contentVolumeChart' + sfx);
       if (volEl && d.contentVolumeData?.labels?.length) {
+        // Resolve roles to the live palette so the bars follow the theme.
+        var volColors = d.contentVolumeData.isTarget.map(function (t) {
+          return t ? COLORS.gold : COLORS.purple;
+        });
         chartInstances[project].push(new Chart(volEl, {
           type: 'bar',
-          data: { labels: d.contentVolumeData.labels, datasets: [{ label: 'Total Word Count', data: d.contentVolumeData.values, backgroundColor: d.contentVolumeData.colors, borderColor: d.contentVolumeData.colors, borderWidth: 0, borderRadius: 6, barThickness: 24 }] },
-          options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: COLORS.gridLines }, ticks: { color: COLORS.textMuted } }, y: { grid: { display: false }, ticks: { color: COLORS.textPrimary, font: { weight: '500' } } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#161616', titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 4, callbacks: { label: ctx => ' ' + ctx.parsed.x.toLocaleString() + ' words' } } } }
+          data: { labels: d.contentVolumeData.labels, datasets: [{ label: 'Total Word Count', data: d.contentVolumeData.values, backgroundColor: volColors, borderColor: volColors, borderWidth: 0, borderRadius: 6, barThickness: 24 }] },
+          options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: COLORS.gridLines }, ticks: { color: COLORS.textMuted } }, y: { grid: { display: false }, ticks: { color: COLORS.textPrimary, font: { weight: '500' } } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.tooltipBg, titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 4, callbacks: { label: ctx => ' ' + ctx.parsed.x.toLocaleString() + ' words' } } } }
         }));
       }
 
@@ -5048,7 +5379,7 @@ function buildMultiHtmlTemplate(allProjectData) {
         chartInstances[project].push(new Chart(linksEl, {
           type: 'bar',
           data: { labels: d.internalLinksTopPages.map(p => p.label), datasets: [{ label: 'Inbound Links', data: d.internalLinksTopPages.map(p => p.count), backgroundColor: COLORS.info, borderRadius: 4, barThickness: 18 }] },
-          options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: COLORS.gridLines }, ticks: { color: COLORS.textMuted } }, y: { grid: { display: false }, ticks: { color: COLORS.textPrimary, font: { size: 10 } } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#161616', titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 8 } } }
+          options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: COLORS.gridLines }, ticks: { color: COLORS.textMuted } }, y: { grid: { display: false }, ticks: { color: COLORS.textPrimary, font: { size: 10 } } } }, plugins: { legend: { display: false }, tooltip: { backgroundColor: COLORS.tooltipBg, titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 8 } } }
         }));
       }
 
@@ -5061,23 +5392,23 @@ function buildMultiHtmlTemplate(allProjectData) {
           data: {
             labels: labels,
             datasets: [
-              { label: 'Clicks', data: d.gscChart.map(r => r.clicks), borderColor: '#8bbdd9', backgroundColor: 'rgba(139,189,217,0.08)', borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: '#8bbdd9', tension: 0.3, fill: true, yAxisID: 'y' },
-              { label: 'Impressions', data: d.gscChart.map(r => r.impressions), borderColor: '#7c6deb', backgroundColor: 'rgba(124,109,235,0.05)', borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: '#7c6deb', tension: 0.3, fill: true, yAxisID: 'y1' },
-              { label: 'Avg Position', data: d.gscChart.map(r => r.position), borderColor: '#e8d5a3', borderWidth: 1.5, borderDash: [4,3], pointRadius: 0, pointHoverRadius: 3, pointHoverBackgroundColor: '#e8d5a3', tension: 0.3, fill: false, yAxisID: 'y2' }
+              { label: 'Clicks', data: d.gscChart.map(r => r.clicks), borderColor: COLORS.info, backgroundColor: rgbaVar('--info-rgb', 0.08), borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: COLORS.info, tension: 0.3, fill: true, yAxisID: 'y' },
+              { label: 'Impressions', data: d.gscChart.map(r => r.impressions), borderColor: COLORS.purple, backgroundColor: rgbaVar('--purple-rgb', 0.05), borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: COLORS.purple, tension: 0.3, fill: true, yAxisID: 'y1' },
+              { label: 'Avg Position', data: d.gscChart.map(r => r.position), borderColor: COLORS.gold, borderWidth: 1.5, borderDash: [4,3], pointRadius: 0, pointHoverRadius: 3, pointHoverBackgroundColor: COLORS.gold, tension: 0.3, fill: false, yAxisID: 'y2' }
             ]
           },
           options: {
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             scales: {
-              x: { grid: { color: '#222222', drawBorder: false }, ticks: { color: '#555555', font: { size: 10 }, maxRotation: 45, maxTicksLimit: 15 } },
-              y: { type: 'linear', position: 'left', title: { display: true, text: 'Clicks', color: '#8bbdd9', font: { size: 10 } }, grid: { color: '#222222' }, ticks: { color: '#8bbdd9', font: { size: 10 } }, beginAtZero: true },
-              y1: { type: 'linear', position: 'right', title: { display: true, text: 'Impressions', color: '#7c6deb', font: { size: 10 } }, grid: { drawOnChartArea: false }, ticks: { color: '#7c6deb', font: { size: 10 } }, beginAtZero: true },
+              x: { grid: { color: COLORS.gridLines, drawBorder: false }, ticks: { color: COLORS.textMuted, font: { size: 10 }, maxRotation: 45, maxTicksLimit: 15 } },
+              y: { type: 'linear', position: 'left', title: { display: true, text: 'Clicks', color: COLORS.info, font: { size: 10 } }, grid: { color: COLORS.gridLines }, ticks: { color: COLORS.info, font: { size: 10 } }, beginAtZero: true },
+              y1: { type: 'linear', position: 'right', title: { display: true, text: 'Impressions', color: COLORS.purple, font: { size: 10 } }, grid: { drawOnChartArea: false }, ticks: { color: COLORS.purple, font: { size: 10 } }, beginAtZero: true },
               y2: { type: 'linear', position: 'right', title: { display: false }, grid: { drawOnChartArea: false }, ticks: { display: false }, reverse: true, beginAtZero: false }
             },
             plugins: {
-              legend: { position: 'bottom', labels: { color: '#f0f0f0', usePointStyle: true, padding: 20, font: { size: 11 } } },
-              tooltip: { backgroundColor: '#161616', titleColor: '#e8d5a3', bodyColor: '#f0f0f0', borderColor: '#222222', borderWidth: 1, cornerRadius: 4, padding: 12, callbacks: { label: function(ctx) { if (ctx.dataset.label === 'Avg Position') return 'Pos: ' + ctx.parsed.y.toFixed(1); return ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(); } } }
+              legend: { position: 'bottom', labels: { color: COLORS.textPrimary, usePointStyle: true, padding: 20, font: { size: 11 } } },
+              tooltip: { backgroundColor: COLORS.tooltipBg, titleColor: COLORS.gold, bodyColor: COLORS.textPrimary, borderColor: COLORS.gridLines, borderWidth: 1, cornerRadius: 4, padding: 12, callbacks: { label: function(ctx) { if (ctx.dataset.label === 'Avg Position') return 'Pos: ' + ctx.parsed.y.toFixed(1); return ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString(); } } }
             }
           }
         }));
@@ -5119,10 +5450,10 @@ function buildMultiHtmlTemplate(allProjectData) {
       ctx.fillStyle = VIZ_COLORS.comps[0]+'cc'; ctx.fillText(z.c1_only, cx-100, cy+70);
       ctx.fillStyle = VIZ_COLORS.comps[1]+'cc'; ctx.fillText(z.c2_only, cx+100, cy+70);
       ctx.font = '700 14px Syne, sans-serif';
-      ctx.fillStyle = '#f0f0f0'; ctx.fillText(z.t_c1, cx-40, cy-8);
-      ctx.fillStyle = '#f0f0f0'; ctx.fillText(z.t_c2, cx+40, cy-8);
-      ctx.fillStyle = '#f0f0f0'; ctx.fillText(z.c1_c2, cx, cy+55);
-      ctx.font = '800 18px Syne, sans-serif'; ctx.fillStyle = '#f0f0f0'; ctx.fillText(z.all3, cx, cy+18);
+      ctx.fillStyle = COLORS.textPrimary; ctx.fillText(z.t_c1, cx-40, cy-8);
+      ctx.fillStyle = COLORS.textPrimary; ctx.fillText(z.t_c2, cx+40, cy-8);
+      ctx.fillStyle = COLORS.textPrimary; ctx.fillText(z.c1_c2, cx, cy+55);
+      ctx.font = '800 18px Syne, sans-serif'; ctx.fillStyle = COLORS.textPrimary; ctx.fillText(z.all3, cx, cy+18);
       ctx.font = '400 9px Inter, sans-serif'; ctx.fillStyle = VIZ_COLORS.muted; ctx.fillText('shared by all', cx, cy+32);
     }
 
@@ -5138,7 +5469,7 @@ function buildMultiHtmlTemplate(allProjectData) {
         for (const e of edges) { const a = nodes.find(n => n.id===e.source); const b = nodes.find(n => n.id===e.target); if (!a||!b) continue; const dx = b.x-a.x; const dy = b.y-a.y; const dist = Math.max(Math.sqrt(dx*dx+dy*dy), 1); const strength = (e.weight/maxWeight)*0.12; a.vx += dx*strength; a.vy += dy*strength; b.vx -= dx*strength; b.vy -= dy*strength; }
         nodes.forEach(n => { n.vx += (W/2-n.x)*0.01; n.vy += (H/2-n.y)*0.01; n.x += n.vx*0.3; n.y += n.vy*0.3; n.vx *= 0.8; n.vy *= 0.8; n.x = Math.max(margin, Math.min(W-margin, n.x)); n.y = Math.max(margin, Math.min(H-margin, n.y)); });
       }
-      edges.forEach(e => { const a = nodes.find(n => n.id===e.source); const b = nodes.find(n => n.id===e.target); if (!a||!b) return; const alpha = Math.min(0.6, (e.weight/maxWeight)*0.8+0.1); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = 'rgba(124,109,235,'+alpha+')'; ctx.lineWidth = Math.max(1, (e.weight/maxWeight)*4); ctx.stroke(); if (e.weight > maxWeight*0.3) { ctx.font = '400 9px Inter'; ctx.fillStyle = VIZ_COLORS.muted; ctx.textAlign = 'center'; ctx.fillText(e.weight, (a.x+b.x)/2, (a.y+b.y)/2-6); } });
+      edges.forEach(e => { const a = nodes.find(n => n.id===e.source); const b = nodes.find(n => n.id===e.target); if (!a||!b) return; const alpha = Math.min(0.6, (e.weight/maxWeight)*0.8+0.1); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = rgbaVar('--purple-rgb', alpha); ctx.lineWidth = Math.max(1, (e.weight/maxWeight)*4); ctx.stroke(); if (e.weight > maxWeight*0.3) { ctx.font = '400 9px Inter'; ctx.fillStyle = VIZ_COLORS.muted; ctx.textAlign = 'center'; ctx.fillText(e.weight, (a.x+b.x)/2, (a.y+b.y)/2-6); } });
       const maxSize = Math.max(...nodes.map(n => n.size), 1);
       nodes.forEach(n => { const r = 14+(n.size/maxSize)*26; const color = n.role==='target' ? VIZ_COLORS.target : VIZ_COLORS.comps[nodes.indexOf(n) % VIZ_COLORS.comps.length]; ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI*2); ctx.fillStyle = color+'30'; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = n.role==='target' ? 3 : 1.5; ctx.stroke(); ctx.font = '600 12px Syne'; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.fillText(n.label, n.x, n.y-r-8); ctx.font = '400 10px Inter'; ctx.fillStyle = VIZ_COLORS.muted; ctx.fillText(n.size+' kw', n.x, n.y+4); });
     }
@@ -5375,6 +5706,52 @@ function buildMultiHtmlTemplate(allProjectData) {
         drawAllCanvases(newProject);
       }, 50); // small delay to let DOM paint
     }
+
+    // ── THEME TOGGLE ─────────────────────────────────────────────────────────
+    // CSS flips on the data-theme attribute by itself. Charts and canvases do
+    // not: they hold resolved color strings from render time, so they have to
+    // be re-read and repainted. Reuses the same two entry points as
+    // switchProject rather than adding a parallel render path.
+    // Keep the control's icon, label and pressed state honest. The button
+    // advertises what you will GET, not where you are.
+    function syncThemeControl(theme) {
+      var btn = document.getElementById('themeToggle');
+      if (!btn) return;
+      var isDark = theme === 'dark';
+      var icon = btn.querySelector('i');
+      var label = btn.querySelector('.theme-toggle-label');
+      if (icon) icon.className = isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+      if (label) label.textContent = isDark ? 'Light' : 'Dark';
+      btn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+      btn.title = isDark ? 'Switch to light' : 'Switch to dark';
+    }
+
+    function toggleTheme() {
+      var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      var theme = isDark ? 'light' : 'dark';
+
+      if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      else document.documentElement.removeAttribute('data-theme');
+      try { localStorage.setItem('seoIntelTheme', theme); } catch (e) { /* blocked storage */ }
+
+      syncThemeControl(theme);
+      readThemeColors();
+
+      // Repaint the visible panel only — hidden panels re-render on switch.
+      if (chartInstances[currentProject]) {
+        chartInstances[currentProject].forEach(function (c) { c.destroy(); });
+        chartInstances[currentProject] = [];
+      }
+      initCharts(currentProject);
+      drawAllCanvases(currentProject);
+    }
+
+    // Match the control to whatever the pre-paint script stamped. Deliberately
+    // does NOT repaint — the first chart render happens at INIT FIRST PROJECT
+    // below, and painting here would leave orphaned Chart.js instances.
+    syncThemeControl(
+      document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
+    );
 
     // ── LIVE CONTROLS (multi-project) ──
     (function() {
@@ -6203,7 +6580,10 @@ function buildContentVolumeData(domains, targetDomain) {
   return {
     labels: sorted.map(d => getDomainShortName(d.domain)),
     values: sorted.map(d => d.total_word_count),
-    colors: sorted.map(d => d.role === 'target' ? '#e8d5a3' : '#7c6deb')
+    // Emit the ROLE, not a color. This runs server-side and cannot read the
+    // theme tokens, and a baked hex would not survive a light/dark toggle —
+    // the client resolves these against the live palette at render time.
+    isTarget: sorted.map(d => d.role === 'target'),
   };
 }
 

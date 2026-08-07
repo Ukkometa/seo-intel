@@ -4,9 +4,12 @@ description: >
   Local SEO data layer for AI agents. Use when the user asks about SEO analysis, competitor research,
   keyword gaps, content strategy, site audits, AI citability (AEO), or wants to crawl/analyze websites.
   Ships a Model Context Protocol (MCP) server so Claude Code / Cursor / Cline / any MCP host can call
-  seo-intel's local SQLite intelligence as native tools — list_projects, get_intel, get_pages,
-  list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, export_intel,
-  run_citability_audit, prescore_draft, draft_blog_prompt (all free), plus get_competitor_positioning (Solo).
+  seo-intel's local SQLite intelligence as 22 native tools. Free — setup_project (zero to configured
+  from chat), crawl_site (ad-hoc, any URL, no config), run_crawl, get_crawl_status, run_content_loop,
+  list_projects, list_problems, mark_problem_status, get_intel (raw/audit/blog/graph), get_pages,
+  list_keywords, get_headings, ingest_insight, run_citability_audit, rescore_page (verify a fix:
+  before/after/delta), tech_audit, suggest_models, prescore_draft, draft_blog_prompt, export_intel.
+  Solo — scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor).
   Also covers: CLI commands (crawl/extract/analyze/aeo/keywords/watch/blog-draft/export), Intelligence
   Ledger (deduped insight accumulation), agentic exports, gap-intel, technical audit, and competitive
   action planning. Free tier covers your own site end-to-end — crawl, AI citability, keyword intel,
@@ -38,7 +41,7 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+)
 
-The MCP server exposes 21 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. Almost everything is free — only competitor synthesis and the one-shot `scan_site` require Solo.
+The MCP server exposes 22 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 20 of the 22 are free — only `scan_site` and `get_competitor_positioning` require Solo, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
@@ -126,7 +129,7 @@ Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
 | **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
-| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 15 native MCP tools for AI agents |
+| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 22 native MCP tools for AI agents (20 free) |
 
 ### Agent interpretation rule
 
@@ -401,13 +404,14 @@ seo-intel aeo <project> --target-only  # Skip competitor scoring
 seo-intel aeo <project> --save         # Export .md report
 ```
 
-**6 citability signals** scored per page:
+**7 citability signals** scored per page:
 - **Entity authority** — Is this page the canonical source for its entities?
 - **Structured claims** — "X is Y because Z" patterns that AI can quote directly
 - **Answer density** — Ratio of direct answers to filler content
 - **Q&A proximity** — Question heading → answer paragraph pattern
 - **Freshness** — dateModified, schema, "Updated March 2026" signals
 - **Schema coverage** — JSON-LD structured data present
+- **AI-crawler access** — does robots.txt let GPTBot, ClaudeBot, PerplexityBot, Google-Extended and CCBot through? A block hard-caps the page score at 30, because a page an answer engine cannot fetch cannot be cited no matter how well it is written.
 
 **AI Query Intent classification:** synthesis, decision support, implementation, exploration, validation
 

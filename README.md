@@ -62,39 +62,55 @@ seo-intel suggest-usecases myproject --scope docs      # infer what pages/docs s
 
 ## Commands
 
-### Free
+**The line: everything about your own site is free. Solo adds your competitors.**
+
+Analysis of your own site is free because a capable agent commoditizes one-shot
+analysis anyway. The paywall sits on what you structurally can't do alone:
+competitor synthesis, automation, and history.
+
+### Free — your own site, no page or project limits
 
 | Command | Description |
 |---------|-------------|
 | `setup` | First-time wizard — auto-detects the Agent Harness for agent-powered setup |
+| `scan <domain>` | One-shot full audit, no config needed — start here |
+| `crawl-url <url>` | Ad-hoc crawl of any URL — no project, nothing saved |
 | `crawl <project>` | Crawl target + competitor sites |
-| `status` | System status, crawl freshness, license info |
-| `html <project>` | Generate crawl-only dashboard |
-| `serve` | Start local dashboard server (port 3000) |
-| `export-actions <project> --scope technical` | Technical SEO audit from crawl data |
+| `extract <project>` | Local AI extraction via Ollama / LM Studio |
+| `aeo <project>` | AI Citability Audit — score every page across 7 signals |
+| `rescore <project> <url>` | Verify a fix — before/after/delta on the raw-HTML score |
+| `keywords <project>` | Keyword intelligence matrix |
+| `blog-draft <project>` | AEO-optimised blog draft from the Intelligence Ledger |
+| `loop <project>` | Content loop: top gap → draft → prescore → queue |
+| `html <project>` / `graph <project>` | Full dashboard and site-graph visualization |
+| `watch <project>` | Site Watch — health score and change detection |
+| `tech-audit <project>` | Technical SEO audit from crawl data |
+| `templates` / `orphans` / `js-delta` | Template detection, orphan entities, JS-render delta |
 | `schemas <project>` | Schema.org coverage analysis |
-| `update` | Check for updates |
+| `intel <project> --for raw\|audit\|blog\|graph` | Agent-ready intelligence slices |
+| `export` / `export-actions --scope technical` | Raw data and technical action exports |
+| `serve` / `status` / `update` / `guide` | Dashboard server, status, updates, guided walkthrough |
 
-### Solo (€19.99/mo · [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/))
+### Solo (€19.99/mo · €199.99/yr · 14-day free trial · [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/))
 
 | Command | Description |
 |---------|-------------|
-| `extract <project>` | Local AI extraction via Ollama |
+| **Competitors** | |
 | `analyze <project>` | Full competitive gap analysis |
-| `export-actions <project>` | All export scopes (technical + competitive + suggestive) |
-| `competitive-actions <project>` | Competitive gap export with `--vs domain` filter |
-| `suggest-usecases <project>` | Infer what pages/features to build from competitor data |
-| `keywords <project>` | Keyword gap matrix |
-| `run <project>` | Full pipeline: crawl → extract → analyze → report |
-| `brief <project>` | AI content briefs for gap topics |
-| `velocity <project>` | Content publishing velocity tracker |
+| `gap-intel <project>` | Topic/content gaps vs competitors |
 | `shallow <project>` | Find "shallow champion" pages to outrank |
-| `decay <project>` | Find stale competitor content |
-| `headings-audit <project>` | H1-H6 structure analysis |
-| `orphans <project>` | Orphaned pages detection |
-| `entities <project>` | Entity coverage gap analysis |
-| `friction <project>` | Conversion friction detection |
-| `js-delta <project>` | JS-rendered vs raw HTML comparison |
+| `decay <project>` | Find stale, decaying competitor content |
+| `headings-audit <project>` | Competitor H1-H6 structure analysis |
+| `entities <project>` | Entity coverage gaps vs competitors |
+| `friction <project>` | Competitor intent/CTA mismatch targets |
+| `competitive-actions <project>` | Competitive gap export with `--vs domain` |
+| `suggest-usecases <project>` | Infer missing pages from competitor patterns |
+| `intel <project> --for competitor` | Competitor digest for agents |
+| **Automation** | |
+| `run` | Smart scheduler — crawl next stale domain, analyze, exit |
+| **History & trends** | |
+| `brief <project>` | Crawl change brief — what changed since last run |
+| `velocity <project>` | Publishing velocity — how fast each domain ships |
 
 ## Project Configuration
 
@@ -192,12 +208,16 @@ Upload your GSC data for ranking insights:
 ## License
 
 ### Free Tier
-- 1 project, 500 pages/domain
-- Crawl, extract, setup, basic reports
+- **Unlimited projects and unlimited pages per domain** — no caps
+- Everything about your own site: crawl, local AI extraction, AI Citability Audit
+  (AEO), keyword intelligence, blog drafts, dashboards, site graph, Site Watch,
+  technical audit, Search Console insights, and 20 of the 22 MCP tools
 
-### Solo (€19.99/mo · €199.99/yr)
-- Unlimited projects and pages
-- All analysis commands, GSC insights, scheduling
+### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
+- Competitor synthesis — gap analysis, positioning, keyword battleground,
+  shallow/decay/entity/friction attacks, competitor exports and digests
+- Automation — the smart scheduler (`run`)
+- History and trends — crawl change brief, publishing velocity
 
 ```bash
 # Set your license key

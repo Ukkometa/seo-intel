@@ -14,6 +14,8 @@ The following directories and their contents are licensed under the MIT License:
   db/
   setup/
   lib/
+  extractor/
+  reports/generate-html.js
   config/example.json
   config/setup-wizard.js
   cli.js (command routing and setup commands only)
@@ -42,17 +44,23 @@ SOFTWARE.
 PART 2 — Commercial License (Proprietary Layer)
 ================================================================================
 
-The following directories and their contents are proprietary and require a
-valid SEO Intel Solo license for use:
+The following directories and their contents are proprietary. They may be used
+without charge for analysis of a site you own or operate. A valid SEO Intel Solo
+license is required only for the competitor-analysis, scheduling, and historical
+trend features they implement:
 
   analysis/
-  extractor/
-  reports/generate-html.js
   reports/gsc-loader.js
 
-These files contain the competitive analysis prompts, intelligence logic,
-and report generation code that form the core intellectual property of
-SEO Intel.
+These files contain the competitive analysis prompts and intelligence logic that
+form the core intellectual property of SEO Intel.
+
+NOTE ON SCOPE (corrected 2026-08-06): earlier versions of this file also listed
+extractor/ and reports/generate-html.js as requiring a Solo license. Since
+v1.5.41, local AI extraction and the HTML dashboard are free for analysis of
+your own site, and gate.js permits both without a license. The license text had
+not followed the product. Those two paths are covered by Part 1 (MIT) as of this
+correction, and no free-tier user has ever been in violation for using them.
 
 You MAY NOT:
   - Copy, modify, or redistribute these files

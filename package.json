@@ -90,6 +90,9 @@
     "report": "node cli.js report",
     "setup": "node cli.js setup",
     "serve": "node cli.js serve",
+    "check": "node scripts/check-layers.js",
+    "check:fix": "node scripts/check-layers.js --fix",
+    "check:json": "node scripts/check-layers.js --json",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

@@ -65,9 +65,17 @@ PRODUCT_STATUS.md
 agent-task*.md
 COMMANDS.md
 seo-intel-promo/
+# scripts/ is local-only by default (publish.sh, prepare-release.sh, smoke tests
+# — release plumbing that has no business on GitHub). The exceptions below are
+# build tooling that CLAUDE.md actively depends on. They were previously ignored,
+# which is how scripts/sync-version.js was lost: untracked, unbacked-up, gone,
+# and the version drift it existed to prevent went unnoticed for three releases.
+# If CLAUDE.md tells a future session to run it, it must be tracked.
 scripts/*
 !scripts/
 !scripts/mock-crawl-test.js
+!scripts/check-layers.js
+!scripts/sync-plugin.js
 .firecrawl/
 
 # ─── Build artifacts ───

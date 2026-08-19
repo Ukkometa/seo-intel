@@ -7,6 +7,8 @@
  * YouTube metadata checks require an owner-provided YOUTUBE_API_KEY.
  */
 
+import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
+
 const YOUTUBE_HOST_RE = /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i;
 const GITHUB_HOST_RE = /(^|\.)github\.com$/i;
 
@@ -65,23 +67,24 @@ async function youtubeMetadata(videoIds, targetHost, githubUrls, apiKey) {
 export async function runTriangulationScan(db, project, opts = {}) {
   const target = db.prepare("SELECT domain FROM domains WHERE project = ? AND role = 'target' LIMIT 1").get(project)?.domain || null;
   const rows = db.prepare(`
-    SELECT p.id, p.url, p.title, p.body_text, d.role,
-           GROUP_CONCAT(DISTINCT l.target_url) AS linked_urls
+    SELECT p.id, p.url, p.title, d.role
     FROM pages p
     JOIN domains d ON d.id = p.domain_id
-    LEFT JOIN links l ON l.source_id = p.id
     WHERE d.project = ? AND d.role IN ('target', 'owned') AND p.is_indexable = 1
-    GROUP BY p.id
     ORDER BY p.url
   `).all(project);
 
   const pages = [];
   const schemaStmt = db.prepare('SELECT raw_json FROM page_schemas WHERE page_id = ?');
+  // Links are read per page rather than GROUP_CONCAT'd: the concatenated form
+  // is comma-joined, and real URLs contain commas, so splitting it back apart
+  // shreds them. SQLite has no custom separator for GROUP_CONCAT(DISTINCT x).
+  const linkStmt = db.prepare('SELECT DISTINCT target_url FROM links WHERE source_id = ?');
   const videoIds = new Set();
   const githubUrls = new Set();
 
   for (const row of rows) {
-    const links = (row.linked_urls || '').split(',').filter(Boolean);
+    const links = linkStmt.all(row.id).map(r => r.target_url).filter(Boolean);
     const github = links.filter(url => GITHUB_HOST_RE.test(hostOf(url)) && !/\/issues(?:\/|$)/.test(url));
     const youtubeLinks = links.filter(url => YOUTUBE_HOST_RE.test(hostOf(url)));
     const schemas = schemaStmt.all(row.id).map(item => parseJson(item.raw_json)).filter(Boolean);
@@ -99,7 +102,7 @@ export async function runTriangulationScan(db, project, opts = {}) {
   }
 
   if (opts.live) {
-    for (const page of pages) {
+    await mapLimit(pages, opts.concurrency || LIVE_CONCURRENCY, async (page) => {
       try {
         const res = await fetchHtml(page.url);
         const iframeVideo = /<iframe\b[^>]+(?:youtube(?:-nocookie)?\.com|youtu\.be)[^>]*>/i.test(res.html);
@@ -108,7 +111,7 @@ export async function runTriangulationScan(db, project, opts = {}) {
       } catch (error) {
         page.live = { error: error.name === 'AbortError' ? 'timeout' : error.message };
       }
-    }
+    });
   }
 
   for (const page of pages) {

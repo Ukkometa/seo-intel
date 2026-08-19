@@ -24,6 +24,12 @@ db.prepare('INSERT INTO page_schemas VALUES (?, ?, ?)').run(1, 'Organization', J
 db.prepare('INSERT INTO page_schemas VALUES (?, ?, ?)').run(1, 'TechArticle', JSON.stringify({ '@type': 'TechArticle' }));
 db.prepare('INSERT INTO links VALUES (?, ?)').run(1, 'https://github.com/example/project');
 db.prepare('INSERT INTO links VALUES (?, ?)').run(1, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+// Regression: a URL containing a comma must survive the links lookup intact.
+db.prepare('INSERT INTO links VALUES (?, ?)').run(1, 'https://github.com/example/project?tags=a,b');
+// Regression: a docs page the crawl never stored body text for must not be scored.
+db.prepare('INSERT INTO pages VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  2, 1, 'https://example.com/docs/unread', 'Unread doc', '', 0, 1,
+);
 
 const entity = await runEntityAudit(db, 'fixture', { targetUrl: 'https://example.com/' });
 assert.equal(entity.status, 'pass');
@@ -36,9 +42,17 @@ assert.equal(tri.pages[0].score, 65, 'local scan does not mistake a YouTube link
 assert.equal(tri.pages[0].signals.githubActive, true);
 assert.equal(tri.pages[0].signals.technicalSchema, true);
 assert.equal(tri.pages[0].signals.videoEmbedded, false);
+assert.ok(
+  tri.pages[0].githubLinks.includes('https://github.com/example/project?tags=a,b'),
+  'a comma inside a URL must not split it into fragments',
+);
+assert.equal(tri.pages[0].githubLinks.length, 2);
 
 const geo = await runGeoAudit(db, 'fixture');
-assert.equal(geo.pages.length, 1);
+assert.equal(geo.pages.length, 1, 'a page with no stored body text is not scored');
+assert.equal(geo.summary.notAnalyzable, 1, 'it is reported as not analyzable instead');
+assert.equal(geo.notAnalyzable[0].reason, 'no_body_text');
+assert.equal(geo.summary.missingDefinitions, 0, 'an unread page is not a missing definition');
 assert.ok(geo.pages[0].definition);
 assert.equal(geo.pages[0].code.withLanguage, 1);
 assert.ok(geo.pages[0].score >= 80);

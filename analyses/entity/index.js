@@ -6,6 +6,8 @@
  * checks whether accessible profiles expose the official site hostname.
  */
 
+import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
+
 const SOCIAL_HOSTS = new Set([
   'x.com', 'twitter.com', 'github.com', 'youtube.com', 'www.youtube.com',
   'medium.com', 'www.medium.com', 'linkedin.com', 'www.linkedin.com',
@@ -54,9 +56,10 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = 12_000) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
-      redirect: 'follow', signal: controller.signal,
-      headers: { 'user-agent': 'SEO-Intel/1.5 entity-audit (+https://ukkometa.fi/seo-intel)', ...init.headers },
+      redirect: 'follow',
       ...init,
+      signal: controller.signal,
+      headers: { 'user-agent': 'SEO-Intel/1.5 entity-audit (+https://ukkometa.fi/seo-intel)', ...init.headers },
     });
   } finally {
     clearTimeout(timer);
@@ -127,10 +130,18 @@ export async function runEntityAudit(db, project, opts = {}) {
   const issues = [];
   const canonicalChecks = [];
   const reciprocity = [];
+  const seenOrganizations = new Set();
 
   for (const row of rows) {
     const raw = parseJson(row.raw_json);
     if (!raw || !typesOf(raw).includes('Organization')) continue;
+    // One page crawled under two URL spellings ("https://x.io" and
+    // "https://x.io/") yields the same Organization block twice. Count and
+    // report it once, keyed by page identity plus entity identity.
+    const pageKey = row.page_url.replace(/\/+$/, '').toLowerCase();
+    const orgKey = `${pageKey}|${raw['@id'] || raw.url || raw.name || ''}`;
+    if (seenOrganizations.has(orgKey)) continue;
+    seenOrganizations.add(orgKey);
     const sameAs = sameAsOf(raw);
     const placement = pathIsAllowed(row.page_url) ? 'allowed' : 'subpage';
     const record = {
@@ -170,8 +181,7 @@ export async function runEntityAudit(db, project, opts = {}) {
       const host = hostOf(profileUrl);
       if (host && (host === targetRoot || host.endsWith(`.${targetRoot}`))) {
         issues.push({ severity: 'notice', code: 'owned_surface_in_sameas', pageUrl: row.page_url, url: profileUrl, message: 'This is an owned web surface, not an external identity profile. Keep it in WebSite/WebPage linking rather than sameAs unless it represents a separately recognized entity.' });
-      }
-      if (host && !SOCIAL_HOSTS.has(host)) {
+      } else if (host && !SOCIAL_HOSTS.has(host)) {
         issues.push({ severity: 'notice', code: 'non_profile_sameas', pageUrl: row.page_url, url: profileUrl, message: 'Review whether this sameAs URL is an official public identity profile.' });
       }
     }
@@ -182,25 +192,27 @@ export async function runEntityAudit(db, project, opts = {}) {
   }
 
   if (opts.live) {
+    const limit = opts.concurrency || LIVE_CONCURRENCY;
     const urls = [...new Set(organizations.flatMap(o => [o.organizationUrl, o.logo, ...o.sameAs]).filter(Boolean))];
-    for (const url of urls) {
-      const check = await probeCanonicalUrl(url);
+    const checks = await mapLimit(urls, limit, url => probeCanonicalUrl(url));
+    for (const check of checks) {
       canonicalChecks.push(check);
       if (!check.reachable) {
-        issues.push({ severity: 'warning', code: 'unreachable_entity_url', url, message: 'Entity URL could not be reached by the validator.' });
+        issues.push({ severity: 'warning', code: 'unreachable_entity_url', url: check.input, message: 'Entity URL could not be reached by the validator.' });
       } else if (check.redirects) {
-        issues.push({ severity: 'warning', code: 'redirecting_entity_url', url, finalUrl: check.finalUrl, message: 'Use the final non-redirecting URL in Organization markup.' });
+        issues.push({ severity: 'warning', code: 'redirecting_entity_url', url: check.input, finalUrl: check.finalUrl, message: 'Use the final non-redirecting URL in Organization markup.' });
       }
     }
 
-    for (const profileUrl of [...new Set(organizations.flatMap(o => o.sameAs))]) {
-      const result = await probeReciprocity(profileUrl, targetHost);
-      const entry = { profileUrl, ...result };
-      reciprocity.push(entry);
+    const profileUrls = [...new Set(organizations.flatMap(o => o.sameAs))];
+    const results = await mapLimit(profileUrls, limit, profileUrl => probeReciprocity(profileUrl, targetHost));
+    results.forEach((result, i) => {
+      const profileUrl = profileUrls[i];
+      reciprocity.push({ profileUrl, ...result });
       if (result.reachable && !result.observedSiteReference) {
         issues.push({ severity: 'warning', code: 'unidirectional_entity_link', url: profileUrl, message: `No ${targetHost} reference was observed in accessible profile HTML. Confirm the Website field/bio links directly to the canonical site.` });
       }
-    }
+    });
   }
 
   const homepageOrganizations = organizations.filter(o => {

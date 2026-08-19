@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.5.54 (2026-08-19)
+
+### New: modern multi-surface SEO audits
+
+Four commands for the surfaces a classic on-page audit does not reach. All four are free, run on existing crawl data, and print `--format json` for agents.
+
+- `entity-audit <project>` maps `Organization` JSON-LD and its `sameAs` identity links: URL syntax, HTTPS, duplicates, and whether the block sits on the homepage or `/about` rather than being copied across subpages. `--live` resolves redirecting entity URLs and looks for your canonical host in reachable profile HTML. A profile that blocks bots is reported as **unknown**, never as a missing link.
+- `triangulation <project>` scores docs and posts on three proof signals: an embedded YouTube iframe, a direct link to active source on GitHub, and matching `TechArticle` or `SoftwareSourceCode` markup. Local runs never mistake an outbound video link for an embed; `--live` confirms the iframe.
+- `gsc-platform <project> --input <file>` compares Search Console query exports across your website and your verified platform properties, and separates queries the platforms rank for but your site does not from queries where both surfaces compete. `--api` is opt-in and needs configured property IDs plus `GSC_ACCESS_TOKEN`.
+- `geo <project>` audits technical pages for the shape generative search can actually quote: a self-contained opening definition, flat lists, language-tagged code blocks, and, with `--live`, real copy controls. Pages with no stored body text are reported as skipped rather than scored, so a thin crawl cannot masquerade as thin content.
+
+`--live` checks in all three network-capable audits run several requests in parallel instead of strictly one at a time, which turns a long serial wait on a large site into seconds while keeping output order deterministic.
+
+### New: `npm run check` — layer coherence gate
 
 ### New: `npm run check` — layer coherence gate
 

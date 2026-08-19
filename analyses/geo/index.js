@@ -6,6 +6,8 @@
  * not a claim that any particular model will cite the page.
  */
 
+import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
+
 function firstWords(text, count = 220) {
   return (text || '').split(/\s+/).slice(0, count).join(' ');
 }
@@ -61,9 +63,17 @@ export async function runGeoAudit(db, project, opts = {}) {
   `).all(project);
 
   const pages = [];
+  const notAnalyzable = [];
   for (const row of rows) {
     const body = row.body_text || '';
     if (!isDeveloperDocument(row.url, body)) continue;
+    // A page with no stored body text was never read: crawls before v1.1.6 did
+    // not persist body_text. Scoring it would report "no definition" for content
+    // the audit never saw, so it is reported separately instead of scored.
+    if (!body.trim()) {
+      notAnalyzable.push({ id: row.id, url: row.url, reason: 'no_body_text' });
+      continue;
+    }
     const lead = firstWords(body);
     const definition = definitionSentence(lead);
     const lists = listStats(body);
@@ -88,19 +98,20 @@ export async function runGeoAudit(db, project, opts = {}) {
   }
 
   if (opts.live) {
-    for (const page of pages) {
+    await mapLimit(pages, opts.concurrency || LIVE_CONCURRENCY, async (page) => {
       page.copyControl = await copyControlCheck(page.url);
       if (page.copyControl.checked && page.code.count && !page.copyControl.hasCopyControl) {
         page.actions.push('Expose a real copy control next to code examples; raw selectable code is still required as the baseline.');
       }
       if (page.copyControl?.hasCopyControl) page.score = Math.min(100, page.score + 5);
-    }
+    });
   }
 
   return {
-    project, live: !!opts.live, pages,
+    project, live: !!opts.live, pages, notAnalyzable,
     summary: {
       auditedPages: pages.length,
+      notAnalyzable: notAnalyzable.length,
       averageScore: pages.length ? Math.round(pages.reduce((sum, p) => sum + p.score, 0) / pages.length) : 0,
       missingDefinitions: pages.filter(p => !p.definition).length,
       codeWithoutLanguage: pages.reduce((sum, p) => sum + p.code.withoutLanguage, 0),

@@ -5789,6 +5789,7 @@ program
   .option('--live', 'Resolve redirecting entity URLs and inspect accessible profile HTML for the official-site reference')
   .option('--format <type>', 'Output format: brief or json', 'brief')
   .action(async (project, opts) => {
+    if (!requirePro('entity-audit')) return;
     const config = loadConfig(project);
     const { runEntityAudit } = await import('./analyses/entity/index.js');
     const result = await runEntityAudit(getDb(), project, { targetUrl: config.target?.url || config.context?.url, live: !!opts.live });
@@ -5811,6 +5812,7 @@ program
   .option('--video-metadata', 'Verify linked YouTube descriptions against the canonical site/GitHub links (requires YOUTUBE_API_KEY)')
   .option('--format <type>', 'Output format: brief or json', 'brief')
   .action(async (project, opts) => {
+    if (!requirePro('triangulation')) return;
     loadConfig(project);
     const { runTriangulationScan } = await import('./analyses/triangulation/index.js');
     const result = await runTriangulationScan(getDb(), project, { live: !!opts.live, videoMetadata: !!opts.videoMetadata });
@@ -5836,6 +5838,7 @@ program
   .option('--end-date <YYYY-MM-DD>', 'API end date (default: 3 days ago)')
   .option('--format <type>', 'Output format: brief or json', 'brief')
   .action(async (project, opts) => {
+    if (!requirePro('gsc-platform')) return;
     const config = loadConfig(project);
     const { runPlatformGapAnalysis } = await import('./analyses/gsc-platform/index.js');
     const result = await runPlatformGapAnalysis(config, opts);
@@ -5856,12 +5859,14 @@ program
   .option('--live', 'Inspect visible HTML for code/copy controls')
   .option('--format <type>', 'Output format: brief or json', 'brief')
   .action(async (project, opts) => {
+    if (!requirePro('geo')) return;
     loadConfig(project);
     const { runGeoAudit } = await import('./analyses/geo/index.js');
     const result = await runGeoAudit(getDb(), project, { live: !!opts.live });
     if (opts.format === 'json') { console.log(JSON.stringify({ command: 'geo', ...result }, null, 2)); return; }
     console.log(`\n  ${chalk.bold('GEO & LLM Retrieval Evaluator')}  ${chalk.gray(project)}`);
     console.log(`  Pages: ${result.summary.auditedPages} · average: ${result.summary.averageScore}/100 · missing definitions: ${result.summary.missingDefinitions} · untyped code blocks: ${result.summary.codeWithoutLanguage}`);
+    if (result.summary.notAnalyzable) console.log(chalk.gray(`  Skipped ${result.summary.notAnalyzable} page(s) with no stored body text — re-crawl to score them.`));
     for (const page of result.pages.slice(0, 20)) {
       const color = page.score >= 70 ? chalk.green : page.score >= 45 ? chalk.yellow : chalk.red;
       console.log(color(`  ${page.score}/100  ${page.url}`));

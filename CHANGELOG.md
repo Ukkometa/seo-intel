@@ -13,7 +13,11 @@ Four commands for the surfaces a classic on-page audit does not reach. All four 
 
 `--live` checks in all three network-capable audits run several requests in parallel instead of strictly one at a time, which turns a long serial wait on a large site into seconds while keeping output order deterministic.
 
-### New: `npm run check` — layer coherence gate
+### Fixed: dependency security patches (hono, express, ajv, express-rate-limit)
+
+Bumped five transitive dependencies pulled in by the MCP SDK, closing 12 published advisories (4 high, 6 moderate, 2 low): `hono` to 4.13.3, `@hono/node-server` to 1.19.17, `fast-uri` to 3.1.5, `ip-address` to 10.5.0, and `body-parser` to 2.3.0. Lockfile-only change; no declared dependency range moved, so nothing differs for anyone installing seo-intel.
+
+Most of these sit behind the SDK's optional HTTP transport (`hono`, `@hono/node-server`, `body-parser`, and `ip-address` by way of `express-rate-limit`). seo-intel's MCP server runs over stdio and never opens an HTTP listener, so that group was never reachable. `fast-uri` arrives through `ajv` and is used for schema validation; those advisories cover host confusion when parsing remote URI authorities, which local tool schemas do not exercise. A hygiene patch either way.
 
 ### New: `npm run check` — layer coherence gate
 

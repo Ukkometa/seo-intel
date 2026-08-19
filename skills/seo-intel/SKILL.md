@@ -169,6 +169,10 @@ seo-intel status                   # Data freshness + summary
 seo-intel run                      # Full pipeline: crawl → extract → analyze → dashboard
 seo-intel guide                    # Interactive chapter-based walkthrough
 seo-intel export <project>         # Raw data export (JSON/CSV)
+seo-intel entity-audit <project>   # Organization/sameAs identity map; --live tests redirects + reciprocal links
+seo-intel triangulation <project>  # Embedded YouTube + GitHub + TechArticle/SoftwareSourceCode proof matrix
+seo-intel gsc-platform <project> --input gsc-platform.json # Website vs supported-platform query gaps
+seo-intel geo <project>            # LLM retrieval-shape audit for technical content
 ```
 
 ### Scan — One-Shot Full Audit (v1.5.21+)
@@ -256,6 +260,24 @@ seo-intel decay <project>             # Content freshness / decay detection
 seo-intel js-delta <project>          # JS-rendered vs raw HTML changes
 seo-intel shallow <project>           # Thin/shallow content opportunity scan
 seo-intel templates <project>         # URL pattern / content type mapping
+```
+
+### Modern multi-surface SEO
+
+- `entity-audit <project>` reads crawled `Organization` JSON-LD and checks `sameAs` placement. `--live` resolves redirects and checks accessible profile HTML for a direct canonical-site reference. Treat an inaccessible or bot-blocked profile as **unknown**, not proof of a missing backlink.
+- `gsc-platform <project> --input <file>` compares Search Console query exports across `web`, `youtube`, `x`, `instagram`, and/or `tiktok`. The JSON input accepts native Search Console response shapes (`{ "rows": [{ "keys": ["query"], ... }] }`). It outputs **High-Intent Web Content Gaps** (platform query absent from web) and cross-surface SERP opportunities. `--api` is intentionally opt-in: configure exact verified property IDs under `gsc.platformProperties` and provide `GSC_ACCESS_TOKEN`; do not guess platform property IDs.
+- `triangulation <project>` scores the three proof signals only when evidenced: a YouTube **iframe** (confirmed by `--live`), a direct active GitHub link, and matching `TechArticle` or `SoftwareSourceCode` markup. `--video-metadata` checks descriptions through the YouTube Data API only when `YOUTUBE_API_KEY` is configured.
+- `geo <project>` scores technical pages for concise opening definitions, flat list structure, syntax-tagged code blocks, and, with `--live`, detected copy controls. It measures extraction affordances; it does not claim a particular LLM will cite the page.
+
+```json
+{
+  "gsc": {
+    "platformProperties": {
+      "web": "sc-domain:example.com",
+      "youtube": "YOUR_VERIFIED_PLATFORM_PROPERTY_ID"
+    }
+  }
+}
 ```
 
 ### Project Management Commands

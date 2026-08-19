@@ -29,6 +29,10 @@
     "./froggo": "./agent-harness.js",
     "./aeo": "./analyses/aeo/index.js",
     "./aeo/scorer": "./analyses/aeo/scorer.js",
+    "./entity-audit": "./analyses/entity/index.js",
+    "./triangulation": "./analyses/triangulation/index.js",
+    "./gsc-platform": "./analyses/gsc-platform/index.js",
+    "./geo": "./analyses/geo/index.js",
     "./gap-intel": "./analyses/gap-intel/index.js",
     "./blog-draft": "./analyses/blog-draft/index.js",
     "./crawler": "./crawler/index.js",
@@ -93,6 +97,7 @@
     "check": "node scripts/check-layers.js",
     "check:fix": "node scripts/check-layers.js --fix",
     "check:json": "node scripts/check-layers.js --json",
+    "test:modern-seo": "node test/modern-seo.test.js",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

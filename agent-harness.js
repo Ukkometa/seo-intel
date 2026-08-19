@@ -423,6 +423,32 @@ export async function run(command, project, opts = {}) {
         return wrap(result);
       }
 
+      case 'entity-audit': {
+        const { runEntityAudit } = await import('./analyses/entity/index.js');
+        return wrap(await runEntityAudit(db, project, {
+          targetUrl: config?.target?.url || config?.context?.url,
+          live: !!opts.live,
+        }));
+      }
+
+      case 'triangulation': {
+        const { runTriangulationScan } = await import('./analyses/triangulation/index.js');
+        return wrap(await runTriangulationScan(db, project, {
+          live: !!opts.live,
+          videoMetadata: !!opts.videoMetadata,
+        }));
+      }
+
+      case 'gsc-platform': {
+        const { runPlatformGapAnalysis } = await import('./analyses/gsc-platform/index.js');
+        return wrap(await runPlatformGapAnalysis(config, opts));
+      }
+
+      case 'geo': {
+        const { runGeoAudit } = await import('./analyses/geo/index.js');
+        return wrap(await runGeoAudit(db, project, { live: !!opts.live }));
+      }
+
       case 'rescore': {
         if (!opts.url) return fail('rescore requires opts.url (the page to re-check)');
         const { rescorePage } = await import('./analyses/aeo/rescore.js');

@@ -87,6 +87,10 @@ competitor synthesis, automation, and history.
 | `tech-audit <project>` | Technical SEO audit from crawl data |
 | `templates` / `orphans` / `js-delta` | Template detection, orphan entities, JS-render delta |
 | `schemas <project>` | Schema.org coverage analysis |
+| `entity-audit <project>` | Organization / `sameAs` placement, canonical-profile, and reciprocal-link audit; add `--live` for redirect/profile checks |
+| `triangulation <project>` | Proof matrix for embedded YouTube + GitHub source + `TechArticle`/`SoftwareSourceCode` schema |
+| `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties + `GSC_ACCESS_TOKEN` |
+| `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `intel <project> --for raw\|audit\|blog\|graph` | Agent-ready intelligence slices |
 | `export` / `export-actions --scope technical` | Raw data and technical action exports |
 | `serve` / `status` / `update` / `guide` | Dashboard server, status, updates, guided walkthrough |

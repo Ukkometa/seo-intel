@@ -5782,6 +5782,95 @@ program
     console.log('');
   });
 
+// ── MODERN SEO AUDITS — entity, triangulation, GEO ─────────────────────────
+program
+  .command('entity-audit <project>')
+  .description('Audit Organization.sameAs placement, canonical profile URLs, and reciprocal entity links')
+  .option('--live', 'Resolve redirecting entity URLs and inspect accessible profile HTML for the official-site reference')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    const config = loadConfig(project);
+    const { runEntityAudit } = await import('./analyses/entity/index.js');
+    const result = await runEntityAudit(getDb(), project, { targetUrl: config.target?.url || config.context?.url, live: !!opts.live });
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'entity-audit', ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('Entity Mapping & Schema Audit')}  ${chalk.gray(project)}`);
+    console.log(`  Status: ${result.status === 'pass' ? chalk.green(result.status) : result.status === 'fail' ? chalk.red(result.status) : chalk.yellow(result.status)}`);
+    console.log(`  Organization blocks: ${result.summary.organizations} · homepage: ${result.summary.homepageOrganizations} · sameAs links: ${result.summary.sameAsLinks}`);
+    for (const issue of result.issues.slice(0, 20)) {
+      const color = issue.severity === 'error' ? chalk.red : issue.severity === 'warning' ? chalk.yellow : chalk.gray;
+      console.log(color(`  ${issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '!' : '·'} ${issue.code}: ${issue.message}`));
+    }
+    if (!opts.live) console.log(chalk.gray('  Local audit only. Re-run with --live to test redirects and accessible profile-site references.'));
+    console.log('');
+  });
+
+program
+  .command('triangulation <project>')
+  .description('Score docs/posts for YouTube embed + GitHub source + TechArticle/SoftwareSourceCode proof')
+  .option('--live', 'Fetch pages to confirm a YouTube iframe and visible GitHub reference')
+  .option('--video-metadata', 'Verify linked YouTube descriptions against the canonical site/GitHub links (requires YOUTUBE_API_KEY)')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    loadConfig(project);
+    const { runTriangulationScan } = await import('./analyses/triangulation/index.js');
+    const result = await runTriangulationScan(getDb(), project, { live: !!opts.live, videoMetadata: !!opts.videoMetadata });
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'triangulation', ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('Content Triangulation Scanner')}  ${chalk.gray(project)}`);
+    console.log(`  Eligible pages: ${result.summary.eligiblePages} · fully triangulated: ${result.summary.fullyTriangulated} · average: ${result.summary.averageScore}/100`);
+    for (const page of result.pages.slice(0, 20)) {
+      const color = page.score === 100 ? chalk.green : page.score >= 65 ? chalk.yellow : chalk.red;
+      console.log(color(`  ${page.score}/100  ${page.url}`));
+      if (page.actions.length) console.log(chalk.gray(`           ${page.actions.join(' ')}`));
+    }
+    if (result.videoMetadata.status === 'not_configured') console.log(chalk.gray(`  Video metadata: ${result.videoMetadata.reason}`));
+    if (!opts.live) console.log(chalk.gray('  Local scan only. Re-run with --live to count embedded YouTube iframes rather than outbound links.'));
+    console.log('');
+  });
+
+program
+  .command('gsc-platform <project>')
+  .description('Compare website and verified social-platform Search Console query data for web-content and cross-SERP gaps')
+  .option('--input <path>', 'JSON export: { web: { rows: [...] }, youtube: { rows: [...] }, x: { rows: [...] } }')
+  .option('--api', 'Query configured verified properties through Search Console API (requires GSC_ACCESS_TOKEN)')
+  .option('--start-date <YYYY-MM-DD>', 'API start date (default: 31 days ago)')
+  .option('--end-date <YYYY-MM-DD>', 'API end date (default: 3 days ago)')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    const config = loadConfig(project);
+    const { runPlatformGapAnalysis } = await import('./analyses/gsc-platform/index.js');
+    const result = await runPlatformGapAnalysis(config, opts);
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'gsc-platform', project, ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('GSC Platform Property & Gap Analysis')}  ${chalk.gray(project)}`);
+    console.log(`  Mode: ${result.mode} · web queries: ${result.summary.webQueries} · platform queries: ${result.summary.platformQueries}`);
+    console.log(`  High-intent web content gaps: ${result.summary.highIntentWebContentGaps} · shared SERP opportunities: ${result.summary.crossSurfaceSerpOpportunities}`);
+    for (const gap of result.gaps.slice(0, 15)) {
+      console.log(chalk.yellow(`  ${gap.priority}  ${gap.query}  ← ${gap.platformSignals.map(s => s.name).join(', ')}`));
+    }
+    for (const item of result.shared.slice(0, 8)) console.log(chalk.green(`  shared: ${item.query} (${item.platform.name})`));
+    console.log('');
+  });
+
+program
+  .command('geo <project>')
+  .description('Evaluate developer docs for LLM retrieval shape: definitions, flat lists, typed code blocks, and copy controls')
+  .option('--live', 'Inspect visible HTML for code/copy controls')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    loadConfig(project);
+    const { runGeoAudit } = await import('./analyses/geo/index.js');
+    const result = await runGeoAudit(getDb(), project, { live: !!opts.live });
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'geo', ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('GEO & LLM Retrieval Evaluator')}  ${chalk.gray(project)}`);
+    console.log(`  Pages: ${result.summary.auditedPages} · average: ${result.summary.averageScore}/100 · missing definitions: ${result.summary.missingDefinitions} · untyped code blocks: ${result.summary.codeWithoutLanguage}`);
+    for (const page of result.pages.slice(0, 20)) {
+      const color = page.score >= 70 ? chalk.green : page.score >= 45 ? chalk.yellow : chalk.red;
+      console.log(color(`  ${page.score}/100  ${page.url}`));
+      if (page.actions.length) console.log(chalk.gray(`           ${page.actions.join(' ')}`));
+    }
+    if (!opts.live) console.log(chalk.gray('  Local scan only. Re-run with --live to check copy-control exposure in rendered HTML.'));
+    console.log('');
+  });
+
 // ── CRAWL-URL — ad-hoc lightweight crawl of any URL (free, no project) ────
 program
   .command('crawl-url <url>')

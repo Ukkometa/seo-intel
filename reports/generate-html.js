@@ -396,10 +396,15 @@ function buildHtmlTemplate(data, opts = {}) {
 
       /* Terminal keeps a dark chrome in BOTH themes — a terminal that is not
          dark reads as a text box, and the crawl log is the one place operators
-         expect console conventions. Only its frame follows the theme. */
-      --term-bg: #12120f;
-      --term-bar: #1e1e1a;
-      --term-text: #e8e6df;
+         expect console conventions. Only its frame follows the theme.
+
+         Slate, not black. Near-black (#12120f) was visually aggressive against
+         the light dashboard: since the console fills its column, a large pure-
+         black slab dominated the page and read as a hole rather than a panel.
+         Slate keeps the console conventions while sitting calmly on light. */
+      --term-bg: #313842;
+      --term-bar: #3b424e;
+      --term-text: #e6e9ee;
 
       /* Typography */
       --font-display: 'Syne', sans-serif;
@@ -512,9 +517,12 @@ function buildHtmlTemplate(data, opts = {}) {
       --medal-silver: #b8b8b8;
       --medal-bronze: #c9916e;
 
-      --term-bg: #0c0c0c;
-      --term-bar: #161616;
-      --term-text: #f0f0f0;
+      /* Slightly deeper slate than the light theme's, so the console still
+         reads as an elevated panel against the dark page rather than merging
+         into it. */
+      --term-bg: #262c35;
+      --term-bar: #303844;
+      --term-text: #eef1f5;
 
       --intel-blue: #3b82f6;
       --intel-blue-soft: rgba(var(--blue-rgb), 0.18);
@@ -555,12 +563,16 @@ function buildHtmlTemplate(data, opts = {}) {
       --bg-card: var(--term-bg);
       --bg-elevated: var(--term-bar);
       --bg-inset: var(--term-bg);
-      --border-card: #2c2c27;
-      --border-subtle: #24241f;
+      /* Lifted alongside the slate background. On the old near-black these were
+         fine, but against #313842 the previous values (#8a8a80 / #6a6a62 /
+         #2c2c27) dropped muted text to ~3.4:1 and made the borders invisible.
+         These clear AA on the slate: muted 5.2:1, subtle 4.3:1. */
+      --border-card: #464e5b;
+      --border-subtle: #3c434f;
       --text-primary: var(--term-text);
       --text-secondary: var(--term-text);
-      --text-muted: #8a8a80;
-      --text-subtle: #6a6a62;
+      --text-muted: #a8adb6;
+      --text-subtle: #979da8;
       --accent-gold: #e8d5a3;
       --accent-purple: #b4a0ff;
       --color-success: #8ecba8;
@@ -1885,8 +1897,25 @@ function buildHtmlTemplate(data, opts = {}) {
       max-width: var(--max-width);
       margin: 12px auto;
     }
+    /* The export sidebar is content-sized and is normally taller than the
+       terminal. Grid stretches .terminal-main to the row height, but the panel
+       inside it kept its own content height, so the black console stopped
+       partway down the column and left a dead light gap beneath it — reading as
+       a detached black slab rather than one half of a split. Make the panel fill
+       its column and let the console absorb the slack, so both sides end level
+       whatever the sidebar contains. */
     .term-split .terminal-main {
       min-width: 0;
+      display: flex;
+    }
+    .term-split .terminal-panel {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+    }
+    .term-split .term-console {
+      flex: 1 1 auto;
+      min-height: 0;
     }
     .term-split .export-sidebar {
       background: var(--bg-inset);
@@ -5999,6 +6028,11 @@ function buildAeoCard(citabilityData, escapeHtml, project) {
   const tierCounts = { excellent: 0, good: 0, needs_work: 0, poor: 0 };
   for (const s of targetScores) tierCounts[s.tier]++;
 
+  // Six of the seven citability signals. The seventh, ai_access, is a domain-level
+  // robots.txt verdict fetched at scoring time and never written to
+  // citability_scores, so there is no per-page column to average here. The card
+  // says so explicitly rather than silently implying the scorer has six signals.
+  // TODO: persist the verdict (a column, or a domains table) so this can chart all 7.
   const signals = ['entity_authority', 'structured_claims', 'answer_density', 'qa_proximity', 'freshness', 'schema_coverage'];
   const signalAvgs = signals.map(sig => ({
     label: sig.replace(/_/g, ' '),
@@ -6074,9 +6108,15 @@ function buildAeoCard(citabilityData, escapeHtml, project) {
       <div style="display:flex;gap:2rem;margin:1.5rem 0;flex-wrap:wrap;">
         <div style="flex:1;min-width:300px;">
           <h3 style="font-size:0.85rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.8rem;">
-            <i class="fa-solid fa-signal" style="font-size:0.7rem;margin-right:3px;"></i> Signal Strength
+            <i class="fa-solid fa-signal" style="font-size:0.7rem;margin-right:3px;"></i> Signal Strength <span style="text-transform:none;letter-spacing:0;font-weight:400;">— page-level, 6 of 7</span>
           </h3>
           ${signalBars}
+          <p style="font-size:0.7rem;color:var(--text-subtle);margin-top:.6rem;line-height:1.5;">
+            The 7th signal, <strong>AI-crawler access</strong>, is scored per domain from
+            <code>robots.txt</code> rather than per page, so it has no per-page average to chart.
+            It still weights every score above and hard-caps a page at 30 when answer engines are
+            blocked. Run <code>seo-intel aeo &lt;project&gt;</code> to see the current verdict.
+          </p>
         </div>
       </div>
 

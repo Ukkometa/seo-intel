@@ -493,18 +493,26 @@ export function insertKeywords(db, pageId, keywords) {
 }
 
 export function insertHeadings(db, pageId, headings) {
+  // Headings are a crawl snapshot, not history. Clear the prior snapshot so
+  // repeated crawls cannot manufacture duplicate H1/H2 findings.
+  const deleteStmt = db.prepare(`DELETE FROM headings WHERE page_id = ?`);
   const stmt = db.prepare(`INSERT INTO headings (page_id, level, text) VALUES (?, ?, ?)`);
   db.exec('BEGIN');
   try {
+    deleteStmt.run(pageId);
     for (const h of headings) stmt.run(pageId, h.level, h.text);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
 export function insertLinks(db, sourceId, links) {
+  // Links are a crawl snapshot, not history. Retaining old rows makes pages
+  // appear linked after links were removed and inflates graph metrics.
+  const deleteStmt = db.prepare(`DELETE FROM links WHERE source_id = ?`);
   const stmt = db.prepare(`INSERT INTO links (source_id, target_url, anchor_text, is_internal) VALUES (?, ?, ?, ?)`);
   db.exec('BEGIN');
   try {
+    deleteStmt.run(sourceId);
     for (const l of links) stmt.run(sourceId, normalizePageUrl(l.url), l.anchor, l.isInternal ? 1 : 0);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }

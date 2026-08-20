@@ -8,6 +8,7 @@
  */
 
 import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
+import { upsertInsights } from '../../db/db.js';
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i;
 const GITHUB_HOST_RE = /(^|\.)github\.com$/i;
@@ -131,6 +132,19 @@ export async function runTriangulationScan(db, project, opts = {}) {
     ? await youtubeMetadata([...videoIds], target || '', [...githubUrls], process.env.YOUTUBE_API_KEY)
     : { status: 'not_requested', videos: [] };
   const scored = pages.filter(p => p.githubLinks.length || p.youtubeLinks.length || p.technicalSchema);
+
+  // Only pages short of full proof are worth carrying forward.
+  upsertInsights(db, project, 'triangulation_gap', scored
+    .filter(p => p.status !== 'triangulated')
+    .map(p => ({
+      fingerprint: p.url.toLowerCase().replace(/\/+$/, ''),
+      data: {
+        url: p.url, title: p.title, score: p.score, status: p.status,
+        missing: Object.entries(p.signals).filter(([, v]) => !v).map(([k]) => k.replace(/([A-Z])/g, ' $1').toLowerCase().trim()),
+        recommendation: p.actions.join(' '),
+      },
+    })));
+
   return {
     project, targetDomain: target, live: !!opts.live,
     pages: scored,

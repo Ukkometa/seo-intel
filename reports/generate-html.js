@@ -19,6 +19,7 @@ import { fileURLToPath } from 'url';
 import { loadGscData } from './gsc-loader.js';
 import { isPro } from '../lib/license.js';
 import { getActiveInsights } from '../db/db.js';
+import { INSIGHT_TYPES, FREE_INSIGHT_TYPES } from '../lib/insight-types.js';
 import { getCitabilityScores } from '../analyses/aeo/index.js';
 import { getWatchData } from '../analyses/watch/index.js';
 import { getProblems, getProblemCounts } from '../lib/problems.js';
@@ -3754,6 +3755,9 @@ function buildHtmlTemplate(data, opts = {}) {
     <!-- ═══ AEO / AI CITABILITY AUDIT ═══ (free — your own site) -->
     ${citabilityData?.length ? buildAeoCard(citabilityData, escapeHtml, project) : ''}
 
+    <!-- ═══ OWN-SITE FINDINGS ═══ (free — registry-driven) -->
+    ${buildOwnSiteFindingsCard(latestAnalysis, escapeHtml, project)}
+
     <!-- ═══ LONG-TAIL OPPORTUNITIES ═══ -->
     ${showCompetitor && latestAnalysis?.long_tails?.length ? `
     <div class="card full-width" id="long-tails">
@@ -6013,6 +6017,63 @@ function buildProblemsCard(problems, counts, escapeHtml, project) {
             <code style="color: var(--intel-blue); background: var(--surface-off); padding: 2px 6px; border-radius: 3px; margin-left: 4px;">list_problems("${escapeHtml(project)}", limit=${counts.total})</code>
           </span>
         </div>` : ''}
+    </div>`;
+}
+
+/**
+ * Own-site findings — entity mapping, proof triangulation, LLM retrieval shape,
+ * platform query gaps, schema specificity.
+ *
+ * Driven by lib/insight-types.js rather than a hardcoded list, so a new own-site
+ * insight type appears here as soon as it is registered. Free: everything shown
+ * comes from analysing the user's own site, which the free tier covers.
+ */
+function buildOwnSiteFindingsCard(latestAnalysis, escapeHtml, project) {
+  if (!latestAnalysis) return '';
+  const groups = FREE_INSIGHT_TYPES
+    .map(key => ({ meta: INSIGHT_TYPES[key], items: latestAnalysis[INSIGHT_TYPES[key].groupKey] }))
+    .filter(g => Array.isArray(g.items) && g.items.length);
+  if (!groups.length) return '';
+
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const sections = groups.map(({ meta, items }) => {
+    const rows = items.slice(0, 15).map(item => {
+      const title = meta.title(item) || '—';
+      const detail = meta.detail(item) || '';
+      const fix = meta.fix(item) || '';
+      const url = meta.url(item);
+      // The dashboard's dot classes are info / warn / crit — map the registry's
+      // severity vocabulary onto them rather than inventing a parallel one.
+      const sev = String(item.severity || meta.severity);
+      const dot = sev === 'error' ? 'crit' : sev === 'info' ? 'info' : 'warn';
+      return `
+            <tr data-insight-id="${item._insight_id || ''}">
+              <td><span class="vb-severity-dot ${dot}"></span> <strong>${escapeHtml(String(title))}</strong>${url ? `<div class="muted small">${escapeHtml(url)}</div>` : ''}</td>
+              <td>${escapeHtml(detail)}</td>
+              <td>${escapeHtml(fix)}</td>
+              <td class="insight-action">${item._insight_id ? `<button class="insight-btn btn-done" onclick="insightAction(this,'done')" title="Mark done"><i class="fa-solid fa-check"></i></button><button class="insight-btn btn-dismiss" onclick="insightAction(this,'dismissed')" title="Dismiss"><i class="fa-solid fa-xmark"></i></button>` : ''}</td>
+            </tr>`;
+    }).join('');
+    const more = items.length > 15
+      ? `<div class="muted small" style="padding:6px 0;">… and ${items.length - 15} more. Query the rest via MCP: <code>list_problems("${escapeHtml(project)}")</code></div>`
+      : '';
+    return `
+      <h3 class="own-finding-group">${escapeHtml(meta.label)} <span class="muted">(${items.length})</span></h3>
+      <div class="analysis-table-wrap">
+        <table class="analysis-table">
+          <thead><tr><th>Finding</th><th>Detail</th><th>Fix</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${more}`;
+  }).join('');
+
+  return `
+    <div class="card full-width" id="own-site-findings">
+      ${cardExportHtml('insights', project)}
+      <h2><span class="icon"><i class="fa-solid fa-clipboard-check"></i></span> Own-site Findings <span class="muted">(${total})</span></h2>
+      <p class="card-sub muted">Accumulated in the Intelligence Ledger across runs. Marking one done or dismissed keeps it from returning on the next audit.</p>
+      ${sections}
     </div>`;
 }
 

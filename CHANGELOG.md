@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.5.55 (2026-08-20)
+
+### Fixed: the Intelligence Ledger was dropping insights on the floor
+
+Insight types were hardcoded in three places that had drifted apart: the grouping in `getActiveInsights`, the type allowlist in `list_problems`, and the dashboard's rendering. `citability_gap` had been written to the table since v1.2.0 and appeared in none of them, so every one of those insights was stored and then silently discarded. On a real project that was 109 findings the tool had already computed and never showed anyone.
+
+All three now derive from one registry, `lib/insight-types.js`. Declaring a type is enough to make it group correctly, reach agents through `list_problems`, and render on the dashboard. A type written by a different version than the registry still comes through instead of vanishing, and a single malformed row no longer takes the whole dashboard down with it.
+
+### New: the modern audits accumulate instead of just printing
+
+`entity-audit`, `triangulation`, `geo`, `gsc-platform`, and the new `schema-audit` now write their findings to the Ledger. They dedupe by fingerprint, so re-running an audit updates a finding rather than adding a second copy, and marking one **done** or **dismissed** on the dashboard keeps it from coming back on the next run. A new **Own-site Findings** card groups them all, and because they analyse your own site they are free — including through `list_problems`, which previously kept every Ledger-derived problem behind the paid gate.
+
+### New: `schema-audit` — is this the right schema type?
+
+Coverage checks ask whether markup exists. This asks whether the type is correct and whether it carries what Google actually requires.
+
+- `Product` on an API, docs, dashboard, or app surface, where `SoftwareApplication` or `WebApplication` is the typed match.
+- `Product` with no priced `offers`, `aggregateRating`, or `review` — the combination Search Console reports as invalid.
+- `offers.price` without `priceCurrency`.
+- `SoftwareApplication` with no offers or rating, so it cannot earn the app rich result.
+
+A price of `0` counts as a price: a free tier is a real offer. Runs on existing crawl data, no network and no model.
+
 ## 1.5.54 (2026-08-19)
 
 ### New: modern multi-surface SEO audits

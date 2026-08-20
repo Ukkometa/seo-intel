@@ -16,7 +16,7 @@ description: >
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.54)
+# SEO Intel (v1.5.55)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -173,6 +173,7 @@ seo-intel entity-audit <project>   # Organization/sameAs identity map; --live te
 seo-intel triangulation <project>  # Embedded YouTube + GitHub + TechArticle/SoftwareSourceCode proof matrix
 seo-intel gsc-platform <project> --input gsc-platform.json # Website vs supported-platform query gaps
 seo-intel geo <project>            # LLM retrieval-shape audit for technical content
+seo-intel schema-audit <project>   # Schema type specificity + required offers/price fields
 ```
 
 ### Scan — One-Shot Full Audit (v1.5.21+)
@@ -268,6 +269,9 @@ seo-intel templates <project>         # URL pattern / content type mapping
 - `gsc-platform <project> --input <file>` compares Search Console query exports across `web`, `youtube`, `x`, `instagram`, and/or `tiktok`. The JSON input accepts native Search Console response shapes (`{ "rows": [{ "keys": ["query"], ... }] }`). It outputs **High-Intent Web Content Gaps** (platform query absent from web) and cross-surface SERP opportunities. `--api` is intentionally opt-in: configure exact verified property IDs under `gsc.platformProperties` and provide `GSC_ACCESS_TOKEN`; do not guess platform property IDs.
 - `triangulation <project>` scores the three proof signals only when evidenced: a YouTube **iframe** (confirmed by `--live`), a direct active GitHub link, and matching `TechArticle` or `SoftwareSourceCode` markup. `--video-metadata` checks descriptions through the YouTube Data API only when `YOUTUBE_API_KEY` is configured.
 - `geo <project>` scores technical pages for concise opening definitions, flat list structure, syntax-tagged code blocks, and, with `--live`, detected copy controls. It measures extraction affordances; it does not claim a particular LLM will cite the page.
+- `schema-audit <project>` checks whether a schema type is the *right* type and carries the fields its rich result needs. It flags `Product` markup on API, docs, dashboard, or app surfaces (where `SoftwareApplication` / `WebApplication` is the typed match), `Product` with no priced `offers`/`aggregateRating`/`review`, and `offers.price` without `priceCurrency`. A price of `0` is valid for a free tier.
+
+All five write their findings to the Intelligence Ledger, so they accumulate and dedupe across runs, appear on the dashboard under **Own-site Findings**, and reach agents through `list_problems`. Marking one done or dismissed keeps it from returning.
 
 ```json
 {

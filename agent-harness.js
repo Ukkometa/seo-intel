@@ -449,6 +449,11 @@ export async function run(command, project, opts = {}) {
         return wrap(await runGeoAudit(db, project, { live: !!opts.live }));
       }
 
+      case 'schema-audit': {
+        const { runSchemaAudit } = await import('./analyses/schema-audit/index.js');
+        return wrap(runSchemaAudit(db, project, {}));
+      }
+
       case 'rescore': {
         if (!opts.url) return fail('rescore requires opts.url (the page to re-check)');
         const { rescorePage } = await import('./analyses/aeo/rescore.js');

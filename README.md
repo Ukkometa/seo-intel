@@ -91,6 +91,7 @@ competitor synthesis, automation, and history.
 | `triangulation <project>` | Proof matrix for embedded YouTube + GitHub source + `TechArticle`/`SoftwareSourceCode` schema |
 | `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties + `GSC_ACCESS_TOKEN` |
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
+| `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
 | `intel <project> --for raw\|audit\|blog\|graph` | Agent-ready intelligence slices |
 | `export` / `export-actions --scope technical` | Raw data and technical action exports |
 | `serve` / `status` / `update` / `guide` | Dashboard server, status, updates, guided walkthrough |

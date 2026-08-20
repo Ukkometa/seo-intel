@@ -5842,6 +5842,18 @@ program
     const config = loadConfig(project);
     const { runPlatformGapAnalysis } = await import('./analyses/gsc-platform/index.js');
     const result = await runPlatformGapAnalysis(config, opts);
+    // The top gaps accumulate in the Ledger so blog-draft and the dashboard can
+    // act on them; the long tail of low-signal queries is left out on purpose.
+    try {
+      const { upsertInsights } = await import('./db/db.js');
+      upsertInsights(getDb(), project, 'platform_gap', result.gaps.slice(0, 30).map(g => ({
+        fingerprint: g.query,
+        data: {
+          query: g.query, priority: g.priority, platformSignals: g.platformSignals,
+          recommendation: `Platform surfaces rank for "${g.query}" but the site has no page for it. Create one and link it from the ranking surface.`,
+        },
+      })));
+    } catch { /* Ledger write is best-effort */ }
     if (opts.format === 'json') { console.log(JSON.stringify({ command: 'gsc-platform', project, ...result }, null, 2)); return; }
     console.log(`\n  ${chalk.bold('GSC Platform Property & Gap Analysis')}  ${chalk.gray(project)}`);
     console.log(`  Mode: ${result.mode} · web queries: ${result.summary.webQueries} · platform queries: ${result.summary.platformQueries}`);
@@ -5873,6 +5885,28 @@ program
       if (page.actions.length) console.log(chalk.gray(`           ${page.actions.join(' ')}`));
     }
     if (!opts.live) console.log(chalk.gray('  Local scan only. Re-run with --live to check copy-control exposure in rendered HTML.'));
+    console.log('');
+  });
+
+program
+  .command('schema-audit <project>')
+  .description('Check schema type specificity and the fields Google actually requires (Product vs SoftwareApplication, offers/price)')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('schema-audit')) return;
+    loadConfig(project);
+    const { runSchemaAudit } = await import('./analyses/schema-audit/index.js');
+    const result = runSchemaAudit(getDb(), project, {});
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'schema-audit', ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('Schema Specificity Audit')}  ${chalk.gray(project)}`);
+    console.log(`  Status: ${result.status === 'pass' ? chalk.green(result.status) : result.status === 'fail' ? chalk.red(result.status) : chalk.yellow(result.status)}`);
+    console.log(`  Product blocks: ${result.summary.productBlocks} · software blocks: ${result.summary.softwareBlocks} · errors: ${result.summary.errors} · warnings: ${result.summary.warnings} · pages affected: ${result.summary.affectedUrls}`);
+    for (const issue of result.issues.slice(0, 20)) {
+      const color = issue.severity === 'error' ? chalk.red : chalk.yellow;
+      console.log(color(`  ${issue.severity === 'error' ? '✗' : '!'} ${issue.code}  ${issue.url}`));
+      console.log(chalk.gray(`      ${issue.fix}`));
+    }
+    if (result.issues.length > 20) console.log(chalk.gray(`  … and ${result.issues.length - 20} more. Use --format json for the full list.`));
     console.log('');
   });
 

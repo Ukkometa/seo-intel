@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { INSIGHT_TYPES, INSIGHT_TYPE_KEYS, insightMeta } from '../lib/insight-types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -300,28 +301,89 @@ export function getActiveInsights(db, project) {
     `SELECT * FROM insights WHERE project = ? AND status = 'active' ORDER BY type, last_seen DESC`
   ).all(project);
 
-  const grouped = {};
+  const byType = {};
   for (const row of rows) {
-    if (!grouped[row.type]) grouped[row.type] = [];
-    const parsed = JSON.parse(row.data);
+    let parsed;
+    // A single malformed blob used to throw here and take the whole dashboard
+    // with it. Skip the bad row instead.
+    try { parsed = JSON.parse(row.data); } catch { continue; }
+    if (!byType[row.type]) byType[row.type] = [];
     parsed._insight_id = row.id;
     parsed._first_seen = row.first_seen;
     parsed._last_seen = row.last_seen;
-    grouped[row.type].push(parsed);
+    byType[row.type].push(parsed);
   }
 
-  return {
-    keyword_gaps: grouped.keyword_gap || [],
-    long_tails: grouped.long_tail || [],
-    quick_wins: grouped.quick_win || [],
-    new_pages: grouped.new_page || [],
-    content_gaps: grouped.content_gap || [],
-    technical_gaps: grouped.technical_gap || [],
-    positioning: grouped.positioning?.[0] || null,
-    keyword_inventor: grouped.keyword_inventor || [],
-    site_watch: grouped.site_watch || [],
-    generated_at: rows.length ? Math.max(...rows.map(r => r.last_seen)) : null,
-  };
+  // Shape comes from the registry rather than a hand-maintained list, so a new
+  // insight type is reachable the moment it is declared. The group keys below
+  // are the ones the dashboard already reads — the registry preserves them.
+  const out = {};
+  for (const key of INSIGHT_TYPE_KEYS) {
+    const meta = INSIGHT_TYPES[key];
+    const items = byType[key] || [];
+    out[meta.groupKey] = meta.single ? (items[0] || null) : items;
+  }
+  // Rows written by a version whose registry differs from this one still come
+  // through rather than being silently dropped.
+  for (const [type, items] of Object.entries(byType)) {
+    if (INSIGHT_TYPES[type]) continue;
+    out[insightMeta(type).groupKey] = items;
+  }
+
+  out.byType = byType;
+  out.generated_at = rows.length ? Math.max(...rows.map(r => r.last_seen)) : null;
+  return out;
+}
+
+/**
+ * Upsert a batch of insights of one type into the Intelligence Ledger.
+ *
+ * Dedup is by (project, type, fingerprint): a finding that recurs across runs
+ * updates `last_seen` and its payload instead of creating a second row, which
+ * is what makes the Ledger accumulate rather than churn. A user who marked a
+ * row `done` or `dismissed` keeps that status — re-running an audit must not
+ * silently resurrect something they already dealt with.
+ *
+ * Best-effort by design: an audit is still useful if the write fails, so this
+ * reports and returns 0 rather than throwing into the caller.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} project
+ * @param {string} type      A key from lib/insight-types.js
+ * @param {{fingerprint: string, data: object}[]} items
+ * @returns {number} rows written
+ */
+export function upsertInsights(db, project, type, items) {
+  if (!Array.isArray(items) || !items.length) return 0;
+  let stmt;
+  // Prepared inside the guard: a caller working against a database without the
+  // insights table (a fixture, or a read-only handle) must get 0 back, not an
+  // exception thrown through the middle of an audit.
+  try {
+    stmt = db.prepare(`
+      INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
+      VALUES (?, ?, 'active', ?, ?, ?, NULL, ?)
+      ON CONFLICT(project, type, fingerprint) DO UPDATE SET
+        last_seen = excluded.last_seen,
+        data = excluded.data
+    `);
+  } catch { return 0; }
+  const ts = Date.now();
+  try {
+    db.exec('BEGIN');
+    let n = 0;
+    for (const item of items) {
+      if (!item?.fingerprint) continue;
+      stmt.run(project, type, String(item.fingerprint).slice(0, 300), ts, ts, JSON.stringify(item.data ?? {}));
+      n++;
+    }
+    db.exec('COMMIT');
+    return n;
+  } catch (e) {
+    db.exec('ROLLBACK');
+    console.error(`[ledger] ${type} upsert failed:`, e.message);
+    return 0;
+  }
 }
 
 export function updateInsightStatus(db, id, status) {

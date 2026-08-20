@@ -7,6 +7,7 @@
  */
 
 import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
+import { upsertInsights } from '../../db/db.js';
 
 const SOCIAL_HOSTS = new Set([
   'x.com', 'twitter.com', 'github.com', 'youtube.com', 'www.youtube.com',
@@ -219,6 +220,17 @@ export async function runEntityAudit(db, project, opts = {}) {
     try { return new URL(o.pageUrl).pathname === '/'; } catch { return false; }
   });
   const status = issues.some(i => i.severity === 'error') ? 'fail' : issues.some(i => i.severity === 'warning') ? 'needs_work' : 'pass';
+
+  // Errors and warnings are actionable, so they accumulate in the Ledger.
+  // Notices are advisory ("review whether this is an official profile") and
+  // would add a row per sameAs URL per run without ever being resolvable.
+  upsertInsights(db, project, 'entity_gap', issues
+    .filter(i => i.severity === 'error' || i.severity === 'warning')
+    .map(i => ({
+      fingerprint: `${i.code}::${(i.url || i.pageUrl || '').toLowerCase().replace(/\/+$/, '')}`,
+      data: { code: i.code, severity: i.severity, url: i.url || i.pageUrl || null, message: i.message, recommendation: i.message },
+    })));
+
   return {
     status,
     project,

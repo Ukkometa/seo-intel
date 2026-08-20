@@ -7,6 +7,7 @@
  */
 
 import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
+import { upsertInsights } from '../../db/db.js';
 
 function firstWords(text, count = 220) {
   return (text || '').split(/\s+/).slice(0, count).join(' ');
@@ -106,6 +107,22 @@ export async function runGeoAudit(db, project, opts = {}) {
       if (page.copyControl?.hasCopyControl) page.score = Math.min(100, page.score + 5);
     });
   }
+
+  // Capped at the 25 worst: a large docs site would otherwise write hundreds of
+  // rows from one run and bury every other insight type in the dashboard.
+  upsertInsights(db, project, 'retrieval_gap', pages
+    .filter(p => p.score < 60 && p.actions.length)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 25)
+    .map(p => ({
+      fingerprint: p.url.toLowerCase().replace(/\/+$/, ''),
+      data: {
+        url: p.url, title: p.title, score: p.score,
+        hasDefinition: !!p.definition,
+        untypedCodeBlocks: p.code.withoutLanguage,
+        recommendation: p.actions.join(' '),
+      },
+    })));
 
   return {
     project, live: !!opts.live, pages, notAnalyzable,

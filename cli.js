@@ -5889,6 +5889,80 @@ program
   });
 
 program
+  .command('gsc-import <project>')
+  .description('Import Search Console query exports from gsc/<project>* into the database')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('gsc-import')) return;
+    loadConfig(project);
+    const { importGscQueries } = await import('./lib/gsc-import.js');
+    const result = importGscQueries(getDb(), project);
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'gsc-import', project, ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('Search Console Query Import')}  ${chalk.gray(project)}`);
+    if (!result.exports.length) {
+      console.log(chalk.yellow(`  No exports found. Put GSC CSV folders in gsc/${project}-<label>/`));
+      console.log('');
+      return;
+    }
+    console.log(`  Imported ${result.imported} query rows from ${result.exports.length} export(s)\n`);
+    for (const e of result.exports) {
+      const scope = e.scope === 'page' ? chalk.green(`page: ${e.pageFilter}`) : chalk.yellow('property-wide (no page filter)');
+      console.log(`  ${e.folder}  ${chalk.gray(e.dateRange)}  ${e.rows} rows  ${scope}`);
+    }
+    if (!result.exports.some(e => e.scope === 'page')) {
+      console.log(chalk.gray('\n  No page-filtered export present. Page-level decisions stay blocked until one is imported:'));
+      console.log(chalk.gray('  in Search Console, filter by Page, then Export → save into gsc/' + project + '-<label>/'));
+    }
+    console.log('');
+  });
+
+program
+  .command('page-contract <project>')
+  .description('What one page actually needs: a query-led decision, what is blocked, and what is safe to fix now')
+  .requiredOption('--url <url>', 'The page to decide on')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('page-contract')) return;
+    const config = loadConfig(project);
+    const { runPageContract } = await import('./analyses/page-contract/index.js');
+    const r = runPageContract(getDb(), project, opts.url, {
+      brandTerms: config?.brandTerms || config?.gsc?.brandTerms || [],
+    });
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'page-contract', ...r }, null, 2)); return; }
+    const dc = { expand: chalk.green, protect: chalk.cyan, reposition: chalk.yellow, consolidate: chalk.yellow, no_action_yet: chalk.gray }[r.decision] || chalk.white;
+    console.log(`\n  ${chalk.bold('Page Contract')}  ${chalk.gray(r.url)}`);
+    if (!r.crawled) console.log(chalk.yellow('  ! This URL is not in the crawl data.'));
+    console.log(`  Decision: ${dc(chalk.bold(r.decision))}`);
+    for (const b of r.decision_basis) console.log(chalk.gray(`      ${b}`));
+    const pl = r.evidence.page_level;
+    console.log(`\n  ${chalk.bold('Evidence')}  ${chalk.gray('scope: ' + r.evidence.scope)}`);
+    if (pl) {
+      console.log(`      page branded     ${pl.branded.impressions} impr · ${pl.branded.clicks} clicks · pos ${pl.branded.avgPosition ?? '—'}`);
+      console.log(`      page non-branded ${pl.non_branded.impressions} impr · ${pl.non_branded.clicks} clicks · pos ${pl.non_branded.avgPosition ?? '—'}`);
+    }
+    const ctx = r.evidence.property_level_context;
+    console.log(chalk.gray(`      property (${ctx.date_range}): branded ${ctx.branded.impressions} impr / non-branded ${ctx.non_branded.impressions} impr — context only`));
+    if (r.blocked_recommendations.length) {
+      console.log(`\n  ${chalk.bold(chalk.red('Blocked'))} ${chalk.gray('— do not recommend these yet')}`);
+      for (const b of r.blocked_recommendations) {
+        console.log(chalk.red(`      ✗ ${b.action}`));
+        console.log(chalk.gray(`          ${b.reason}`));
+        console.log(chalk.gray(`          unblocked by: ${b.unblocked_by}`));
+      }
+    }
+    console.log(`\n  ${chalk.bold(chalk.green('Safe to act on now'))} ${chalk.gray('— not gated on demand')}`);
+    for (const a of r.allowed_now) {
+      console.log(chalk.green(`      ✓ ${a.action}`) + chalk.gray(`  ${a.reason}`));
+      for (const it of a.items.slice(0, 5)) console.log(chalk.gray(`          · ${it}`));
+    }
+    if (r.evidence.missing_inputs.length) {
+      console.log(`\n  ${chalk.bold('Missing input')}`);
+      for (const m of r.evidence.missing_inputs) console.log(chalk.yellow(`      ${m}`));
+    }
+    console.log('');
+  });
+
+program
   .command('schema-audit <project>')
   .description('Check schema type specificity and the fields Google actually requires (Product vs SoftwareApplication, offers/price)')
   .option('--format <type>', 'Output format: brief or json', 'brief')

@@ -216,7 +216,7 @@ Upload your GSC data for ranking insights:
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
   (AEO), keyword intelligence, blog drafts, dashboards, site graph, Site Watch,
-  technical audit, Search Console insights, and 20 of the 22 MCP tools
+  technical audit, Search Console insights, and 17 of the 30 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
 - Competitor synthesis — gap analysis, positioning, keyword battleground,

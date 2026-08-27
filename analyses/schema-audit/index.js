@@ -20,10 +20,16 @@
 
 import { upsertInsights } from '../../db/db.js';
 
-// Hostname prefixes and path roots that indicate a software surface rather
-// than a purchasable item.
-const SOFTWARE_HOST_RE = /^(?:api|apis|dev-api|docs?|developer|developers|app|dashboard|console|rpc|sandbox|status)\./i;
-const SOFTWARE_PATH_RE = /^\/(?:api|apis|docs?|developer|developers|app|dashboard|console|reference|sdk|playground|plans|pricing\/api)(?:\/|$)/i;
+// Documentation surfaces only. Deliberately NOT api./rpc./app. bare hosts: a
+// company that sells an API commonly puts its commercial lander on api.example
+// .com, and Product is the right type there. Judging by hostname alone flagged
+// those real product pages as mistyped.
+const DOCS_HOST_RE = /^(?:docs?|developer|developers|reference|sandbox|status)\./i;
+const DOCS_PATH_RE = /^\/(?:docs?|developer|developers|reference|api-reference|sdk|playground|guides?)(?:\/|$)/i;
+
+// Commercial intent on the page itself. Any of these means the page is selling
+// something, so Product/Offer markup is appropriate regardless of where it lives.
+const COMMERCIAL_RE = /\b(?:pricing|price|per month|\/mo\b|free tier|subscribe|subscription|plan|plans|billing|buy now|start free|upgrade|checkout)\b|[$€£]\s?\d/i;
 
 const PRODUCT_TYPES = new Set(['Product', 'IndividualProduct', 'ProductModel']);
 const SOFTWARE_TYPES = new Set(['SoftwareApplication', 'WebApplication', 'MobileApplication', 'WebAPI']);
@@ -51,11 +57,19 @@ function hasUsablePrice(offer) {
   return Number.isFinite(Number(p));
 }
 
-function isSoftwareSurface(url) {
+/**
+ * A page is a documentation surface only when it looks like docs *and* shows no
+ * sign of selling anything. Both halves matter: a pricing page under /docs/ is
+ * still commercial, and an API lander on api.* is still a product.
+ */
+function isDocumentationSurface(url, body) {
+  let looksLikeDocs = false;
   try {
     const u = new URL(url);
-    return SOFTWARE_HOST_RE.test(u.hostname) || SOFTWARE_PATH_RE.test(u.pathname);
+    looksLikeDocs = DOCS_HOST_RE.test(u.hostname) || DOCS_PATH_RE.test(u.pathname);
   } catch { return false; }
+  if (!looksLikeDocs) return false;
+  return !COMMERCIAL_RE.test(body || '');
 }
 
 /**
@@ -64,7 +78,7 @@ function isSoftwareSurface(url) {
  */
 export function runSchemaAudit(db, project, opts = {}) {
   const rows = db.prepare(`
-    SELECT ps.raw_json, ps.schema_type, p.url, p.title
+    SELECT ps.raw_json, ps.schema_type, p.url, p.title, p.body_text
     FROM page_schemas ps
     JOIN pages p ON p.id = ps.page_id
     JOIN domains d ON d.id = p.domain_id
@@ -95,14 +109,14 @@ export function runSchemaAudit(db, project, opts = {}) {
     const offers = offersOf(raw);
     const priced = offers.filter(hasUsablePrice);
     const hasRatingOrReview = !!(raw.aggregateRating || raw.review);
-    const softwareSurface = isSoftwareSurface(row.url);
+    const docsSurface = isDocumentationSurface(row.url, row.body_text);
     const push = (severity, code, message, fix) =>
       issues.push({ severity, code, url: row.url, schemaType: types.join(', '), message, fix });
 
-    if (isProduct && softwareSurface) {
-      push('error', 'product_on_software_surface',
-        `${types.join(', ')} markup on a software surface. Google treats this as a purchasable item, which an API, docs, dashboard, or app page is not.`,
-        'Use SoftwareApplication (or WebApplication for a browser-based app) with applicationCategory, operatingSystem, and offers.');
+    if (isProduct && docsSurface) {
+      push('warning', 'product_on_docs_page',
+        `${types.join(', ')} markup on a documentation page with no pricing or purchase signals. Google reads this as a purchasable item, which reference material is not.`,
+        'Use TechArticle for reference content, or SoftwareApplication if the page really does describe the product itself.');
     }
 
     if (isProduct && !priced.length && !hasRatingOrReview) {

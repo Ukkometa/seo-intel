@@ -64,13 +64,38 @@ const gatedCalls = [...cliSrc.matchAll(/requirePro\(\s*['"`]([a-z-]+)/g)]
   .filter(f => !f.endsWith('-'));
 const PAID_FEATURES = [...new Set(gatedCalls)].filter(f => !FREE_FEATURES.includes(f)).sort();
 
+// The capabilities manifest carries its own `tier` per capability. Platform
+// integrators read it to decide what needs a licence, so a manifest that says
+// 'pro' for something gate.js lets through free under-sells the free tier —
+// the same class of bug this script was built to catch, one layer over.
+// orphans, js-delta and blog-draft drifted this way and were corrected 2026-08-22.
+const harnessSrc = read(join(REPO, 'agent-harness.js'));
+const CAPABILITY_TIERS = [...harnessSrc.matchAll(/id:\s*'([a-z-]+)'[\s\S]{0,600}?tier:\s*'(free|pro)'/g)]
+  .map(m => ({ id: m[1], tier: m[2] }));
+
 const intelSrc = read(join(REPO, 'lib', 'intel.js'));
 const FREE_SLICES = [...(intelSrc.match(/FREE_SLICES = \[(.*?)\]/)?.[1] || '').matchAll(/'(\w+)'/g)].map(m => m[1]);
 const ALL_SLICES = [...(intelSrc.match(/INTEL_SLICES = \[(.*?)\]/)?.[1] || '').matchAll(/'(\w+)'/g)].map(m => m[1]);
 
 const mcpSrc = read(join(REPO, 'mcp', 'server.js'));
-const MCP_TOOLS = [...mcpSrc.matchAll(/server\.registerTool\(\s*['"]([a-z_]+)['"]/g)].map(m => m[1]);
-const MCP_PAID = [...new Set([...mcpSrc.matchAll(/paidGate\(\s*['"]([a-z_]+)['"]/g)].map(m => m[1]))];
+const literalTools = [...mcpSrc.matchAll(/server\.registerTool\(\s*['"]([a-z_]+)['"]/g)].map(m => m[1]);
+const literalPaid = [...mcpSrc.matchAll(/paidGate\(\s*['"]([a-z_]+)['"]/g)].map(m => m[1]);
+
+// The competitor analysis tools are registered from a table in a loop, so the
+// registerTool()/paidGate() literal regexes above cannot see them. Parse the
+// table itself. Every tool in it is paid by construction — the loop body calls
+// paidGate(t.name) unconditionally on !isPro().
+const compBlock = mcpSrc.match(/const competitorTools = \[([\s\S]*?)\n\];/);
+const COMPETITOR_TOOLS = compBlock
+  ? [...compBlock[1].matchAll(/name:\s*'([a-z_]+)'/g)].map(m => m[1])
+  : [];
+if (compBlock && !COMPETITOR_TOOLS.length) {
+  fail('truth', 'Found the competitorTools table but parsed no tool names — the regex needs updating',
+    join(REPO, 'mcp/server.js'));
+}
+
+const MCP_TOOLS = [...literalTools, ...COMPETITOR_TOOLS];
+const MCP_PAID = [...new Set([...literalPaid, ...COMPETITOR_TOOLS])];
 const MCP_FREE_COUNT = MCP_TOOLS.length - MCP_PAID.length;
 
 const licSrc = read(join(REPO, 'lib', 'license.js'));
@@ -97,6 +122,14 @@ const truth = {
 // Sanity: if truth extraction itself broke, everything downstream is noise.
 if (!FREE_FEATURES.length) fail('truth', 'Could not parse FREE_FEATURES from lib/gate.js — the regex needs updating', join(REPO, 'lib/gate.js'));
 if (!MCP_TOOLS.length) fail('truth', 'Could not parse registerTool() calls from mcp/server.js', join(REPO, 'mcp/server.js'));
+if (!CAPABILITY_TIERS.length) fail('truth', 'Could not parse capability tiers from agent-harness.js — the regex needs updating', join(REPO, 'agent-harness.js'));
+for (const c of CAPABILITY_TIERS) {
+  const realTier = PAID_FEATURES.includes(c.id) ? 'pro' : 'free';
+  if (c.tier !== realTier) {
+    fail('truth', `capabilities manifest says "${c.id}" is ${c.tier}, but lib/gate.js makes it ${realTier}`,
+      join(REPO, 'agent-harness.js'), `set tier: '${realTier}' on the ${c.id} capability`);
+  }
+}
 if (AEO_SIGNALS === 0) fail('truth', 'Could not parse AEO signal weights from analyses/aeo/scorer.js', join(REPO, 'analyses/aeo/scorer.js'));
 
 // ── 2. VERSION COHERENCE ────────────────────────────────────────────────────
@@ -131,6 +164,14 @@ for (const t of versionTargets) {
 }
 
 // Storefront visible version badges (e.g. "Local SEO tool · v1.5.53")
+// Paid features must never appear in the Free pricing card.
+const PAID_IN_FREE = [
+  { re: /competitor gap|kilpailijoiden gap|gap analysis|gap-analyysi/i, feature: 'gap-intel' },
+  { re: /blog draft|blogiluonnos/i,                                    feature: 'blog-draft' },
+  { re: /scheduled crawl|ajastet\w* crawl/i,                           feature: 'run (scheduler)' },
+  { re: /change brief|muutosbrief|publishing velocity|julkaisutahti/i,  feature: 'brief / velocity' },
+];
+
 if (HAS_SITE) {
   for (const f of [join(SITE, 'en', 'seo-intel', 'index.html'), join(SITE, 'seo-intel', 'index.html')]) {
     let src = read(f);
@@ -228,10 +269,11 @@ for (const f of proseSurfaces) {
 }
 
 // Free features must never appear in a Solo pricing card.
+// blog-draft was removed from this list on 2026-08-22: it moved behind Solo, so
+// listing it in the Solo pricing card is now correct rather than a bug.
 const FREE_IN_SOLO = [
   { re: /citability|siteerattavuus/i,        feature: 'aeo' },
   { re: /AI extraction|AI-poiminta|AI-ekstraktointi/i, feature: 'extract' },
-  { re: /blog draft|blogiluonnos/i,          feature: 'blog-draft' },
   { re: /dashboard/i,                        feature: 'html' },
   { re: /multiple projects|useita projekteja/i, feature: 'unlimited projects' },
 ];
@@ -247,6 +289,14 @@ if (HAS_SITE) {
     }
     if (!/competitor|kilpailij/i.test(solo)) {
       fail('gating', 'Solo pricing card does not mention competitors — the actual paid differentiator', f);
+    }
+
+    // And the reverse: a paid feature advertised inside the Free card. The EN
+    // free card listed "Competitor gap analysis" until 2026-08-22 — the single
+    // most expensive thing to give away by accident, and nothing caught it.
+    const free = cards[0];
+    for (const { re, feature } of PAID_IN_FREE) {
+      if (re.test(free)) fail('gating', `Free pricing card lists "${feature}", which is paid in gate.js`, f);
     }
   }
 }

@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.6.0 (2026-08-22)
+
+### New: `page_contract` — decisions from demand, not from what the page looks like
+
+Asked "what does this page need?", seo-intel could previously answer only with structure, because structure was all it held: Search Console CSVs were parsed when the dashboard rendered and thrown away, so no query data ever reached the database. An agent given nothing but schema signals recommends schema work for every question it is asked. That is the tool offering one instrument, not the model being unreliable.
+
+Three things change that.
+
+`gsc-import <project>` persists Search Console query exports. Each export is recorded with the scope its own `Filters.csv` declares, so an export taken with a Page filter becomes page-level evidence and an unfiltered one is explicitly *not* evidence about any individual page.
+
+Branded classification is derived from the site's own data — the registrable domain plus the names in its `Organization` / `WebSite` / `Product` markup — and the derived list is returned so it can be corrected. Names that are purely category descriptions are rejected: a site whose schema calls it a "Solana Swap Aggregator" must not have real category demand reclassified as navigation. Brands that appear nowhere in the markup go in `brandTerms` in the project config.
+
+`page-contract <project> --url <url>` then returns a decision — `expand`, `consolidate`, `reposition`, `protect`, or `no_action_yet` — computed from thresholds rather than judgement, together with `blocked_recommendations`: the advice that must **not** be given yet, each carrying the exact input that would unblock it. The matching MCP tool tells agents to treat those blocks as binding.
+
+Demand evidence gates content *investment*. It does not gate correctness: invalid markup and indexability faults appear under `allowed_now` and stay actionable even when every content decision is blocked.
+
+### Fixed: schema-audit no longer mistakes product pages for documentation
+
+`product_on_software_surface` judged by hostname, so a company selling its API from `api.example.com` had its real commercial lander flagged as mistyped — 18 false positives on a live project. The rule now requires a page to look like documentation *and* show no pricing or purchase signals before `Product` is questioned, and it is a warning rather than an error. The `product_without_offers` finding, which is what Search Console actually rejects, is unchanged.
+
+### New: the competitor analyses finally reach agents
+
+Eleven features sat behind the Solo paywall and nine of them had no MCP tool at
+all. A Solo subscriber working in Claude Code could reach `scan_site` and
+`get_competitor_positioning` and nothing else, so most of what they paid for was
+only available if they opened a terminal. Six of them are now native tools:
+
+- `gap_intel` — topic gaps against competitors, ranked by buyer intent
+- `find_shallow_competitor_pages` — competitor pages ranking on thin content
+- `find_decaying_competitor_pages` — competitor pages gone stale
+- `audit_competitor_headings` — full H1-H6 outlines of competitor pages
+- `get_entity_coverage` — entities competitors cover that you never mention
+- `find_competitor_friction` — competitor pages forcing a sales call where the
+  visitor wanted an answer
+
+All six read existing crawl data, so they return immediately and make no network
+calls. The MCP surface goes from 22 tools to 28.
+
+### Changed: content production moves to Solo
+
+`blog-draft` and `loop` leave the free tier, and `run_content_loop`,
+`draft_blog_prompt` and `prescore_draft` are now gated in MCP. Free is 17 of the
+28 tools.
+
+The line has moved, deliberately. Reading and auditing your own site stays free
+and always will: the AI Citability Audit, `rescore`, `tech-audit` and every
+own-site digest are what make the tool worth installing, and putting them behind
+a licence would mean nobody ever sees it work. But the content loop is "do the
+work for me" rather than "show me my data" — used repeatedly, high value per
+call, and only reached after the free audit has already proved the product.
+
+### Fixed: three ways the tiers were lying
+
+The capabilities manifest advertised `orphans`, `js-delta` and `blog-draft` as
+`pro` while `lib/gate.js` let all three through free, so platform integrators
+reading `capabilities` believed they needed a licence for features they already
+had.
+
+The English pricing card on the site listed **"Competitor gap analysis"** as a
+free feature. That is the paid differentiator, and it had been advertised as free
+to every English visitor.
+
+The MCP boot banner and the upgrade message shown when a gate fires both carried
+hardcoded counts that had drifted. Both now derive from the registrations, and
+the server refuses to boot rather than report a count it could not compute.
+
+`check-layers` missed all three because it only compared in one direction and
+could not see tools registered from a table. It now parses the capability
+manifest, asserts no paid feature appears in the Free pricing card, and counts
+table-registered tools.
+
 ## 1.5.55 (2026-08-20)
 
 ### Fixed: the Intelligence Ledger was dropping insights on the floor

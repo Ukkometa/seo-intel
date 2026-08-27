@@ -77,8 +77,22 @@ function parseNum(val) {
   return parseFloat(val.replace('%', '').replace(',', '')) || 0;
 }
 
+/** Every GSC export folder belonging to a project, newest first. */
+export function listGscExports(project) {
+  if (!existsSync(GSC_DIR)) return [];
+  return readdirSync(GSC_DIR)
+    .filter(f => f.toLowerCase().startsWith(project.toLowerCase()) && !f.startsWith('.'))
+    .map(name => {
+      let mtimeMs = 0;
+      try { mtimeMs = statSync(join(GSC_DIR, name)).mtimeMs; } catch { /* ignore */ }
+      return { name, mtimeMs };
+    })
+    .filter(f => statSync(join(GSC_DIR, f.name)).isDirectory())
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
 // ── Load GSC data for a project ─────────────────────────────────────────────
-export function loadGscData(project) {
+export function loadGscData(project, opts = {}) {
   if (!existsSync(GSC_DIR)) return null;
 
   const folders = readdirSync(GSC_DIR).filter(f =>
@@ -89,7 +103,7 @@ export function loadGscData(project) {
 
   // Use most recently modified matching folder.
   // This avoids stale picks like "carbium-2" winning over a freshly uploaded "carbium".
-  const selectedFolder = [...folders]
+  const selectedFolder = (opts.folder ? folders.filter(f => f === opts.folder) : [...folders])
     .map(name => {
       const path = join(GSC_DIR, name);
       let mtimeMs = 0;
@@ -97,6 +111,7 @@ export function loadGscData(project) {
       return { name, path, mtimeMs };
     })
     .sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name))[0];
+  if (!selectedFolder) return null;
 
   const folder = selectedFolder.path;
 
@@ -134,6 +149,20 @@ export function loadGscData(project) {
     ctr: v.count > 0 ? v.ctrSum / v.count : 0,
     position: v.count > 0 ? v.posSum / v.count : 0,
   })).sort((a, b) => a.date.localeCompare(b.date));
+
+  // ── Filters — what scope this export actually covers ──
+  //
+  // GSC writes the applied filters into Filters.csv. An export taken with a
+  // page filter yields a Queries.csv scoped to that one page; without it the
+  // rows are property-wide. Reading this is what lets us tell page-level
+  // evidence from site-level evidence instead of assuming.
+  const filterRaw = loadCSV('Filters.csv');
+  const filters = {};
+  for (const r of filterRaw) {
+    const k = (r.Filter || '').trim().toLowerCase();
+    if (k) filters[k] = (r.Value || '').trim();
+  }
+  const pageFilter = filters.page || filters['landing page'] || filters.url || null;
 
   // ── Queries ──
   const queriesRaw = loadCSV('Queries.csv');
@@ -189,6 +218,11 @@ export function loadGscData(project) {
     : '';
 
   return {
+    scope: pageFilter ? 'page' : 'property',
+    pageFilter,
+    dateRange: filters.date || null,
+    filters,
+    sourceFolder: selectedFolder.name,
     chart,
     queries,
     pages,

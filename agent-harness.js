@@ -235,7 +235,7 @@ export const capabilities = [
     inputs: { project: 'string', options: { format: 'json|brief' } },
     outputs: { orphans: 'array<{entity, domains, suggestedUrl}>' },
     phase: 'analyze',
-    tier: 'pro',
+    tier: 'free',
     dependsOn: ['extract'],
   },
   {
@@ -301,7 +301,7 @@ export const capabilities = [
     inputs: { project: 'string', options: { domain: 'string', maxPages: 'number', threshold: 'number', format: 'json|brief' } },
     outputs: { results: 'array<RenderDelta>', summary: 'object' },
     phase: 'analyze',
-    tier: 'pro',
+    tier: 'free',
     dependsOn: ['crawl'],
   },
   {
@@ -452,6 +452,19 @@ export async function run(command, project, opts = {}) {
       case 'schema-audit': {
         const { runSchemaAudit } = await import('./analyses/schema-audit/index.js');
         return wrap(runSchemaAudit(db, project, {}));
+      }
+
+      case 'gsc-import': {
+        const { importGscQueries } = await import('./lib/gsc-import.js');
+        return wrap(importGscQueries(db, project));
+      }
+
+      case 'page-contract': {
+        if (!opts.url) return fail('page-contract requires opts.url (the page to decide on)');
+        const { runPageContract } = await import('./analyses/page-contract/index.js');
+        return wrap(runPageContract(db, project, opts.url, {
+          brandTerms: opts.brandTerms || config?.brandTerms || config?.gsc?.brandTerms || [],
+        }));
       }
 
       case 'rescore': {

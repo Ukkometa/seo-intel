@@ -62,27 +62,32 @@ assert.equal(getActiveInsights(db, 'fixture').technical_gaps.length, 0, 'the bad
 const sdb = new DatabaseSync(':memory:');
 sdb.exec(`
   CREATE TABLE domains (id INTEGER PRIMARY KEY, domain TEXT, project TEXT, role TEXT);
-  CREATE TABLE pages (id INTEGER PRIMARY KEY, domain_id INTEGER, url TEXT, title TEXT);
+  CREATE TABLE pages (id INTEGER PRIMARY KEY, domain_id INTEGER, url TEXT, title TEXT, body_text TEXT);
   CREATE TABLE page_schemas (page_id INTEGER, schema_type TEXT, raw_json TEXT);`);
 sdb.prepare('INSERT INTO domains VALUES (?,?,?,?)').run(1, 'example.com', 'fx', 'target');
 let pid = 0;
-const addPage = (url, schema) => {
+const addPage = (url, schema, body = '') => {
   pid++;
-  sdb.prepare('INSERT INTO pages VALUES (?,?,?,?)').run(pid, 1, url, 'T');
+  sdb.prepare('INSERT INTO pages VALUES (?,?,?,?,?)').run(pid, 1, url, 'T', body || '');
   sdb.prepare('INSERT INTO page_schemas VALUES (?,?,?)').run(pid, JSON.stringify(schema['@type']), JSON.stringify(schema));
 };
 addPage('https://api.example.com/', { '@type': 'Product', name: 'API' });
-addPage('https://example.com/shop/mug', { '@type': 'Product', name: 'Mug', offers: { '@type': 'Offer', price: '12.00', priceCurrency: 'EUR' } });
+addPage('https://example.com/shop/mug', { '@type': 'Product', name: 'Mug', offers: { '@type': 'Offer', price: '12.00', priceCurrency: 'EUR' } }, 'Buy now, price 12.00 EUR');
 addPage('https://example.com/free', { '@type': 'SoftwareApplication', name: 'Free', offers: { price: 0, priceCurrency: 'EUR' } });
 addPage('https://example.com/nocur', { '@type': 'Product', name: 'X', offers: { price: '9' } });
+// A genuine documentation page with no commercial signals: Product is wrong here.
+addPage('https://docs.example.com/reference/widgets', { '@type': 'Product', name: 'Widgets API' }, 'Returns a widget object. See the schema below.');
 
 const audit = runSchemaAudit(sdb, 'fx', { skipLedger: true });
 const codes = audit.issues.map(i => `${i.code}@${new URL(i.url).hostname}${new URL(i.url).pathname}`);
-assert.ok(codes.includes('product_on_software_surface@api.example.com/'), 'Product on an api. host is flagged');
+assert.ok(!codes.some(c => c.startsWith('product_on_docs_page@api.example.com')),
+  'an api.* host is not assumed to be documentation — commercial API landers legitimately use Product');
 assert.ok(codes.includes('product_without_offers@api.example.com/'), 'Product with no offers is flagged');
 assert.ok(!codes.some(c => c.includes('/shop/mug')), 'a properly priced Product on a shop URL is clean');
 assert.ok(!codes.some(c => c.includes('/free')), 'price 0 is a valid price for a free tier');
 assert.ok(codes.includes('offers_missing_currency@example.com/nocur'), 'price without priceCurrency is flagged');
+assert.ok(codes.includes('product_on_docs_page@docs.example.com/reference/widgets'),
+  'Product on a docs page with no pricing signals is flagged');
 assert.equal(audit.status, 'fail');
 
 console.log('ledger + schema-specificity fixtures: PASS');

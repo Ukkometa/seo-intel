@@ -9,9 +9,12 @@
  * Install for Claude Code:
  *   claude mcp add seo-intel "npx seo-intel-mcp"
  *
- * Tools (v1.5.26):
- *   list_projects  — free  — projects on this machine + page counts
- *   get_intel      — free `raw` slice / paid `audit|blog|competitor` slices
+ * Tools: 22 total. 20 are free — only scan_site and get_competitor_positioning
+ * require Solo outright. Two more are partially gated:
+ *   get_intel     — free `raw|audit|blog|graph` slices / Solo `competitor` slice
+ *   export_intel  — free on 10 tables / Solo for the `analyses` table
+ * The free/paid line lives in lib/gate.js (CLI) and the isPro() checks below
+ * (MCP). Keep this comment in sync with them; it has drifted before.
  *
  * IMPORTANT: stdout is reserved for JSON-RPC messages. All logging here goes
  * to stderr. Never use console.log in this file.
@@ -45,14 +48,19 @@ import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js
 // no banner, no handshake. Keep the crawler subtree off the boot path.
 import { runContentLoop } from '../analyses/loop/orchestrator.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
+import { run } from '../agent-harness.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function paidGate(toolName) {
+  // Counts stay derived — this message is the one moment a user decides whether
+  // to pay, and a stale free-tier list here undersells the product.
+  const freeCount = TOOL_COUNT - PAID_TOOL_NAMES.length;
   return {
-    content: [{ type: 'text', text: `The "${toolName}" tool requires SEO Intel Solo (€19.99/mo — vs Ahrefs ~$129/mo or Semrush ~$140/mo). Free tier already covers list_projects, get_intel(raw), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight. Activate at https://ukkometa.fi/en/seo-intel/ — set SEO_INTEL_LICENSE=SI-xxxx-xxxx-xxxx-xxxx in your env.` }],
+    content: [{ type: 'text', text: `The "${toolName}" tool requires SEO Intel Solo (€19.99/mo — vs Ahrefs ~$129/mo or Semrush ~$140/mo). The free tier already covers ${freeCount} of the ${TOOL_COUNT} tools, including the full AI Citability Audit (run_citability_audit, rescore_page), tech_audit, the whole crawl pipeline (setup_project, crawl_site, run_crawl, get_crawl_status), every own-site read (get_intel raw/audit/blog/graph, get_pages, list_keywords, get_headings, export_intel) and the problem loop (list_problems, mark_problem_status, ingest_insight). Solo adds what you cannot do alone: competitor analysis, history and trends, and the content loop. Activate at https://ukkometa.fi/en/seo-intel/ — set SEO_INTEL_LICENSE=SI-xxxx-xxxx-xxxx-xxxx in your env.` }],
     isError: true,
   };
 }
+
 
 function loadProjectConfig(project) {
   const p = join(CONFIG_DIR, `${project}.json`);
@@ -570,6 +578,80 @@ server.registerTool(
   }
 );
 
+// ── Tool: import_gsc_queries (FREE) ───────────────────────────────────────
+server.registerTool(
+  'import_gsc_queries',
+  {
+    description: [
+      'Import Google Search Console query exports for a project from gsc/<project>*/ into the local database.',
+      '',
+      'Each export is recorded with the scope its own Filters.csv declares. An export taken with a Page filter becomes page-level evidence; an unfiltered one is property-wide and is NOT evidence about any individual page. The result says which you have.',
+      '',
+      'Run this before page_contract. Free tier — it is your own Search Console data.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+    },
+  },
+  async ({ project }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    const { importGscQueries } = await import('../lib/gsc-import.js');
+    const result = importGscQueries(getDb(), project);
+    const hasPage = result.exports.some(e => e.scope === 'page');
+    return {
+      content: [{ type: 'text', text: JSON.stringify({
+        ...result,
+        has_page_scoped_evidence: hasPage,
+        hint: hasPage
+          ? 'Page-level evidence available. page_contract can now decide on those URLs.'
+          : `No page-filtered export present, so every page-level decision will come back blocked. In Search Console, filter by Page, then Export, and save the folder as gsc/${project}-<label>/.`,
+      }, null, 2) }],
+    };
+  },
+);
+
+// ── Tool: page_contract (FREE) ────────────────────────────────────────────
+server.registerTool(
+  'page_contract',
+  {
+    description: [
+      'Decide what ONE page actually needs, from measured search demand rather than from what the page happens to look like.',
+      '',
+      'CALL THIS BEFORE recommending any content change to an indexable page — before suggesting the page expand, target new terms, merge with another, or claim a category. It returns:',
+      '',
+      '  decision                 expand | consolidate | reposition | protect | no_action_yet',
+      '  decision_basis           the measured facts that produced it',
+      '  blocked_recommendations  advice you must NOT give yet, each with the exact input that would unblock it',
+      '  allowed_now              work that is safe regardless of demand data',
+      '  evidence                 branded vs non-branded split, page-level and property-level',
+      '',
+      'TREAT blocked_recommendations AS BINDING. If "expand" is blocked, do not suggest adding sections, keywords, or FAQs to the page — say what is missing and how to get it. Property-wide rankings are context only and can never be attributed to a single URL.',
+      '',
+      'Demand evidence gates content INVESTMENT, not correctness. Items under allowed_now — invalid structured data, indexability faults — should still be fixed and reported even when every content action is blocked.',
+      '',
+      'Requires import_gsc_queries to have run. Free tier — it is your own site and your own Search Console data.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      url: z.string().describe('The exact page URL to decide on.'),
+      brand_terms: z.array(z.string()).optional().describe('Extra brand names that cannot be derived from the domain or schema (a product brand, for example). Terms derived automatically are returned in evidence.brand_terms — check them.'),
+    },
+  },
+  async ({ project, url, brand_terms }) => {
+    const config = loadProjectConfig(project);
+    if (!config) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    const { runPageContract } = await import('../analyses/page-contract/index.js');
+    const result = runPageContract(getDb(), project, url, {
+      brandTerms: brand_terms || config.brandTerms || config.gsc?.brandTerms || [],
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  },
+);
+
 // ── Tool: tech_audit (FREE) ───────────────────────────────────────────────
 server.registerTool(
   'tech_audit',
@@ -865,7 +947,120 @@ server.registerTool(
   }
 );
 
-// ── Tool: prescore_draft (FREE) ───────────────────────────────────────────
+// ── Competitor analysis tools (PAID) ──────────────────────────────────────
+//
+// These wrap analyses that already existed behind the CLI paywall but had no
+// MCP surface at all, so a Solo subscriber working in an agent could not reach
+// what they were paying for. All six are read-only queries over the crawl DB:
+// fast, synchronous, no job spawning. They require a crawl that included
+// competitors — run_crawl first, and add competitors via setup_project.
+const competitorTools = [
+  {
+    name: 'gap_intel',
+    command: 'gap-intel',
+    summary: 'Topic gap analysis against competitors: what they cover that you do not.',
+    detail: 'Returns a prioritised gap report — topics, depth gaps and a coverage matrix, ranked by buyer intent. The single most useful starting point once a competitor crawl has landed.',
+    schema: {
+      project: z.string(),
+      vs: z.array(z.string()).optional().describe('Competitor domains to compare against. Omit to use every competitor configured on the project.'),
+      type: z.enum(['all', 'docs', 'blog', 'landing']).optional().describe('Restrict to one page type (default "all"). docs = /docs//guide//api/, blog = /blog//post/, landing = /pricing//features//product/.'),
+      limit: z.number().int().positive().max(500).optional().describe('Max gaps to return (default 100).'),
+    },
+    map: ({ vs, type, limit }) => ({ vs, type, limit }),
+  },
+  {
+    name: 'find_shallow_competitor_pages',
+    command: 'shallow',
+    summary: 'Competitor pages that rank on thin content — the cheapest pages to outrank.',
+    detail: 'Finds indexable competitor pages that are shallow in word count yet sit close to the homepage in click depth. Low word count plus low click depth means the page ranks on authority rather than substance, so a thorough page on the same topic is unusually easy to beat.',
+    schema: {
+      project: z.string(),
+      max_words: z.number().int().positive().optional().describe('Word-count ceiling for "thin" (default 700). Pages under 80 words are always excluded as boilerplate.'),
+      max_depth: z.number().int().nonnegative().optional().describe('Click-depth ceiling (default 2).'),
+    },
+    map: ({ max_words, max_depth }) => ({ maxWords: max_words, maxDepth: max_depth }),
+  },
+  {
+    name: 'find_decaying_competitor_pages',
+    command: 'decay',
+    summary: 'Competitor pages that have gone stale — outdated content you can displace.',
+    detail: 'Splits into confirmedStale (a modified date older than the threshold) and unknownFreshness (no date at all, mid-length, so likely unmaintained). Stale top-level pages are displaceable with a genuinely current equivalent.',
+    schema: {
+      project: z.string(),
+      months: z.number().int().positive().optional().describe('How many months without an update counts as stale (default 18).'),
+    },
+    map: ({ months }) => ({ months }),
+  },
+  {
+    name: 'audit_competitor_headings',
+    command: 'headings-audit',
+    summary: 'Full H1-H6 outlines of competitor pages — their content structure, extracted.',
+    detail: 'Returns the heading tree for up to 30 substantial competitor pages. Use it to see how a competitor structures a topic before writing your own version, and to spot subtopics they answer that you do not.',
+    schema: {
+      project: z.string(),
+      depth: z.number().int().nonnegative().optional().describe('Click-depth ceiling (default 2).'),
+      domain: z.string().optional().describe('Restrict to a single competitor domain.'),
+    },
+    map: ({ depth, domain }) => ({ depth, domain }),
+  },
+  {
+    name: 'get_entity_coverage',
+    command: 'entities',
+    summary: 'Entity gap map: what competitors talk about that you never mention.',
+    detail: 'Buckets every extracted entity into gaps (competitors cover it, you do not), shared, and unique to you. Requires extraction to have run. Entity gaps are the rawest form of topical-authority gap and map directly onto pages worth writing.',
+    schema: {
+      project: z.string(),
+      min_mentions: z.number().int().positive().optional().describe('How many distinct competitor domains must mention an entity before it counts as a gap (default 2).'),
+    },
+    map: ({ min_mentions }) => ({ minMentions: min_mentions }),
+  },
+  {
+    name: 'find_competitor_friction',
+    command: 'friction',
+    summary: 'Competitor pages that force a sales call where the visitor wanted an answer.',
+    detail: 'Finds competitor pages whose search intent is informational or commercial but whose primary CTA is high-friction ("contact sales", "book a demo", "request access"). Each one is a visitor who wanted something self-serve and did not get it, which is a conversion opening for you.',
+    schema: { project: z.string() },
+    map: () => ({}),
+  },
+];
+
+for (const t of competitorTools) {
+  server.registerTool(
+    t.name,
+    {
+      description: [
+        t.summary,
+        '',
+        t.detail,
+        '',
+        'Reads the existing crawl — no network calls, returns immediately. Needs a crawl that included competitors (run_crawl, with competitors set via setup_project). Paid tier (Solo).',
+      ].join('\n'),
+      inputSchema: t.schema,
+    },
+    async (args) => {
+      if (!isPro()) return paidGate(t.name);
+      const { project } = args;
+      if (!loadProjectConfig(project)) {
+        return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+      }
+      try {
+        const opts = Object.fromEntries(Object.entries(t.map(args)).filter(([, v]) => v !== undefined));
+        const result = await run(t.command, project, opts);
+        if (!result.ok) {
+          return { content: [{ type: 'text', text: `seo-intel error: ${result.error}` }], isError: true };
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result.data, null, 2) }],
+          structuredContent: result.data,
+        };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+      }
+    }
+  );
+}
+
+// ── Tool: prescore_draft (PAID) ───────────────────────────────────────────
 server.registerTool(
   'prescore_draft',
   {
@@ -877,6 +1072,7 @@ server.registerTool(
     },
   },
   async ({ draft_md, project, topic }) => {
+    if (!isPro()) return paidGate('prescore_draft');
     try {
       const score = prescore(draft_md);
       const out = {
@@ -926,7 +1122,7 @@ server.registerTool(
   }
 );
 
-// ── Tool: draft_blog_prompt (FREE) ────────────────────────────────────────
+// ── Tool: draft_blog_prompt (PAID) ────────────────────────────────────────
 server.registerTool(
   'draft_blog_prompt',
   {
@@ -939,6 +1135,7 @@ server.registerTool(
     },
   },
   async ({ project, topic, lang = 'en', content_type = 'blog' }) => {
+    if (!isPro()) return paidGate('draft_blog_prompt');
     const config = loadProjectConfig(project);
     if (!config) {
       return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
@@ -966,7 +1163,7 @@ server.registerTool(
   }
 );
 
-// ── Tool: run_content_loop (free — the one-call content loop) ─────────────
+// ── Tool: run_content_loop (PAID — the one-call content loop) ─────────────
 // Walks gap → draft → prescore → queue. In MCP the agent's own LLM is the
 // writer, so this runs in HAND-BACK mode: it ranks the gaps, picks the highest-
 // leverage one(s), and returns a seeded prompt per gap. The agent writes the
@@ -989,6 +1186,7 @@ server.registerTool(
     },
   },
   async ({ project, topic, count, lang = 'en', content_type = 'blog', dry_run }) => {
+    if (!isPro()) return paidGate('run_content_loop');
     const config = loadProjectConfig(project);
     if (!config) {
       return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
@@ -1270,11 +1468,34 @@ server.registerTool(
   }
 );
 
+// Derived so they cannot drift from the registrations above.
+// server._registeredTools is a private SDK field. If a future SDK version drops
+// it we want a loud failure at boot, not a banner and an upgrade message that
+// quietly report "0 tools".
+const TOOL_COUNT = Object.keys(server._registeredTools ?? {}).length;
+if (!TOOL_COUNT) {
+  console.error('[seo-intel-mcp] fatal: could not count registered tools — the MCP SDK no longer exposes _registeredTools. Update the TOOL_COUNT derivation in mcp/server.js.');
+  process.exit(1);
+}
+const PAID_TOOL_NAMES = [
+  'scan_site', 'get_competitor_positioning', 'prescore_draft', 'draft_blog_prompt',
+  'run_content_loop', ...competitorTools.map(t => t.name),
+];
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
-  console.error(`[seo-intel-mcp] v${VERSION} ready on stdio. 22 tools — free: setup_project (zero→configured from chat), crawl_site (ad-hoc, any URL, no config), run_content_loop (gap→draft→close), list_projects, list_problems, mark_problem_status, get_intel(raw/audit/blog/graph), get_pages, list_keywords, get_headings, run_crawl, get_crawl_status, ingest_insight, run_citability_audit (now with AI-crawler access), rescore_page (verify a fix: before/after/delta on the raw-HTML lens), tech_audit, suggest_models (local-first), prescore_draft, draft_blog_prompt, export_intel (own-site tables); Solo: scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor), export_intel (analyses table).`);
+  // Counts are derived, not hand-written: this banner drifted from reality once
+  // already, and it is the first thing a host shows in its MCP logs panel.
+  console.error(
+    `[seo-intel-mcp] v${VERSION} ready on stdio. ${TOOL_COUNT} tools, ${TOOL_COUNT - PAID_TOOL_NAMES.length} free.\n` +
+    `  Free: setup_project, crawl_site, run_crawl, get_crawl_status, list_projects, list_problems,\n` +
+    `        mark_problem_status, get_intel(raw/audit/blog/graph), get_pages, list_keywords, get_headings,\n` +
+    `        ingest_insight, run_citability_audit, rescore_page, tech_audit, suggest_models,\n` +
+    `        export_intel (own-site tables)\n` +
+    `  Solo: ${PAID_TOOL_NAMES.join(', ')}, get_intel(competitor), export_intel (analyses table)`
+  );
 }
 
 main().catch(err => {

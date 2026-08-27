@@ -1,6 +1,6 @@
 {
   "name": "seo-intel",
-  "version": "1.5.55",
+  "version": "1.6.0",
   "description": "Local Ahrefs-style SEO competitor intelligence. Crawl → SQLite → cloud analysis.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -34,6 +34,9 @@
     "./gsc-platform": "./analyses/gsc-platform/index.js",
     "./geo": "./analyses/geo/index.js",
     "./schema-audit": "./analyses/schema-audit/index.js",
+    "./page-contract": "./analyses/page-contract/index.js",
+    "./gsc-import": "./lib/gsc-import.js",
+    "./brand": "./lib/brand.js",
     "./gap-intel": "./analyses/gap-intel/index.js",
     "./blog-draft": "./analyses/blog-draft/index.js",
     "./crawler": "./crawler/index.js",
@@ -100,7 +103,8 @@
     "check:json": "node scripts/check-layers.js --json",
     "test:modern-seo": "node test/modern-seo.test.js",
     "test:ledger": "node test/ledger.test.js",
-    "test": "node test/modern-seo.test.js && node test/ledger.test.js",
+    "test:page-contract": "node test/page-contract.test.js",
+    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

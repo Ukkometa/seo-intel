@@ -4,19 +4,21 @@ description: >
   Local SEO data layer for AI agents. Use when the user asks about SEO analysis, competitor research,
   keyword gaps, content strategy, site audits, AI citability (AEO), or wants to crawl/analyze websites.
   Ships a Model Context Protocol (MCP) server so Claude Code / Cursor / Cline / any MCP host can call
-  seo-intel's local SQLite intelligence as 22 native tools. Free — setup_project (zero to configured
-  from chat), crawl_site (ad-hoc, any URL, no config), run_crawl, get_crawl_status, run_content_loop,
+  seo-intel's local SQLite intelligence as 30 native tools. Free — setup_project (zero to configured
+  from chat), crawl_site (ad-hoc, any URL, no config), run_crawl, get_crawl_status,
   list_projects, list_problems, mark_problem_status, get_intel (raw/audit/blog/graph), get_pages,
   list_keywords, get_headings, ingest_insight, run_citability_audit, rescore_page (verify a fix:
-  before/after/delta), tech_audit, suggest_models, prescore_draft, draft_blog_prompt, export_intel.
-  Solo — scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor).
+  before/after/delta), tech_audit, suggest_models, export_intel.
+  Solo — scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor),
+  gap_intel, find_shallow_competitor_pages, find_decaying_competitor_pages, audit_competitor_headings,
+  get_entity_coverage, find_competitor_friction, run_content_loop, draft_blog_prompt, prescore_draft.
   Also covers: CLI commands (crawl/extract/analyze/aeo/keywords/watch/blog-draft/export), Intelligence
   Ledger (deduped insight accumulation), agentic exports, gap-intel, technical audit, and competitive
   action planning. Free tier covers your own site end-to-end — crawl, AI citability, keyword intel,
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.5.55)
+# SEO Intel (v1.6.0)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -39,9 +41,9 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 # or follow your MCP host's "add server" flow with the same npx command
 ```
 
-## MCP Server — Native AI Agent Integration (v1.5.26+)
+## MCP Server — Native AI Agent Integration (v1.5.26+, competitor tools v1.5.56+)
 
-The MCP server exposes 22 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 20 of the 22 are free — only `scan_site` and `get_competitor_positioning` require Solo, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
+The MCP server exposes 30 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 17 of the 28 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
@@ -64,8 +66,6 @@ The MCP server exposes 22 tools as native AI agent calls. Agents discover tool d
 | `run_citability_audit(project, include_competitors?, check_ai_access?)` | AEO scoring (7 signals incl. AI-crawler access); checks robots.txt for ClaudeBot/GPTBot/PerplexityBot/Google-Extended blocks; persists scores + upserts insights |
 | `tech_audit(project, domain?, sitemap_head?, limit?)` | Technical SEO audit from crawled data — titles, meta, noindex/robots conflicts, redirects, canonicals, sitemap diff. Severity-sorted findings |
 | `suggest_models(vram_gb?)` | Suggest **local** extraction models for the user's hardware (Gemma 4 E2B/E4B/12B, Qwen 3.5 4B/9B). Always returns a cloud disclaimer — extraction should be done locally |
-| `prescore_draft(draft_md, project?, topic?)` | Pre-publish AEO scorer for agent-written content. Pass `project` to close the loop — records the draft in the Ledger and marks matching gaps `in_progress` so they stop resurfacing |
-| `draft_blog_prompt(project, topic?, lang?, content_type?)` | AEO-aware prompt seeded with gap data — agent's LLM writes the draft |
 | `export_intel(project, tables?, max_rows_per_table?)` | Bulk export of own-site tables (pages, keywords, headings, links, technical, schemas, extractions, citability scores, insights). Includes a `notice` field telling the agent NOT to ingest wholesale — pipe to file or use targeted tools instead |
 
 ### Solo (paid) MCP surface — competitor synthesis only
@@ -75,6 +75,15 @@ The MCP server exposes 22 tools as native AI agent calls. Agents discover tool d
 | `get_competitor_positioning(project)` | Strategic positioning narrative + competitor coverage |
 | `get_intel(project, for='competitor')` | Competitor summary + keyword matrix |
 | `export_intel(project, tables=['analyses'])` | Adds the competitor gap-analysis history table |
+| `gap_intel(project, vs?, type?, limit?)` | Topic gap analysis — what competitors cover that you do not, ranked by buyer intent |
+| `find_shallow_competitor_pages(project, max_words?, max_depth?)` | Competitor pages ranking on thin content — the cheapest pages to outrank |
+| `find_decaying_competitor_pages(project, months?)` | Competitor pages gone stale, split into confirmed-stale and unknown-freshness |
+| `audit_competitor_headings(project, depth?, domain?)` | Full H1-H6 outlines of competitor pages — their structure, extracted |
+| `get_entity_coverage(project, min_mentions?)` | Entity gap map: what competitors mention that you never do |
+| `find_competitor_friction(project)` | Competitor pages forcing a sales call where the visitor wanted an answer |
+| `run_content_loop(project, topic?, count?, lang?, content_type?, dry_run?)` | Ranks open Ledger gaps by leverage and returns a seeded AEO draft prompt |
+| `draft_blog_prompt(project, topic?, lang?, content_type?)` | AEO-aware prompt seeded with gap data — agent's LLM writes the draft |
+| `prescore_draft(draft_md, project?, topic?)` | Pre-publish AEO scorer; pass `project` to record the draft and mark matching gaps `in_progress` |
 
 ### Agent session patterns
 
@@ -129,7 +138,7 @@ Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
 | **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
-| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 22 native MCP tools for AI agents (20 free) |
+| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 30 native MCP tools for AI agents (17 free) |
 
 ### Agent interpretation rule
 

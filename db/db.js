@@ -34,6 +34,22 @@ export function getDb(dbPath = './seo-intel.db') {
 
   // Problem status tracking (v1.5.35) — agents/users mark items as fixed/wont_fix/snoozed
   _db.exec(`
+    CREATE TABLE IF NOT EXISTS gsc_queries (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      project      TEXT NOT NULL,
+      page_url     TEXT,              -- NULL = property-wide export, no page filter
+      query        TEXT NOT NULL,
+      clicks       INTEGER DEFAULT 0,
+      impressions  INTEGER DEFAULT 0,
+      ctr          REAL,              -- percent, as GSC exports it (0.93 = 0.93%)
+      position     REAL,
+      date_range   TEXT,              -- verbatim from the export's Filters.csv
+      source       TEXT,              -- folder the rows came from
+      imported_at  INTEGER NOT NULL,
+      UNIQUE(project, page_url, query, date_range)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gsc_queries_page ON gsc_queries(project, page_url);
+
     CREATE TABLE IF NOT EXISTS problem_status (
       problem_id  TEXT PRIMARY KEY,                      -- matches lib/problems.js makeId() output
       project     TEXT NOT NULL,

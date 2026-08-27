@@ -2500,6 +2500,129 @@ program
 // pages, which inflated page counts and scored the same document twice.
 // Reports by default; deleting rows requires --apply.
 program
+  .command('prune-duplicate-urls [project]')
+  .description('Merge pages stored twice under the same URL with and without a trailing slash')
+  .option('--apply', 'Actually delete. Without this the command only reports.')
+  .option('--format <fmt>', 'Output format: text | json', 'text')
+  .action(async (project, opts) => {
+    const isJson = opts.format === 'json';
+    if (isJson) chalk.level = 0;
+    const db = getDb();
+
+    const scope = project ? 'AND d.project = ?' : '';
+    const args = project ? [project] : [];
+
+    // Rows written before normalizePageUrl collapsed non-root trailing slashes.
+    // The pair is the same page: keep whichever was crawled most recently and
+    // drop the other, so lookups stop resolving to an abandoned copy.
+    const pairs = db.prepare(`
+      SELECT a.id AS bare_id, a.url AS bare_url, a.crawled_at AS bare_at,
+             b.id AS slash_id, b.url AS slash_url, b.crawled_at AS slash_at,
+             d.project
+      FROM pages a
+      JOIN pages b ON b.url = a.url || '/'
+      JOIN domains d ON d.id = a.domain_id
+      WHERE 1=1 ${scope}
+      ORDER BY d.project, a.url
+    `).all(...args);
+
+    // Child tables are discovered from the schema rather than listed here. The
+    // hardcoded list was wrong: links references pages via source_id, not
+    // page_id, so its rows survived and the delete failed on the constraint.
+    const childRefs = [];
+    for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()) {
+      let fks = [];
+      try { fks = db.prepare(`PRAGMA foreign_key_list(${name})`).all(); } catch { continue; }
+      for (const fk of fks) if (fk.table === 'pages') childRefs.push({ table: name, column: fk.from });
+    }
+
+    // Two rules decide the survivor, in this order:
+    //   1. The URL must be the form normalizePageUrl now produces, or the next
+    //      crawl simply recreates the duplicate.
+    //   2. The data must be the freshest of the pair.
+    // When those disagree — the fresher row is under the wrong spelling — the
+    // fresher row is renamed onto the canonical URL rather than discarded.
+    const canonical = (url) => {
+      try {
+        const u = new URL(url);
+        u.hash = '';
+        let path = u.pathname.replace(/\/index\.html?$/i, '/');
+        if (path.length > 1) path = path.replace(/\/+$/, '');
+        u.pathname = path;
+        return u.toString();
+      } catch { return url; }
+    };
+
+    const plan = pairs.map(p => {
+      const wanted = canonical(p.bare_url);
+      const slashIsFresher = (p.slash_at || 0) > (p.bare_at || 0);
+      const survivorIsSlash = slashIsFresher;
+      const survivorId = survivorIsSlash ? p.slash_id : p.bare_id;
+      const survivorUrl = survivorIsSlash ? p.slash_url : p.bare_url;
+      return {
+        project: p.project,
+        keep: wanted,
+        drop: survivorIsSlash ? p.bare_url : p.slash_url,
+        dropId: survivorIsSlash ? p.bare_id : p.slash_id,
+        survivorId,
+        rename: survivorUrl !== wanted ? { from: survivorUrl, to: wanted } : null,
+        keptCrawledAt: survivorIsSlash ? p.slash_at : p.bare_at,
+        droppedCrawledAt: survivorIsSlash ? p.bare_at : p.slash_at,
+      };
+    });
+
+    if (isJson) {
+      console.log(JSON.stringify({ command: 'prune-duplicate-urls', applied: !!opts.apply, pairs: plan.length, plan }, null, 2));
+    } else {
+      console.log(`\n  ${chalk.bold('Duplicate URL pairs')}${project ? '  ' + chalk.gray(project) : ''}`);
+      if (!plan.length) { console.log(chalk.green('  None — every page is stored once.\n')); return; }
+      console.log(chalk.gray(`  ${plan.length} page(s) stored twice, once with and once without a trailing slash.\n`));
+      for (const r of plan.slice(0, 25)) {
+        const age = r.droppedCrawledAt ? new Date(r.droppedCrawledAt).toISOString().slice(0, 10) : '?';
+        const keptAge = r.keptCrawledAt ? new Date(r.keptCrawledAt).toISOString().slice(0, 10) : '?';
+        console.log(`  ${chalk.green('keep')} ${r.keep}  ${chalk.gray(keptAge)}${r.rename ? chalk.cyan('  (renamed from ' + r.rename.from + ')') : ''}`);
+        console.log(`  ${chalk.red('drop')} ${r.drop}  ${chalk.gray(age)}`);
+      }
+      if (plan.length > 25) console.log(chalk.gray(`  … and ${plan.length - 25} more.`));
+      console.log(chalk.gray(`\n  Child rows cleaned per dropped page: ${childRefs.map(c => c.table + '.' + c.column).join(', ')}`));
+    }
+
+    if (!opts.apply) {
+      if (!isJson) console.log(chalk.yellow('\n  Dry run. Re-run with --apply to delete the stale copies.\n'));
+      return;
+    }
+
+    let deleted = 0;
+    db.exec('BEGIN');
+    try {
+      for (const r of plan) {
+        for (const c of childRefs) {
+          db.prepare(`DELETE FROM ${c.table} WHERE ${c.column} = ?`).run(r.dropId);
+        }
+        db.prepare('DELETE FROM pages WHERE id = ?').run(r.dropId);
+        // Rename only after the stale row is gone: pages.url is UNIQUE.
+        if (r.rename) db.prepare('UPDATE pages SET url = ? WHERE id = ?').run(r.rename.to, r.survivorId);
+        // A duplicate often existed because the same page was filed under two
+        // domain rows — the subdomain's and its parent's. Re-file the survivor
+        // under the domain that actually matches its host.
+        try {
+          const host = new URL(r.keep).hostname;
+          const owner = db.prepare('SELECT id FROM domains WHERE domain = ? AND project = ? LIMIT 1').get(host, r.project);
+          if (owner) db.prepare('UPDATE pages SET domain_id = ? WHERE id = ?').run(owner.id, r.survivorId);
+        } catch { /* leave the existing domain_id */ }
+        deleted++;
+      }
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      console.error(chalk.red(`  Failed, nothing deleted: ${e.message}`));
+      process.exit(1);
+    }
+    if (isJson) console.log(JSON.stringify({ deleted }, null, 2));
+    else console.log(chalk.green(`\n  Removed ${deleted} stale duplicate page(s).\n`));
+  });
+
+program
   .command('prune-fragments [project]')
   .description('Remove pages stored under a URL fragment (#section) left by older crawls')
   .option('--apply', 'Actually delete. Without this the command only reports.')

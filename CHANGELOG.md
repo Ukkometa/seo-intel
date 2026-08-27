@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1 (2026-08-27)
+
+### Fixed: a page could be stored twice, and every lookup read the stale copy
+
+`normalizePageUrl` collapsed `/index.html` and stripped fragments, but left a trailing slash alone on non-root paths. So `/docs` and `/docs/` were two pages. A re-crawl wrote the fresh row under one spelling while every analysis kept resolving the other, and the stale copy won because it was written first.
+
+This is not theoretical: on a real project a page re-crawled the same day still reported its April content — 524 words, no body text, no headings — while the fresh row sitting beside it had 999 words and 15 headings. Any agent asking what that page needed was told about a version five months gone.
+
+Non-root trailing slashes now collapse, so the two spellings are one page. `seo-intel prune-duplicate-urls [project]` cleans up rows written before the fix: it reports by default and deletes only with `--apply`, keeps whichever copy the normalizer would now produce, renames the fresher row onto that URL rather than discarding it, and re-files the survivor under the domain matching its host — duplicates were often the same page filed under both a subdomain and its parent. Child rows are discovered from the schema rather than a hardcoded list, because the hardcoded one was wrong: `links` references pages through `source_id`, not `page_id`.
+
+### Fixed: `page_contract` trusted crawl data of any age
+
+It checked whether query evidence existed but never how old the crawl was, so it would hand back a confident decision built on a months-old snapshot — the failure it exists to prevent. `evidence.crawl` now reports the crawl age, marks anything past 30 days stale, names a re-crawl as a missing input, and attaches the caveat to crawl-derived advice. A URL that was never crawled is reported as its own state rather than folded in with stale.
+
 ## 1.6.0 (2026-08-22)
 
 ### New: `page_contract` — decisions from demand, not from what the page looks like

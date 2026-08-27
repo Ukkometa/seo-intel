@@ -30,6 +30,10 @@ import { runSchemaAudit } from '../schema-audit/index.js';
 const MIN_IMPRESSIONS = 30;     // per page, to call demand "observed"
 const WINNABLE_POSITION = 20;   // within striking distance of page one
 const STRONG_POSITION = 10;
+// Beyond this the crawl is describing a page that may no longer exist as crawled.
+// Everything derived from crawl data — markup, headings, word count — inherits
+// that doubt, so it is declared rather than presented as current fact.
+const STALE_CRAWL_DAYS = 30;
 
 /**
  * GSC writes its window as prose ("Last 28 days"). Rank by the span it covers,
@@ -78,10 +82,13 @@ export function runPageContract(db, project, url, opts = {}) {
   const key = normalizeUrlKey(url);
 
   const page = db.prepare(`
-    SELECT p.id, p.url, p.title, p.word_count, p.is_indexable
+    SELECT p.id, p.url, p.title, p.word_count, p.is_indexable, p.crawled_at
     FROM pages p JOIN domains d ON d.id = p.domain_id
     WHERE d.project = ? AND d.role IN ('target','owned')
   `).all(project).find(r => normalizeUrlKey(r.url) === key) || null;
+
+  const crawlAgeDays = page?.crawled_at ? Math.floor((Date.now() - page.crawled_at) / 86_400_000) : null;
+  const crawlStale = crawlAgeDays !== null && crawlAgeDays > STALE_CRAWL_DAYS;
 
   // Property-wide rows are context, never evidence about this page.
   let propertyRows = [];
@@ -157,8 +164,11 @@ export function runPageContract(db, project, url, opts = {}) {
   // ── Hygiene is never gated on demand ─────────────────────────────────────
   const schema = runSchemaAudit(db, project, { skipLedger: true });
   const pageSchemaIssues = schema.issues.filter(i => normalizeUrlKey(i.url) === key);
+  const staleNote = crawlStale
+    ? ` Crawl data for this page is ${crawlAgeDays} days old — re-crawl before acting, as these findings may describe a version of the page that no longer exists.`
+    : '';
   const allowed = [
-    { action: 'fix_invalid_markup', reason: 'Structured-data validity is independent of search demand.', items: pageSchemaIssues.map(i => `${i.code}: ${i.fix}`) },
+    { action: 'fix_invalid_markup', reason: 'Structured-data validity is independent of search demand.' + staleNote, items: pageSchemaIssues.map(i => `${i.code}: ${i.fix}`) },
     { action: 'fix_technical_errors', reason: 'Indexability, canonicals, and redirects are correctness, not investment.', items: [] },
   ];
   if (page && !page.is_indexable) {
@@ -185,7 +195,21 @@ export function runPageContract(db, project, url, opts = {}) {
       },
       brand_terms: brand.terms,
       brand_terms_note: 'Derived from the registrable domain and Organization/WebSite/Product schema names. Correct these in config if a real brand is missing or a category term crept in.',
-      missing_inputs: hasPageEvidence ? [] : [`Page-filtered Search Console export for ${url}`],
+      crawl: {
+        crawled_at: page?.crawled_at ?? null,
+        age_days: crawlAgeDays,
+        stale: crawlStale,
+        note: page
+          ? (crawlStale
+              ? `Crawl is ${crawlAgeDays} days old. Every crawl-derived field below — markup, headings, word count — describes the page as it was then, not as it is now.`
+              : `Crawl is ${crawlAgeDays} days old.`)
+          : 'This URL is not in the crawl data at all, so no crawl-derived finding is available for it.',
+      },
+      missing_inputs: [
+        ...(hasPageEvidence ? [] : [`Page-filtered Search Console export for ${url}`]),
+        ...(crawlStale ? [`Fresh crawl — current data is ${crawlAgeDays} days old (seo-intel crawl ${project} --domain ${(() => { try { return new URL(url).hostname; } catch { return url; } })()})`] : []),
+        ...(page ? [] : ['This URL has never been crawled']),
+      ],
     },
     schema_issues: pageSchemaIssues.map(i => ({ code: i.code, severity: i.severity, fix: i.fix })),
   };

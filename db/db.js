@@ -490,6 +490,12 @@ function normalizePageUrl(rawUrl) {
     u.hash = '';                              // strip fragments (#pricing, #faq, etc.)
     let path = u.pathname;
     path = path.replace(/\/index\.html?$/i, '/');  // /en/index.html → /en/
+    // Drop a trailing slash on non-root paths so /docs and /docs/ are one page.
+    // The URL constructor already forces the root to '/', so a site root keeps
+    // its slash and only deeper paths collapse. Without this, a re-crawl wrote
+    // a second row alongside the old one and every lookup kept reading the
+    // stale copy — the fresh data was there and simply never found.
+    if (path.length > 1) path = path.replace(/\/+$/, '');
     u.pathname = path;
     return u.toString();
   } catch { return rawUrl; }

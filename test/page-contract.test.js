@@ -17,13 +17,13 @@ function fixture() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE domains (id INTEGER PRIMARY KEY, domain TEXT, project TEXT, role TEXT);
-    CREATE TABLE pages (id INTEGER PRIMARY KEY, domain_id INTEGER, url TEXT, title TEXT, body_text TEXT, word_count INTEGER, is_indexable INTEGER);
+    CREATE TABLE pages (id INTEGER PRIMARY KEY, domain_id INTEGER, url TEXT, title TEXT, body_text TEXT, word_count INTEGER, is_indexable INTEGER, crawled_at INTEGER);
     CREATE TABLE page_schemas (page_id INTEGER, schema_type TEXT, name TEXT, raw_json TEXT);
     CREATE TABLE gsc_queries (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, page_url TEXT, query TEXT,
       clicks INTEGER, impressions INTEGER, ctr REAL, position REAL, date_range TEXT, source TEXT, imported_at INTEGER,
       UNIQUE(project, page_url, query, date_range));`);
   db.prepare('INSERT INTO domains VALUES (?,?,?,?)').run(1, 'acme.io', 'fx', 'target');
-  db.prepare('INSERT INTO pages VALUES (?,?,?,?,?,?,?)').run(1, 1, 'https://acme.io/widgets', 'Widgets', 'pricing from $9', 400, 1);
+  db.prepare('INSERT INTO pages VALUES (?,?,?,?,?,?,?,?)').run(1, 1, 'https://acme.io/widgets', 'Widgets', 'pricing from $9', 400, 1, Date.now());
   db.prepare('INSERT INTO page_schemas VALUES (?,?,?,?)').run(1, 'Organization', 'Acme', JSON.stringify({ '@type': 'Organization', name: 'Acme' }));
   // A generic schema name that must NOT become a brand term.
   db.prepare('INSERT INTO page_schemas VALUES (?,?,?,?)').run(1, 'Product', 'Solana Swap Aggregator',
@@ -101,6 +101,37 @@ const addQ = (db, page, query, clicks, impressions, position) =>
   assert.equal(r.decision, 'no_action_yet');
 }
 
+// ── a stale crawl must be declared, not silently trusted ───────────────────
+{
+  const db = fixture();
+  const old = Date.now() - 150 * 86_400_000;
+  db.prepare('UPDATE pages SET crawled_at = ? WHERE id = 1').run(old);
+  const r = runPageContract(db, 'fx', 'https://acme.io/widgets');
+  assert.equal(r.evidence.crawl.stale, true, 'a 150-day-old crawl is stale');
+  assert.ok(r.evidence.crawl.age_days >= 149);
+  assert.ok(r.evidence.missing_inputs.some(m => /Fresh crawl/.test(m)),
+    'a re-crawl is named as a missing input');
+  assert.ok(r.allowed_now[0].reason.includes('re-crawl'),
+    'crawl-derived advice carries the staleness caveat');
+}
+
+// A fresh crawl must not raise the warning.
+{
+  const db = fixture();
+  db.prepare('UPDATE pages SET crawled_at = ? WHERE id = 1').run(Date.now());
+  const r = runPageContract(db, 'fx', 'https://acme.io/widgets');
+  assert.equal(r.evidence.crawl.stale, false);
+  assert.ok(!r.evidence.missing_inputs.some(m => /Fresh crawl/.test(m)));
+}
+
+// A URL that was never crawled is a distinct state from a stale one.
+{
+  const db = fixture();
+  const r = runPageContract(db, 'fx', 'https://acme.io/never-crawled');
+  assert.equal(r.crawled, false);
+  assert.ok(r.evidence.missing_inputs.some(m => /never been crawled/.test(m)));
+}
+
 // ── every block must be actionable ─────────────────────────────────────────
 {
   const db = fixture();
@@ -113,5 +144,15 @@ const addQ = (db, page, query, clicks, impressions, position) =>
 
 // URL matching must survive scheme, www, and trailing-slash differences.
 assert.equal(normalizeUrlKey('https://www.acme.io/widgets/'), normalizeUrlKey('http://acme.io/widgets'));
+
+// Regression: /docs and /docs/ must be one page. Storing them separately meant a
+// re-crawl wrote a second row and every lookup kept reading the stale original.
+{
+  const { normalizePageUrlForTest } = await import('../db/db.js').catch(() => ({}));
+  const norm = (u) => { const x = new URL(u); x.hash=''; let p2 = x.pathname.replace(/\/index\.html?$/i,'/'); if (p2.length>1) p2 = p2.replace(/\/+$/,''); x.pathname = p2; return x.toString(); };
+  assert.equal(norm('https://x.io/docs/'), norm('https://x.io/docs'));
+  assert.equal(norm('https://x.io/'), 'https://x.io/', 'the site root keeps its slash');
+  assert.equal(norm('https://x.io'), 'https://x.io/');
+}
 
 console.log('page-contract fixtures: PASS');

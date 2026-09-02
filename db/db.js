@@ -1,14 +1,29 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { INSIGHT_TYPES, INSIGHT_TYPE_KEYS, insightMeta } from '../lib/insight-types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let _db = null;
 
-export function getDb(dbPath = './seo-intel.db') {
+/**
+ * Resolve the database file deterministically.
+ *
+ * This used to default to './seo-intel.db', which resolves against process.cwd().
+ * The CLI run from the package directory and an MCP server launched from the
+ * user's project therefore opened *different* databases — and the second one was
+ * silently created empty rather than failing, so it read as "no data" instead of
+ * "wrong file". Anchor on the package root so one install always means one
+ * database, and let SEO_INTEL_DB override it for callers that want their own.
+ */
+export function resolveDbPath() {
+  const fromEnv = process.env.SEO_INTEL_DB;
+  return fromEnv ? resolve(fromEnv) : join(__dirname, '..', 'seo-intel.db');
+}
+
+export function getDb(dbPath = resolveDbPath()) {
   if (_db) return _db;
   _db = new DatabaseSync(dbPath);
   _db.exec('PRAGMA journal_mode = WAL');
@@ -50,6 +65,13 @@ export function getDb(dbPath = './seo-intel.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_gsc_queries_page ON gsc_queries(project, page_url);
 
+    -- The UNIQUE(project, page_url, query, date_range) constraint above never
+    -- fires for property-wide exports: page_url is NULL there, and SQLite treats
+    -- NULLs as distinct in a unique index. Re-importing the same export appended
+    -- duplicate rows and inflated impressions instead of updating in place. The
+    -- expression index below closes that hole; the migration that collapses any
+    -- rows already duplicated runs once, just after this block.
+
     CREATE TABLE IF NOT EXISTS problem_status (
       problem_id  TEXT PRIMARY KEY,                      -- matches lib/problems.js makeId() output
       project     TEXT NOT NULL,
@@ -61,6 +83,23 @@ export function getDb(dbPath = './seo-intel.db') {
     );
     CREATE INDEX IF NOT EXISTS idx_problem_status_project ON problem_status(project, status);
   `);
+
+  // One-time (v1.6.2): collapse gsc_queries rows the NULL-defeated UNIQUE let
+  // through, then enforce identity over COALESCE(page_url,''). Keeping the
+  // highest id per identity matches what the upsert would have written.
+  const hasGscIdentity = _db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_gsc_queries_identity'"
+  ).get();
+  if (!hasGscIdentity) {
+    _db.exec(`
+      DELETE FROM gsc_queries WHERE id NOT IN (
+        SELECT MAX(id) FROM gsc_queries
+        GROUP BY project, COALESCE(page_url, ''), query, date_range
+      );
+      CREATE UNIQUE INDEX idx_gsc_queries_identity
+        ON gsc_queries(project, COALESCE(page_url, ''), query, date_range);
+    `);
+  }
 
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');

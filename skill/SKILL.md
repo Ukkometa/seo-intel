@@ -4,7 +4,7 @@ description: >
   Local SEO data layer for AI agents. Use when the user asks about SEO analysis, competitor research,
   keyword gaps, content strategy, site audits, AI citability (AEO), or wants to crawl/analyze websites.
   Ships a Model Context Protocol (MCP) server so Claude Code / Cursor / Cline / any MCP host can call
-  seo-intel's local SQLite intelligence as 30 native tools. Free — setup_project (zero to configured
+  seo-intel's local SQLite intelligence as 33 native tools. Free — setup_project (zero to configured
   from chat), crawl_site (ad-hoc, any URL, no config), run_crawl, get_crawl_status,
   list_projects, list_problems, mark_problem_status, get_intel (raw/audit/blog/graph), get_pages,
   list_keywords, get_headings, ingest_insight, run_citability_audit, rescore_page (verify a fix:
@@ -18,7 +18,7 @@ description: >
   dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
 ---
 
-# SEO Intel (v1.6.1)
+# SEO Intel (v1.7.0)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -43,7 +43,7 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+, competitor tools v1.5.56+)
 
-The MCP server exposes 30 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 17 of the 28 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
+The MCP server exposes 33 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 17 of the 28 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
@@ -138,7 +138,7 @@ Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
 | **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
-| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 30 native MCP tools for AI agents (17 free) |
+| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 33 native MCP tools for AI agents (17 free) |
 
 ### Agent interpretation rule
 
@@ -183,6 +183,8 @@ seo-intel triangulation <project>  # Embedded YouTube + GitHub + TechArticle/Sof
 seo-intel gsc-platform <project> --input gsc-platform.json # Website vs supported-platform query gaps
 seo-intel geo <project>            # LLM retrieval-shape audit for technical content
 seo-intel schema-audit <project>   # Schema type specificity + required offers/price fields
+seo-intel backlink-import <project> # Import Search Console links export from links/
+seo-intel backlink-audit <project>  # Reclamation, equity, concentration; --live recovers target + anchor
 ```
 
 ### Scan — One-Shot Full Audit (v1.5.21+)
@@ -279,6 +281,8 @@ seo-intel templates <project>         # URL pattern / content type mapping
 - `triangulation <project>` scores the three proof signals only when evidenced: a YouTube **iframe** (confirmed by `--live`), a direct active GitHub link, and matching `TechArticle` or `SoftwareSourceCode` markup. `--video-metadata` checks descriptions through the YouTube Data API only when `YOUTUBE_API_KEY` is configured.
 - `geo <project>` scores technical pages for concise opening definitions, flat list structure, syntax-tagged code blocks, and, with `--live`, detected copy controls. It measures extraction affordances; it does not claim a particular LLM will cite the page.
 - `schema-audit <project>` checks whether a schema type is the *right* type and carries the fields its rich result needs. It flags `Product` markup on API, docs, dashboard, or app surfaces (where `SoftwareApplication` / `WebApplication` is the typed match), `Product` with no priced `offers`/`aggregateRating`/`review`, and `offers.price` without `priceCurrency`. A price of `0` is valid for a free tier.
+
+- `backlink-audit <project>` audits the link profile Google reports for you. It is **not a link index** — it cannot find links Google has not reported and cannot see competitor backlinks. It answers what is wrong with the links you already have: **reclamation** (domains linking under a product or brand name the site no longer uses — existing relationships, cheaper to correct than new links are to earn, one outreach per domain), followed vs `nofollow`, domain concentration, and which of your pages receive no links at all. `--live` fetches the linking pages to recover the target URL and anchor text, which Search Console does not export. A site that blocks bots or renders links client-side is reported as **unknown**, never as a lost link. Use the "Latest links" export: under the export cap it holds the same URLs as "More sample links" plus a date.
 
 All five write their findings to the Intelligence Ledger, so they accumulate and dedupe across runs, appear on the dashboard under **Own-site Findings**, and reach agents through `list_problems`. Marking one done or dismissed keeps it from returning.
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.7.0 (2026-09-02)
+
+### New: backlink audit — what is wrong with the links you already have
+
+Search Console reports the links Google actually attributes to your site, and until now seo-intel ignored them entirely. `backlink-import` reads that export; `backlink-audit` interrogates it.
+
+This is deliberately **not a link index**. Ahrefs crawls the open web and will always cover more of it. What an index cannot tell you is which links *Google* attributes to you, and it has none of your query data or citability scores to join against — so the audit asks the questions an index does not.
+
+**Reclamation is usually the highest-yield output.** Brand terms are already derived from your own site — the registrable domain plus the names in your `Organization` / `WebSite` / `Product` markup — so the audit can spot domains linking to you under a product or brand name you no longer use. Those are existing relationships: far cheaper to correct than new links are to earn, and one outreach fixes every page on that domain. On a real project it surfaced 74 domains and 367 pages pointing at a former brand, with the top twelve covering two-thirds of them. Nothing about this is industry-specific — any project that renamed a product, rebranded, or moved domain has the same pattern.
+
+Also reported: followed versus `nofollow`/`ugc`/`sponsored`, how much of the profile rests on a single domain, and which of your pages receive no links at all.
+
+`--live` fetches the linking pages to recover the **target URL and anchor text**, neither of which Search Console exports.
+
+**Absence is only reported when absence was observable.** A site that blocks bots, or that renders its links client-side, has told you nothing — those are `unknown`, never a lost link. Building this the naive way reported 29 dead links out of 60 checked; counting only pages that actually served their links to a crawler, the real figure was 3.
+
+Every summary states that the export is a capped, lagging sample rather than a complete profile.
+
+### New: `qualify_link_prospect`
+
+The tool does not suggest prospects — without a link index, any such list would be generic filler. Instead it scores a candidate domain you bring to it: whether it already links here and how, whether those links point at an outdated brand (in which case the ask is an update, not a new link), how saturated your profile already is with it, and which of your pages most needs the link. The agent does discovery; the local database does qualification.
+
+Three new MCP tools: `import_backlinks`, `backlink_audit`, `qualify_link_prospect`. All free — it is your own Search Console data about your own site.
+
 ## 1.6.1 (2026-08-27)
 
 ### Fixed: a page could be stored twice, and every lookup read the stale copy

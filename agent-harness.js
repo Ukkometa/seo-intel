@@ -459,6 +459,19 @@ export async function run(command, project, opts = {}) {
         return wrap(importGscQueries(db, project));
       }
 
+      case 'backlink-import': {
+        const { importBacklinks } = await import('./lib/backlink-import.js');
+        return wrap(importBacklinks(db, project, {}));
+      }
+
+      case 'backlink-audit': {
+        const { runBacklinkAudit } = await import('./analyses/backlinks/index.js');
+        return wrap(await runBacklinkAudit(db, project, {
+          live: !!opts.live, limit: opts.limit,
+          brandTerms: opts.brandTerms || config?.brandTerms || [],
+        }));
+      }
+
       case 'page-contract': {
         if (!opts.url) return fail('page-contract requires opts.url (the page to decide on)');
         const { runPageContract } = await import('./analyses/page-contract/index.js');

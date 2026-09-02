@@ -578,6 +578,125 @@ server.registerTool(
   }
 );
 
+// ── Tool: backlink_audit (FREE) ───────────────────────────────────────────
+server.registerTool(
+  'backlink_audit',
+  {
+    description: [
+      'Audit the link profile Google attributes to this project: brand reclamation, followed vs nofollow, domain concentration, and which of your pages receive no links.',
+      '',
+      'Not a link index — it will not find links Google has not reported, and it cannot see competitor backlinks. What it does instead is ask what is wrong with the links you already have, and join them to your own crawl and query data.',
+      '',
+      'The single highest-yield output is usually `reclamation`: domains already linking to you under a product or brand name the site no longer uses. Those are existing relationships, far cheaper to correct than new links are to earn, and one outreach fixes every page on that domain.',
+      '',
+      'Set live:true to fetch the linking pages and recover the target URL and anchor text, which Search Console does not export. Treat `unknown` as unknown: a site that blocks bots or renders its links client-side has told you nothing, and its absence is not a lost link.',
+      '',
+      'Requires import_backlinks to have run. Free tier — your own Search Console data.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      live: z.boolean().optional().describe('Fetch linking pages to verify and recover target/anchor. Slower and partly blocked by third-party sites.'),
+      limit: z.number().int().positive().max(500).optional().describe('With live, only verify the first N links.'),
+    },
+  },
+  async ({ project, live, limit }) => {
+    const config = loadProjectConfig(project);
+    if (!config) return { content: [{ type: 'text', text: `Project "${project}" not found.` }], isError: true };
+    const { runBacklinkAudit } = await import('../analyses/backlinks/index.js');
+    const r = await runBacklinkAudit(getDb(), project, { live: !!live, limit, brandTerms: config.brandTerms || [] });
+    return { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }] };
+  },
+);
+
+// ── Tool: qualify_link_prospect (FREE) ────────────────────────────────────
+server.registerTool(
+  'qualify_link_prospect',
+  {
+    description: [
+      'Given a domain you are considering for outreach, say whether it is worth the effort for this project.',
+      '',
+      'This is the division of labour that works: YOU find candidates — web search is good at "who writes about X" — and this scores them against data only the local database has. It deliberately does not suggest prospects of its own, because without a link index any such list would be generic filler.',
+      '',
+      'Returns whether the domain already links here and how, whether those links point at an outdated brand name (in which case the ask is an update, not a new link, and is far more likely to land), how saturated your profile already is with that domain, and which of your pages most needs a link.',
+      '',
+      'Free tier — your own data.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug.'),
+      domain: z.string().describe('Candidate domain, e.g. "example.com". A full URL is accepted and reduced to its host.'),
+    },
+  },
+  async ({ project, domain }) => {
+    const config = loadProjectConfig(project);
+    if (!config) return { content: [{ type: 'text', text: `Project "${project}" not found.` }], isError: true };
+    const db = getDb();
+    const { hostOf } = await import('../lib/backlink-import.js');
+    const host = hostOf(domain.includes('://') ? domain : `https://${domain}`) || domain.toLowerCase().replace(/^www\./, '');
+
+    let existing = [];
+    try {
+      existing = db.prepare('SELECT * FROM backlinks WHERE project = ? AND linking_domain = ?').all(project, host);
+    } catch { /* not imported */ }
+
+    let total = 0, domains = 0;
+    try {
+      total = db.prepare('SELECT COUNT(*) c FROM backlinks WHERE project = ?').get(project).c;
+      domains = db.prepare('SELECT COUNT(DISTINCT linking_domain) c FROM backlinks WHERE project = ?').get(project).c;
+    } catch { /* ignore */ }
+
+    const { runBacklinkAudit } = await import('../analyses/backlinks/index.js');
+    const audit = await runBacklinkAudit(db, project, { brandTerms: config.brandTerms || [], skipLedger: true });
+    const reclaim = (audit.reclamation || []).find(d => d.domain === host);
+    const followed = existing.filter(r => r.link_present === 1 && r.rel_nofollow === 0).length;
+    const nofollowed = existing.filter(r => r.link_present === 1 && r.rel_nofollow === 1).length;
+
+    const verdict = reclaim
+      ? 'update_existing'
+      : existing.length
+        ? (followed ? 'already_linked_followed' : 'already_linked_nofollow')
+        : 'new_prospect';
+
+    return { content: [{ type: 'text', text: JSON.stringify({
+      project, domain: host, verdict,
+      already_linking: existing.length > 0,
+      linking_pages: existing.length,
+      followed, nofollowed,
+      verified: existing.filter(r => r.verify_state).length,
+      brand_reclamation: reclaim
+        ? { pages: reclaim.pages, note: `Already links here ${reclaim.pages} time(s) under a name the site no longer uses. Ask for an update, not a new link — one message fixes every page on this domain.` }
+        : null,
+      profile_context: {
+        linking_pages: total, referring_domains: domains,
+        this_domain_share_pct: total ? Math.round(existing.length * 100 / total) : 0,
+        top_domain_share_pct: audit.summary?.topDomainSharePct ?? null,
+      },
+      best_target_pages: (audit.unlinkedHighValuePages || []).slice(0, 5),
+      caveat: 'Based on the links Google reports for this site, which is a capped and lagging sample. A domain absent here may still link to you.',
+    }, null, 2) }] };
+  },
+);
+
+// ── Tool: import_backlinks (FREE) ─────────────────────────────────────────
+server.registerTool(
+  'import_backlinks',
+  {
+    description: 'Import a Search Console external-links CSV from links/<project>*.csv into the local database. Use the "Latest links" export: on a site under the export cap it holds the same URLs as "More sample links" plus a Last crawled date. Free tier.',
+    inputSchema: { project: z.string().describe('Project slug.') },
+  },
+  async ({ project }) => {
+    if (!loadProjectConfig(project)) return { content: [{ type: 'text', text: `Project "${project}" not found.` }], isError: true };
+    const { importBacklinks } = await import('../lib/backlink-import.js');
+    const db = getDb();
+    const r = importBacklinks(db, project, {});
+    const stored = db.prepare('SELECT COUNT(*) c FROM backlinks WHERE project = ?').get(project).c;
+    return { content: [{ type: 'text', text: JSON.stringify({
+      ...r, stored_unique: stored,
+      hint: r.files.length ? 'Next: backlink_audit(project) — add live:true to recover target URLs and anchor text.'
+        : `No export found. Search Console → Links → External links → Export, saved as links/${project}-<label>.csv`,
+    }, null, 2) }] };
+  },
+);
+
 // ── Tool: import_gsc_queries (FREE) ───────────────────────────────────────
 server.registerTool(
   'import_gsc_queries',

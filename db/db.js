@@ -72,6 +72,27 @@ export function getDb(dbPath = resolveDbPath()) {
     -- expression index below closes that hole; the migration that collapses any
     -- rows already duplicated runs once, just after this block.
 
+    CREATE TABLE IF NOT EXISTS backlinks (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      project        TEXT NOT NULL,
+      linking_url    TEXT NOT NULL,
+      linking_domain TEXT NOT NULL,
+      last_crawled   TEXT,            -- as Search Console reported it
+      source         TEXT,            -- export file the row came from
+      imported_at    INTEGER NOT NULL,
+      -- Filled in by the --live pass. NULL means "not checked", which is a
+      -- different state from "checked and found missing".
+      checked_at     INTEGER,
+      http_status    INTEGER,
+      verify_state   TEXT,            -- ok | blocked | gone | error
+      link_present   INTEGER,         -- 1 | 0 | NULL when unverifiable
+      rel_nofollow   INTEGER,         -- 1 when nofollow/ugc/sponsored
+      target_url     TEXT,            -- recovered: GSC does not export it
+      anchor_text    TEXT,            -- recovered
+      UNIQUE(project, linking_url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_backlinks_domain ON backlinks(project, linking_domain);
+
     CREATE TABLE IF NOT EXISTS problem_status (
       problem_id  TEXT PRIMARY KEY,                      -- matches lib/problems.js makeId() output
       project     TEXT NOT NULL,

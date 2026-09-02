@@ -92,6 +92,7 @@ competitor synthesis, automation, and history.
 | `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties + `GSC_ACCESS_TOKEN` |
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
+| `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages. `--live` recovers target URL and anchor text |
 | `intel <project> --for raw\|audit\|blog\|graph` | Agent-ready intelligence slices |
 | `export` / `export-actions --scope technical` | Raw data and technical action exports |
 | `serve` / `status` / `update` / `guide` | Dashboard server, status, updates, guided walkthrough |
@@ -216,7 +217,7 @@ Upload your GSC data for ranking insights:
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
   (AEO), keyword intelligence, blog drafts, dashboards, site graph, Site Watch,
-  technical audit, Search Console insights, and 17 of the 30 MCP tools
+  technical audit, Search Console insights, and 17 of the 33 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
 - Competitor synthesis — gap analysis, positioning, keyword battleground,

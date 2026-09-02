@@ -6040,6 +6040,77 @@ program
   });
 
 program
+  .command('backlink-import <project>')
+  .description('Import a Search Console external-links export from links/<project>*.csv')
+  .option('--file <path>', 'Import one specific CSV instead of the links/ folder')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('backlink-import')) return;
+    loadConfig(project);
+    const { importBacklinks } = await import('./lib/backlink-import.js');
+    const db = getDb();
+    const result = importBacklinks(db, project, { file: opts.file });
+    const stored = db.prepare('SELECT COUNT(*) c FROM backlinks WHERE project = ?').get(project).c;
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'backlink-import', project, stored, ...result }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('Search Console Link Import')}  ${chalk.gray(project)}`);
+    if (!result.files.length) {
+      console.log(chalk.yellow(`  No export found. Save the CSV as links/${project}-<label>.csv`));
+      console.log(chalk.gray('  Search Console → Links → External links → Top linking sites → Export.'));
+      console.log(chalk.gray('  Use "Latest links": on a site under the export cap it holds the same URLs'));
+      console.log(chalk.gray('  as "More sample links" plus a Last crawled date.\n'));
+      return;
+    }
+    for (const f of result.files) console.log(`  ${f.file}  ${f.rows} rows${f.hasDates ? chalk.gray('  (with dates)') : ''}`);
+    console.log(`\n  ${stored} unique linking pages across ${result.domains} referring domains.`);
+    console.log(chalk.gray('  This is a capped, lagging sample of what Google attributes to you — not a full profile.\n'));
+  });
+
+program
+  .command('backlink-audit <project>')
+  .description('Audit your link profile: brand reclamation, followed vs nofollow, concentration, and which pages get no links')
+  .option('--live', 'Fetch linking pages to recover target URL and anchor text, and check the link is still there')
+  .option('--limit <n>', 'Only verify the first N links (with --live)', v => parseInt(v, 10))
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('backlink-audit')) return;
+    const config = loadConfig(project);
+    const { runBacklinkAudit } = await import('./analyses/backlinks/index.js');
+    const r = await runBacklinkAudit(getDb(), project, {
+      live: !!opts.live, limit: opts.limit,
+      brandTerms: config?.brandTerms || [],
+    });
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'backlink-audit', ...r }, null, 2)); return; }
+    console.log(`\n  ${chalk.bold('Backlink Audit')}  ${chalk.gray(project)}`);
+    if (r.status === 'no_data') {
+      console.log(chalk.yellow('  No links imported yet.'));
+      for (const m of r.missing_inputs) console.log(chalk.gray(`  ${m}`));
+      console.log('');
+      return;
+    }
+    const s = r.summary;
+    console.log(`  ${s.linkingPages} linking pages · ${s.referringDomains} referring domains · top domain is ${s.topDomainSharePct}% of the profile`);
+    console.log(chalk.gray(`  ${r.sample_note}`));
+    if (s.reclamationDomains) {
+      console.log(`\n  ${chalk.bold(chalk.cyan('Reclamation'))} ${chalk.gray('— existing relationships pointing at a name you no longer use')}`);
+      console.log(chalk.gray(`  ${s.legacyBrandPages} pages across ${s.reclamationDomains} domains. One outreach per domain.`));
+      for (const d of r.reclamation.slice(0, 12)) console.log(chalk.cyan(`    ${String(d.pages).padStart(3)} pages  ${d.domain}`));
+    }
+    if (s.verified) {
+      console.log(`\n  ${chalk.bold('Verified')} ${chalk.gray(`${s.verified} checked`)}`);
+      console.log(`    ${chalk.green(String(s.followed).padStart(4) + ' followed')}   ${chalk.yellow(String(s.nofollowed) + ' nofollow/ugc')}   ${chalk.red(String(s.gone) + ' gone')}   ${chalk.gray(String(s.unknown) + ' unknown')}`);
+      if (s.unknown) console.log(chalk.gray(`    Unknown = ${s.blocked} blocked us, ${s.unrendered} served no links to a bot. Absence there proves nothing.`));
+    } else {
+      console.log(chalk.gray('\n  Not verified. Re-run with --live to recover target URLs and anchor text.'));
+    }
+    if (r.unlinkedHighValuePages.length) {
+      console.log(`\n  ${chalk.bold('Pages receiving no links')}`);
+      for (const p of r.unlinkedHighValuePages.slice(0, 8))
+        console.log(chalk.gray(`    citability ${String(p.citability ?? '—').padStart(3)}  ${p.url}`));
+    }
+    console.log('');
+  });
+
+program
   .command('page-contract <project>')
   .description('What one page actually needs: a query-led decision, what is blocked, and what is safe to fix now')
   .requiredOption('--url <url>', 'The page to decide on')

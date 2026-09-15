@@ -1,7 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
+import { homedir } from 'os';
 import { INSIGHT_TYPES, INSIGHT_TYPE_KEYS, insightMeta } from '../lib/insight-types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,20 @@ let _db = null;
  */
 export function resolveDbPath() {
   const fromEnv = process.env.SEO_INTEL_DB;
-  return fromEnv ? resolve(fromEnv) : join(__dirname, '..', 'seo-intel.db');
+  if (fromEnv) return resolve(fromEnv);
+  const local = join(__dirname, '..', 'seo-intel.db');
+  if (existsSync(local)) return local;
+  // No database here yet. A host that launches the MCP server through `npx`
+  // (Hermes, the Claude Code plugin) runs a package copy in the npx cache —
+  // creating an empty database there would split the user's data in two.
+  // Every CLI run registers its own root in ~/.seo-intel/install.json; if
+  // that root already holds a database, share it.
+  try {
+    const reg = JSON.parse(readFileSync(join(homedir(), '.seo-intel', 'install.json'), 'utf8'));
+    const shared = reg?.root && join(resolve(reg.root), 'seo-intel.db');
+    if (shared && shared !== local && existsSync(shared)) return shared;
+  } catch { /* no registry — fall through */ }
+  return local;
 }
 
 export function getDb(dbPath = resolveDbPath()) {

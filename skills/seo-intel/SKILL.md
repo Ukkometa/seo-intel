@@ -2,23 +2,17 @@
 name: seo-intel
 description: >
   Local SEO data layer for AI agents. Use when the user asks about SEO analysis, competitor research,
-  keyword gaps, content strategy, site audits, AI citability (AEO), or wants to crawl/analyze websites.
-  Ships a Model Context Protocol (MCP) server so Claude Code / Cursor / Cline / any MCP host can call
-  seo-intel's local SQLite intelligence as 33 native tools. Free — setup_project (zero to configured
-  from chat), crawl_site (ad-hoc, any URL, no config), run_crawl, get_crawl_status,
-  list_projects, list_problems, mark_problem_status, get_intel (raw/audit/blog/graph), get_pages,
-  list_keywords, get_headings, ingest_insight, run_citability_audit, rescore_page (verify a fix:
-  before/after/delta), tech_audit, suggest_models, export_intel.
-  Solo — scan_site (one-shot full audit), get_competitor_positioning, get_intel(competitor),
-  gap_intel, find_shallow_competitor_pages, find_decaying_competitor_pages, audit_competitor_headings,
-  get_entity_coverage, find_competitor_friction, run_content_loop, draft_blog_prompt, prescore_draft.
-  Also covers: CLI commands (crawl/extract/analyze/aeo/keywords/watch/blog-draft/export), Intelligence
-  Ledger (deduped insight accumulation), agentic exports, gap-intel, technical audit, and competitive
-  action planning. Free tier covers your own site end-to-end — crawl, AI citability, keyword intel,
-  dashboard. Solo (€19.99/mo) adds competitor synthesis, scheduled crawls, and history/trends.
+  keyword gaps, content strategy, site audits, AI citability (AEO), backlinks, Search Console data,
+  or wants to crawl, audit, or fix websites. Ships an MCP server (seo-intel-mcp) so Claude Code,
+  Cursor, Cline, Hermes, or any MCP host can query a local SQLite intelligence store as native tools.
+  Start with search_review (what needs a decision, what an agent may fix now, what already works),
+  then list_problems, page_contract, run_citability_audit, rescore_page, tech_audit, backlink_audit,
+  and get_intel. Free covers your own site end to end; Solo adds competitor synthesis, scheduled
+  crawls, and history. Also covers the CLI (crawl, extract, analyze, aeo, review, keywords, watch,
+  blog-draft, export) and the Intelligence Ledger.
 ---
 
-# SEO Intel (v1.7.0)
+# SEO Intel (v1.7.1)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
@@ -43,7 +37,7 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+, competitor tools v1.5.56+)
 
-The MCP server exposes 33 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 17 of the 28 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
+The MCP server exposes 34 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 23 of the 34 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
@@ -61,6 +55,7 @@ The MCP server exposes 33 tools as native AI agent calls. Agents discover tool d
 | `run_crawl(project, stealth?, max_pages?)` | Spawn a crawl as detached subprocess; returns pid |
 | `get_crawl_status()` | Read most recent job's progress with PID liveness |
 | `ingest_insight(project, type, data, agent_name?)` | Persist agent-generated insight to the ledger (deduped) |
+| `search_review(project, urls?, limit?)` | **Start here** — every own-site finding triaged into `needs_input` (a person decides), `safe_now` (an agent may fix unattended), `opportunities` (bets to weigh) and `working` (passes, withheld on a stale crawl). Pass `urls` to fold `page_contract` decisions in |
 | `list_problems(project, severity?, limit?)` | Ahrefs-style "what's broken" — prioritised issues with fix templates |
 | `mark_problem_status(project, problem_id, status, agent_name?)` | Mark a problem done/dismissed |
 | `run_citability_audit(project, include_competitors?, check_ai_access?)` | AEO scoring (7 signals incl. AI-crawler access); checks robots.txt for ClaudeBot/GPTBot/PerplexityBot/Google-Extended blocks; persists scores + upserts insights |
@@ -86,6 +81,16 @@ The MCP server exposes 33 tools as native AI agent calls. Agents discover tool d
 | `prescore_draft(draft_md, project?, topic?)` | Pre-publish AEO scorer; pass `project` to record the draft and mark matching gaps `in_progress` |
 
 ### Agent session patterns
+
+**Start every session with the review** (free — the decide phase):
+```
+1. list_projects                                  # discover
+2. search_review(project)                         # one triage: needs_input / safe_now / opportunities / working
+   #   freshness.state is stale or missing → run_crawl(project), then call it again
+3. needs_input   → ask the person; never guess a blocked decision
+4. safe_now      → fix unattended, verify with each item's verification, then mark_problem_status
+5. opportunities → weigh with the person; page_contract / draft_blog_prompt when they choose one
+```
 
 **Free-tier closed loop** (no license required — full own-site workflow):
 ```
@@ -137,8 +142,9 @@ Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO
 | Blog Draft | `seo-intel blog-draft <project>` | Free | Cloud LLM (Gemini/Claude/GPT) |
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
+| **Review** | `seo-intel review <project> [--url <page>]` | Free | Pure DB read — needs_input / safe_now / opportunities / working |
 | **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
-| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 33 native MCP tools for AI agents (17 free) |
+| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 34 native MCP tools for AI agents (23 free) |
 
 ### Agent interpretation rule
 
@@ -150,6 +156,7 @@ Agents using this skill should interpret outputs like this:
 - **analyze / gap-intel / keywords / competitive-actions** = what competitors prove is working or missing
 - **aeo** = whether pages are shaped for AI citation and answer engines
 - **watch** = what changed since last crawl — regressions, new pages, content shifts
+- **review** = the decide phase — what needs a person, what an agent may fix unattended, what already works
 - **export-actions / brief / suggest-usecases / blog-draft** = implementation-ready next steps
 
 When helping a docs writer, page builder, or implementation agent:
@@ -162,6 +169,7 @@ When helping a docs writer, page builder, or implementation agent:
 
 ```bash
 seo-intel scan <domain>            # One-shot full audit (no config needed)
+seo-intel review <project>         # Search Review — what needs you, what an agent may fix, what works
 seo-intel setup                    # First-time wizard — detects the Agent Harness
 seo-intel crawl <project>          # Crawl target + competitors
 seo-intel extract <project>        # Local AI extraction (Ollama)

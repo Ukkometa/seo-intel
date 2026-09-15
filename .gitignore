@@ -90,3 +90,6 @@ Thumbs.db
 
 # Search Console link exports are the user's own data
 links/*.csv
+
+# Python bytecode from the Hermes backend
+__pycache__/

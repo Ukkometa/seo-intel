@@ -31,7 +31,7 @@ _CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 class AgentTaskBody(BaseModel):
-    project: str = "carbium"
+    project: str = ""
     finding: dict[str, Any]
     action: str = "generate_brief"
     # The operator can edit/override the brief in the cockpit before dispatch.
@@ -223,6 +223,27 @@ def _source_info(data: Dict[str, Any]) -> Dict[str, Any]:
     if not raw:
         return {"sourcePath": None, "isGitRepo": False}
     return {"sourcePath": raw, "isGitRepo": (Path(raw) / ".git").is_dir()}
+
+
+def _default_project() -> str:
+    """First configured project — the fallback when a caller names none."""
+    projects = _read_projects()
+    return str(projects[0]["project"]) if projects else "default"
+
+
+def _tasks_path() -> Path:
+    """Hermes-side task queue. Lives under plugin-data/ (Hermes's per-package data root),
+    never inside the package folder, so `hermes plugins update` and a forced reinstall
+    keep it. The pre-1.7.1 location inside plugins/seo-intel/ is read once as a fallback."""
+    new = get_hermes_home() / "plugin-data" / "seo-intel" / "agent_tasks.json"
+    legacy = get_hermes_home() / "plugins" / "seo-intel" / "agent_tasks.json"
+    if not new.exists() and legacy.exists():
+        try:
+            new.parent.mkdir(parents=True, exist_ok=True)
+            new.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            return legacy
+    return new
 
 
 def _read_projects() -> List[Dict[str, Any]]:
@@ -439,11 +460,12 @@ def get_projects() -> Dict[str, Any]:
 
 @router.get("/intel")
 def get_intel(
-    project: str = Query("carbium"),
+    project: str = Query(""),
     feed: str = Query("audit", alias="for"),
     refresh: bool = Query(False),
 ) -> Dict[str, Any]:
     feed = feed or "audit"
+    project = project or _default_project()
     key = f"{project}:{feed}"
     now = time.time()
     if not refresh and key in _CACHE and now - _CACHE[key]["cached_at"] < CACHE_TTL_SECONDS:
@@ -454,8 +476,37 @@ def get_intel(
     return payload
 
 
+@router.get("/review")
+def get_review(
+    project: str = Query(""),
+    url: List[str] = Query([]),
+    limit: int = Query(0),
+    refresh: bool = Query(False),
+) -> Dict[str, Any]:
+    """Search Review — the decide phase. Same result as `seo-intel review` and the
+    MCP tool search_review: needs_input / safe_now / opportunities / working, plus
+    crawl freshness. Read-only; the pane renders it and hands chosen items to
+    /agent-task."""
+    project = project or _default_project()
+    urls = [u for u in url if u]
+    key = f"review:{project}:{','.join(urls)}:{limit}"
+    now = time.time()
+    if not refresh and key in _CACHE and now - _CACHE[key]["cached_at"] < CACHE_TTL_SECONDS:
+        return _CACHE[key]["payload"]
+    args = ["review", project, "--format", "json"]
+    if urls:
+        args += ["--url", *urls]
+    if limit:
+        args += ["--limit", str(limit)]
+    result = _run_json(args, timeout=120)
+    payload = {"ok": True, "cached": False, "review": result}
+    _CACHE[key] = {"cached_at": now, "payload": payload}
+    return payload
+
+
 @router.get("/rescore")
-def rescore(project: str = Query("carbium"), url: str = Query(...)) -> Dict[str, Any]:
+def rescore(project: str = Query(""), url: str = Query(...)) -> Dict[str, Any]:
+    project = project or _default_project()
     # Read-only re-check of one URL's AI citability (raw-HTML / what-bots-see lens).
     # Shells out to `seo-intel rescore` — returns before/after/delta + signals.
     result = _run_json(["rescore", project, url, "--format", "json"], timeout=60)
@@ -466,24 +517,24 @@ def rescore(project: str = Query("carbium"), url: str = Query(...)) -> Dict[str,
 def create_agent_task(body: AgentTaskBody) -> Dict[str, Any]:
     # MVP Hermes-side stub: no SEO Intel mutation. This gives the UI a real
     # durable handoff artifact that an agent/cron/kanban bridge can consume.
-    plugin_dir = get_hermes_home() / "plugins" / "seo-intel"
-    plugin_dir.mkdir(parents=True, exist_ok=True)
-    tasks_path = plugin_dir / "agent_tasks.json"
+    tasks_path = _tasks_path()
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         tasks = json.loads(tasks_path.read_text(encoding="utf-8")) if tasks_path.exists() else []
     except Exception:
         tasks = []
     finding = body.finding
+    project = body.project or _default_project()
     if body.prompt:
         prompt = body.prompt
     else:
-        cfg = _project_config(body.project) or {}
+        cfg = _project_config(project) or {}
         src = _source_info(cfg)
-        prompt = _build_brief(body.project, finding, src["sourcePath"], src["isGitRepo"])
+        prompt = _build_brief(project, finding, src["sourcePath"], src["isGitRepo"])
     task = {
         "id": f"seo-{int(time.time() * 1000)}",
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "project": body.project,
+        "project": project,
         "action": body.action,
         "status": body.status if body.status in ("queued", "running", "done") else "queued",
         "prompt": prompt,
@@ -497,7 +548,7 @@ def create_agent_task(body: AgentTaskBody) -> Dict[str, Any]:
 @router.post("/agent-task/status")
 def set_agent_task_status(id: str = Query(...), status: str = Query("done")) -> Dict[str, Any]:
     # Hermes-side write only (agent_tasks.json). Moves a task across the board.
-    tasks_path = get_hermes_home() / "plugins" / "seo-intel" / "agent_tasks.json"
+    tasks_path = _tasks_path()
     try:
         tasks = json.loads(tasks_path.read_text(encoding="utf-8")) if tasks_path.exists() else []
     except Exception:
@@ -516,7 +567,7 @@ def set_agent_task_status(id: str = Query(...), status: str = Query("done")) -> 
 
 @router.get("/agent-tasks")
 def list_agent_tasks() -> Dict[str, Any]:
-    tasks_path = get_hermes_home() / "plugins" / "seo-intel" / "agent_tasks.json"
+    tasks_path = _tasks_path()
     try:
         tasks = json.loads(tasks_path.read_text(encoding="utf-8")) if tasks_path.exists() else []
     except Exception:

@@ -771,6 +771,47 @@ server.registerTool(
   },
 );
 
+// ── Tool: search_review (FREE) ────────────────────────────────────────────
+server.registerTool(
+  'search_review',
+  {
+    description: [
+      'The one-call answer to "what should I do about this site?" — every known own-site finding, triaged into three buckets and one reassurance list:',
+      '',
+      '  needs_input    blocked on a person: missing evidence, or a judgment no detector can make. Short by design — growth ideas never land here.',
+      '  safe_now       hygiene that ships with a fix template. Correctness, not investment, so an agent may work these unattended.',
+      '  opportunities  growth bets (keyword, content, positioning). Weigh them with the person; never treat them as tasks.',
+      '  working        checks that passed. Withheld entirely when the crawl is stale or missing, because a wrong green tick stops someone looking.',
+      '',
+      'Composes list_problems with page_contract. Pass urls to fold per-page decisions in: their blocked recommendations land in needs_input with the exact input that unblocks them, and their allowed work lands in safe_now.',
+      '',
+      'CALL THIS FIRST in a session, before list_problems or any content advice. Read freshness.state before acting on anything: "stale" or "missing" means the findings may describe a page that no longer exists — run_crawl(project) first. Free tier — it reads only your own site.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      urls: z.array(z.string()).optional().describe('Page URLs whose page_contract decisions should be folded into the review.'),
+      limit: z.number().int().positive().max(200).optional().describe('Cap per bucket. Default: no cap.'),
+    },
+  },
+  async ({ project, urls = [], limit }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const { runReview } = await import('../analyses/review/index.js');
+      const result = runReview(getDb(), project, { includePaid: isPro(), urls, limit: limit || 0 });
+      const next = result.freshness.state !== 'fresh'
+        ? 'Crawl data is stale or missing — run_crawl(project) before acting on any item.'
+        : result.needs_input.length
+          ? 'Resolve needs_input with the person first. safe_now may be worked unattended; verify each fix with its verification step, then mark_problem_status.'
+          : 'No decisions pending. safe_now may be worked unattended; verify each fix with its verification step, then mark_problem_status.';
+      return { content: [{ type: 'text', text: JSON.stringify({ ...result, next }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `search_review failed: ${err.message}` }], isError: true };
+    }
+  },
+);
+
 // ── Tool: tech_audit (FREE) ───────────────────────────────────────────────
 server.registerTool(
   'tech_audit',
@@ -1607,12 +1648,23 @@ async function main() {
   // stderr is fine; the host typically surfaces this in its MCP logs panel.
   // Counts are derived, not hand-written: this banner drifted from reality once
   // already, and it is the first thing a host shows in its MCP logs panel.
+  // The free list is derived too — the hand-written one stopped at v1.5.x and
+  // silently omitted every free tool added since (page_contract, the backlink
+  // tools, search_review).
+  const freeTools = Object.keys(server._registeredTools ?? {}).filter(n => !PAID_TOOL_NAMES.includes(n));
+  const wrap = (names, indent, width = 90) => {
+    const lines = []; let line = '';
+    for (const n of names) {
+      const piece = line ? `, ${n}` : n;
+      if (line && (line + piece).length > width) { lines.push(line + ','); line = n; } else line += piece;
+    }
+    if (line) lines.push(line);
+    return lines.join(`\n${indent}`);
+  };
   console.error(
-    `[seo-intel-mcp] v${VERSION} ready on stdio. ${TOOL_COUNT} tools, ${TOOL_COUNT - PAID_TOOL_NAMES.length} free.\n` +
-    `  Free: setup_project, crawl_site, run_crawl, get_crawl_status, list_projects, list_problems,\n` +
-    `        mark_problem_status, get_intel(raw/audit/blog/graph), get_pages, list_keywords, get_headings,\n` +
-    `        ingest_insight, run_citability_audit, rescore_page, tech_audit, suggest_models,\n` +
-    `        export_intel (own-site tables)\n` +
+    `[seo-intel-mcp] v${VERSION} ready on stdio. ${TOOL_COUNT} tools, ${freeTools.length} free.\n` +
+    `  Free: ${wrap(freeTools, '        ')}\n` +
+    `        (get_intel: raw/audit/blog/graph slices; export_intel: own-site tables)\n` +
     `  Solo: ${PAID_TOOL_NAMES.join(', ')}, get_intel(competitor), export_intel (analyses table)`
   );
 }

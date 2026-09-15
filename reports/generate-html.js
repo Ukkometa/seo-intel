@@ -23,6 +23,7 @@ import { INSIGHT_TYPES, FREE_INSIGHT_TYPES } from '../lib/insight-types.js';
 import { getCitabilityScores } from '../analyses/aeo/index.js';
 import { getWatchData } from '../analyses/watch/index.js';
 import { getProblems, getProblemCounts } from '../lib/problems.js';
+import { runReview } from '../analyses/review/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -137,6 +138,10 @@ export function gatherProjectData(db, project, config) {
     problemCounts = getProblemCounts(db, project, { includePaid: isPro() });
   } catch { /* fresh DB / migration not run yet — silent */ }
 
+  // Search Review (v1.7.1) — the decide phase: what needs a person, what an agent may fix now
+  let review = null;
+  try { review = runReview(db, project, { includePaid: isPro() }); } catch { /* fresh DB — silent */ }
+
   // Site Watch data
   let watchData = null;
   try { watchData = getWatchData(db, project); } catch { /* tables may not exist yet */ }
@@ -165,7 +170,7 @@ export function gatherProjectData(db, project, config) {
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
     keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData, watchData,
-    problems, problemCounts,
+    problems, problemCounts, review,
   };
 
   // Rollback the owned→target merge so the actual DB is unchanged
@@ -244,7 +249,7 @@ function buildHtmlTemplate(data, opts = {}) {
     gravityMap, contentTerrain, keywordVenn, performanceBubbles,
     headingFlow, territoryTreemap, topicClusters, linkDna, linkRadarPulse,
     keywordsReport, extractionStatus, gscData, domainArch, gscInsights, citabilityData, watchData,
-    problems = [], problemCounts = null,
+    problems = [], problemCounts = null, review = null,
   } = data;
 
   const totalPages = domains.reduce((sum, d) => sum + d.page_count, 0);
@@ -2919,6 +2924,9 @@ function buildHtmlTemplate(data, opts = {}) {
   </script>
 
   <div class="dashboard">
+
+    <!-- ═══ SEARCH REVIEW (v1.7.1 — the decide phase) ═══ -->
+    ${buildReviewCard(review, escapeHtml, project)}
 
     <!-- ═══ PROBLEMS (v1.5.39 — Ahrefs-style landing card) ═══ -->
     ${buildProblemsCard(problems, problemCounts, escapeHtml, project)}
@@ -5910,6 +5918,81 @@ function buildMultiHtmlTemplate(allProjectData) {
 }
 
 // ─── AEO Card Builder ────────────────────────────────────────────────────────
+
+// ─── Search Review card (v1.7.1) — the decide phase, above the Problems feed ──
+// Uses analyses/review/index.js runReview() — the same result the MCP tool
+// search_review, the CLI, and the Hermes pane render.
+function buildReviewCard(review, escapeHtml, project) {
+  if (!review) return '';
+  const f = review.freshness;
+  const freshness = f.state === 'fresh'
+    ? { text: `crawl ${f.age_days} day${f.age_days === 1 ? '' : 's'} old`, color: 'var(--signal-good)' }
+    : f.state === 'stale'
+      ? { text: `crawl ${f.age_days} days old — re-crawl before acting`, color: 'var(--signal-warn)' }
+      : { text: 'no crawl data yet', color: 'var(--signal-bad)' };
+
+  const dot = (s) => s === 'critical' ? 'crit' : s === 'warn' ? 'warn' : 'info';
+  const item = (it, extra) => `
+        <li style="display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--surface-border);">
+          <span class="vb-severity-dot ${dot(it.severity)}" style="margin-top:5px; flex:none;"></span>
+          <div style="min-width:0;">
+            <div style="font-size:0.82rem; font-weight:600; color:var(--text-primary); line-height:1.35;">${escapeHtml(it.title)}</div>
+            ${extra ? `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:3px; line-height:1.5;">${escapeHtml(extra)}</div>` : ''}
+            <div class="vb-label-caps" style="margin-top:4px; color:var(--text-subtle);">${escapeHtml(it.category)}</div>
+          </div>
+        </li>`;
+  const column = (label, items, hint, extraOf) => `
+      <div style="min-width:0;">
+        <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:6px;">
+          <span class="vb-label-caps">${label}</span>
+          <span style="font-family:var(--font-display); font-weight:700; font-size:1.25rem; color:var(--text-primary);">${items.length}</span>
+        </div>
+        <div style="font-size:0.7rem; color:var(--text-muted); line-height:1.5; margin-bottom:6px;">${hint}</div>
+        ${items.length
+          ? `<ul style="list-style:none; margin:0; padding:0;">${items.slice(0, 6).map(it => item(it, extraOf(it))).join('')}</ul>`
+            + (items.length > 6 ? `<div class="muted small" style="padding-top:6px;">… and ${items.length - 6} more</div>` : '')
+          : `<div class="muted small" style="padding:6px 0;">none</div>`}
+      </div>`;
+
+  const working = review.working.length
+    ? review.working.map(w => `
+          <div style="display:flex; gap:8px; align-items:flex-start; font-size:0.78rem; color:var(--text-secondary);">
+            <i class="fa-solid fa-check" style="color:var(--signal-good); margin-top:3px;"></i>
+            <div><strong style="color:var(--text-primary);">${escapeHtml(w.title)}</strong> <span style="color:var(--text-muted);">${escapeHtml(w.observed)}</span></div>
+          </div>`).join('')
+    : `<div class="muted small">${f.state === 'fresh'
+        ? 'Nothing verified yet — passes appear once the data supports them.'
+        : 'Passes withheld: a wrong green tick stops someone looking, so nothing is marked as working until the crawl is fresh.'}</div>`;
+
+  const headline = review.needs_input.length
+    ? `${review.needs_input.length} decision${review.needs_input.length === 1 ? '' : 's'} waiting on you`
+    : 'Nothing waiting on you';
+
+  return `
+    <div class="card full-width vb-card" id="review-card" style="margin-bottom: 24px;">
+      <div style="display:flex; align-items:center; gap:14px; margin-bottom: 6px; flex-wrap: wrap;">
+        <span class="vb-pill">Search Review</span>
+        <span style="font-family: var(--font-display); font-weight: 700; font-size: 1.4rem; color: var(--text-primary); letter-spacing: -0.02em;">${headline}</span>
+        <span class="vb-label-caps" style="margin-left:auto; color: ${freshness.color};">${escapeHtml(freshness.text)}</span>
+      </div>
+      <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 18px; max-width: 720px;">
+        What needs a person, what an agent may fix unattended, and what is already working — one triage of every own-site finding.
+      </div>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--surface-border);">
+        ${column('Needs your input', review.needs_input, 'A person decides. Agents must not guess these.', it => it.blocked_by ? `Unblocked by: ${it.blocked_by}` : (it.decision_basis || [])[0] || '')}
+        ${column('Safe to fix now', review.safe_now, 'Hygiene with a fix template. An agent may act unattended.', it => (it.decision_basis || [])[0] || '')}
+        ${column('Opportunities', review.opportunities, 'Growth bets to weigh, not tasks.', it => (it.decision_basis || [])[0] || '')}
+      </div>
+      <div style="padding-top: 14px; display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 24px;">
+        <div class="vb-label-caps" style="grid-column: 1 / -1;">Working</div>
+        ${working}
+      </div>
+      <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--surface-border); font-size: 0.74rem; color: var(--text-muted);">
+        Same triage for agents: <code style="color: var(--intel-blue); background: var(--surface-off); padding: 2px 6px; border-radius: 3px;">search_review("${escapeHtml(project)}")</code>
+        · CLI: <code style="color: var(--intel-blue); background: var(--surface-off); padding: 2px 6px; border-radius: 3px;">seo-intel review ${escapeHtml(project)}</code>
+      </div>
+    </div>`;
+}
 
 // ─── Problems card (v1.5.39) — Ahrefs-style unified "what's broken" feed ──
 // Uses lib/problems.js getProblems() — single source of truth shared with MCP.

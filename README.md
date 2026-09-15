@@ -93,6 +93,7 @@ competitor synthesis, automation, and history.
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
 | `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages. `--live` recovers target URL and anchor text |
+| `review <project>` | Search Review — what needs your decision, what an agent may fix now, and what already works; `--url` folds per-page decisions in |
 | `intel <project> --for raw\|audit\|blog\|graph` | Agent-ready intelligence slices |
 | `export` / `export-actions --scope technical` | Raw data and technical action exports |
 | `serve` / `status` / `update` / `guide` | Dashboard server, status, updates, guided walkthrough |
@@ -217,7 +218,7 @@ Upload your GSC data for ranking insights:
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
   (AEO), keyword intelligence, blog drafts, dashboards, site graph, Site Watch,
-  technical audit, Search Console insights, and 17 of the 33 MCP tools
+  technical audit, Search Console insights, and 23 of the 34 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
 - Competitor synthesis — gap analysis, positioning, keyword battleground,
@@ -268,3 +269,13 @@ The Agent Harness provides:
 ---
 
 Built by [ukkometa.fi](https://ukkometa.fi) — local-first SEO intelligence.
+
+## Hermes
+
+The `hermes/seo-intel/` folder is an Agent Plugins v1 package, so Hermes installs SEO Intel straight from GitHub. It is a folder of its own rather than the repository root because Hermes security-scans the whole plugin root at install time, and a crawler codebase is not a plugin:
+
+- **Hermes Desktop** — Capabilities → Plugins → Install from Git, paste `https://github.com/Ukkometa/seo-intel/tree/main/hermes/seo-intel`
+- **Hermes CLI** — `hermes plugins install Ukkometa/seo-intel/hermes/seo-intel --enable`
+- **From an npm install** — `seo-intel hermes install`
+
+Hermes detects both halves. The agent half registers the SEO Intel skill and the MCP server (`npx -y seo-intel-mcp`). The desktop half adds a Search Review pane and a status-bar chip; each item has a copyable fix and a "Send to agent" button that queues a Hermes brief. Enable the agent half (`hermes plugins enable seo-intel`) and switch the desktop half on under Capabilities → Plugins. The pane's backend shells out to your local `seo-intel` CLI, found through `~/.seo-intel/install.json`, `PATH`, or `npx`. See [hermes/README.md](hermes/README.md).

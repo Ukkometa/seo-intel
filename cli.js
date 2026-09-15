@@ -1500,7 +1500,7 @@ program
 // ── HERMES PLUGIN (optional local integration) ──────────────────────────────
 program
   .command('hermes')
-  .description('Install or remove the optional Hermes Desktop plugin bundle')
+  .description('Install or remove the Hermes plugin package (agent + desktop halves) under ~/.hermes/plugins/seo-intel')
   .argument('[action]', 'install | remove', 'install')
   .option('--target <dir>', 'Override plugin destination (default: ~/.hermes/plugins/seo-intel)')
   .action(async (action, opts) => {
@@ -1520,7 +1520,8 @@ program
     const verb = result.action === 'removed' ? 'Removed' : 'Installed';
     console.log(chalk.green(`  ✓ ${verb} Hermes plugin: ${result.destination}`));
     if (result.action === 'installed') {
-      console.log(chalk.dim('  Next: hermes plugins enable seo-intel && hermes desktop --force-build'));
+      console.log(chalk.dim('  Next: hermes plugins enable seo-intel — then switch the desktop half on in Hermes Desktop → Capabilities → Plugins'));
+      console.log(chalk.dim('  Or install straight from GitHub: hermes plugins install Ukkometa/seo-intel/hermes/seo-intel'));
     }
   });
 
@@ -6154,6 +6155,45 @@ program
       for (const m of r.evidence.missing_inputs) console.log(chalk.yellow(`      ${m}`));
     }
     console.log('');
+  });
+
+program
+  .command('review <project>')
+  .description('Search Review — what needs your decision, what an agent may fix now, and what is already working')
+  .option('--url <urls...>', 'Fold page-contract decisions for these URLs into the review')
+  .option('--limit <n>', 'Cap each bucket (default: no cap)', (v) => parseInt(v, 10), 0)
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('review')) return;
+    loadConfig(project);
+    const { runReview } = await import('./analyses/review/index.js');
+    const r = runReview(getDb(), project, { includePaid: isPro(), urls: opts.url || [], limit: opts.limit || 0 });
+    if (opts.format === 'json') { console.log(JSON.stringify({ command: 'review', ...r }, null, 2)); return; }
+
+    const fresh = r.freshness;
+    const freshLine = fresh.state === 'fresh' ? chalk.green(`crawl ${fresh.age_days} day${fresh.age_days === 1 ? '' : 's'} old`)
+      : fresh.state === 'stale' ? chalk.yellow(`crawl ${fresh.age_days} days old — re-crawl before acting`)
+      : chalk.red('no crawl data — run a crawl first');
+    console.log(`\n  ${chalk.bold('Search Review')}  ${chalk.gray(project)}  ${freshLine}`);
+
+    const SHOW = 8;
+    const section = (title, items, color, hint) => {
+      console.log(`\n  ${chalk.bold(color(title))} ${chalk.gray(`(${items.length})`)}${hint ? chalk.gray('  — ' + hint) : ''}`);
+      if (!items.length) { console.log(chalk.gray('      none')); return; }
+      for (const it of items.slice(0, SHOW)) {
+        console.log(color(`      ${it.severity === 'critical' ? '!!' : it.severity === 'warn' ? ' !' : ' ·'} ${it.title}`) + chalk.gray(`  [${it.category}]`));
+        if (it.blocked_by) console.log(chalk.gray(`           unblocked by: ${it.blocked_by}`));
+        else if (it.safe_action && it.safe_action !== it.title) console.log(chalk.gray(`           ${String(it.safe_action).slice(0, 140)}`));
+      }
+      if (items.length > SHOW) console.log(chalk.gray(`      … and ${items.length - SHOW} more (--format json for all)`));
+    };
+    section('Needs your input', r.needs_input, chalk.yellow, 'a person decides; agents must not guess');
+    section('Safe to fix now', r.safe_now, chalk.green, 'hygiene with a fix template; an agent may act unattended');
+    section('Opportunities', r.opportunities, chalk.cyan, 'growth bets to weigh, not tasks');
+    console.log(`\n  ${chalk.bold('Working')} ${chalk.gray(`(${r.working.length})`)}`);
+    if (!r.working.length) console.log(chalk.gray(fresh.state === 'fresh' ? '      nothing verified yet' : '      passes withheld — the crawl is stale or missing'));
+    for (const w of r.working) console.log(chalk.green(`      ✓ ${w.title}`) + chalk.gray(`  ${w.observed}`));
+    console.log(chalk.gray(`\n  Next: seo-intel review ${project} --url <page>  ·  MCP search_review("${project}")\n`));
   });
 
 program

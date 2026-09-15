@@ -30,6 +30,16 @@ const versionTargets = [
     set: (j) => { j.version = version; },
   },
   {
+    file: join(ROOT, 'hermes', 'seo-intel', 'plugin.json'),            // Agent Plugins v1 — the Hermes package
+    get: (j) => j.version,
+    set: (j) => { j.version = version; },
+  },
+  {
+    file: join(ROOT, 'hermes', 'seo-intel', 'dashboard', 'manifest.json'), // Hermes backend manifest
+    get: (j) => j.version,
+    set: (j) => { j.version = version; },
+  },
+  {
     file: join(ROOT, '.claude-plugin', 'marketplace.json'),
     get: (j) => (j.plugins.find((p) => p.name === PLUGIN_NAME) || {}).version,
     set: (j) => { const p = j.plugins.find((x) => x.name === PLUGIN_NAME); if (p) p.version = version; },
@@ -52,7 +62,8 @@ for (const t of versionTargets) {
 
 // ── 2. Skill mirror: skill/ -> skills/seo-intel/ ───────────────────────────
 const SKILL_SRC = join(ROOT, 'skill');
-const SKILL_DST = join(ROOT, 'skills', PLUGIN_NAME);
+// Two mirrors: the Claude Code plugin bundle and the Hermes package.
+const SKILL_DSTS = [join(ROOT, 'skills', PLUGIN_NAME), join(ROOT, 'hermes', 'seo-intel', 'skills', PLUGIN_NAME)];
 
 function walk(dir) {
   const out = [];
@@ -66,7 +77,7 @@ function walk(dir) {
 }
 
 let skillDrift = 0;
-for (const srcFile of walk(SKILL_SRC)) {
+for (const SKILL_DST of SKILL_DSTS) for (const srcFile of walk(SKILL_SRC)) {
   const rel = relative(SKILL_SRC, srcFile);
   const dstFile = join(SKILL_DST, rel);
   const src = readFileSync(srcFile, 'utf8');
@@ -82,7 +93,7 @@ for (const srcFile of walk(SKILL_SRC)) {
     console.log(`  → mirrored ${relDst}`);
   }
 }
-if (!skillDrift) console.log(`  ✓ skills/${PLUGIN_NAME}/ matches skill/`);
+if (!skillDrift) console.log(`  ✓ skills/${PLUGIN_NAME}/ and hermes/seo-intel/skills/${PLUGIN_NAME}/ match skill/`);
 
 if (check && drift) {
   console.error(`\nPlugin bundle drift (${drift}). Run: node scripts/sync-plugin.js`);

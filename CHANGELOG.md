@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.1 (2026-09-15)
+
+### New: Search Review — the decide phase
+
+Everything before this collects, extracts, scores, or verifies. Nothing answered "so what do I do about this site?" in one call. `seo-intel review <project>` and the MCP tool `search_review` do. They triage every known own-site finding into three buckets and one reassurance list:
+
+- **needs_input** — blocked on a person: missing evidence, or a judgment no detector can make. Kept short on purpose; growth ideas never land here.
+- **safe_now** — hygiene that ships with a fix template. Correctness, not investment, so an agent may work these unattended.
+- **opportunities** — keyword, content, and positioning bets to weigh with the person.
+- **working** — checks that passed. Withheld entirely on a stale or missing crawl, because a wrong green tick stops someone looking.
+
+Pass `--url` (CLI) or `urls` (MCP) to fold `page_contract` decisions in: blocked recommendations land in `needs_input` with the exact input that unblocks them, and allowed work lands in `safe_now`. The dashboard shows the same triage above the Problems card. Free: it reads only your own site.
+
+### Hermes: install straight from GitHub
+
+`hermes/seo-intel/` is now an Agent Plugins v1 package. Paste `https://github.com/Ukkometa/seo-intel/tree/main/hermes/seo-intel` into Hermes Desktop's **Install plugin** dialog, or run `hermes plugins install Ukkometa/seo-intel/hermes/seo-intel`, and Hermes detects both halves: the agent half (the SEO Intel skill plus the MCP server) and the desktop half, a Search Review pane with a status-bar chip that can hand any item to a Hermes agent as a brief. `seo-intel hermes install` copies the same package from an npm install.
+
+The package is a folder of its own rather than the repository root because Hermes security-scans the whole plugin root at install time, and a crawler codebase is not a plugin. The Python backend gained a `/review` route, no longer defaults to a hardcoded project, and keeps its task queue under Hermes's `plugin-data/` so updates and reinstalls preserve it.
+
+### Fixed
+
+- `list_problems` returned a bare number in `affected_urls` for backlink reclamation problems, because the ledger stores a page *count* there. It is always an array now, as documented.
+- An MCP server launched through `npx` (Hermes, the Claude Code plugin) created its own empty database inside the npx cache. It now shares the database the CLI registered in `~/.seo-intel/install.json`.
+- The skill description was over the 1024-character Agent Skills limit, which made portable hosts skip the skill entirely. Trimmed; the full tool list stays in the body.
+- Surface counts said 17 free tools of 28 or 33. The code had 22 free of 33 and now has 23 of 34; every surface says so, and the release checker verifies the free count as well as the total and checks the version on every site surface by context.
+- The release checker's `--fix` appended a stray number to version strings on some site surfaces. Fixed before it reached a deploy.
+
 ## 1.7.0 (2026-09-02)
 
 ### New: backlink audit — what is wrong with the links you already have

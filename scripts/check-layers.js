@@ -138,6 +138,8 @@ const versionTargets = [
   { file: join(REPO, 'skill', 'SKILL.md'),                      re: /# SEO Intel \(v([\d.]+)\)/ },
   { file: join(REPO, '.claude-plugin', 'plugin.json'),          re: /"version":\s*"([\d.]+)"/ },
   { file: join(REPO, '.claude-plugin', 'marketplace.json'),     re: /"version":\s*"([\d.]+)"/ },
+  { file: join(REPO, 'hermes', 'seo-intel', 'plugin.json'),     re: /"version":\s*"([\d.]+)"/ },  // Agent Plugins v1 (Hermes package)
+  { file: join(REPO, 'hermes', 'seo-intel', 'dashboard', 'manifest.json'), re: /"version":\s*"([\d.]+)"/ },  // Hermes backend
 ];
 if (HAS_SITE) {
   versionTargets.push(
@@ -172,16 +174,54 @@ const PAID_IN_FREE = [
   { re: /change brief|muutosbrief|publishing velocity|julkaisutahti/i,  feature: 'brief / velocity' },
 ];
 
+// Every place the site states the CURRENT version. Matched by surrounding context
+// rather than by a bare /v\d+\.\d+\.\d+/ sweep, because these files also contain
+// legitimate historical references — "crawled before v1.1.6", "Previously in
+// v1.6.0" — and a blanket replace turns those into false statements.
+//
+// Only the storefront pages were checked until 2026-09-03, so the homepage nav
+// badges, terminal demo strings, setup-page badges and llms headers silently held
+// an old version for a full release cycle. Add new surfaces here, not elsewhere.
+const CURRENT_VERSION_PATTERNS = [
+  /(<span class="tool-badge">v)(\d+\.\d+\.\d+)(<\/span>)/g,          // nav badge
+  /(seo-intel v)(\d+\.\d+\.\d+)( ready)/g,                          // terminal demo
+  /(# seo-intel v)(\d+\.\d+\.\d+)/g,                                // --version output
+  /((?:Local SEO tool|Paikallinen SEO-työkalu) · v)(\d+\.\d+\.\d+)/g, // hero badge
+  /(SEO Intel \(v)(\d+\.\d+\.\d+)(\))/g,                            // llms.txt heading
+  /(^Version: v)(\d+\.\d+\.\d+)/gm,                                 // llms-ctx header
+  /(SEO Intel versio: v)(\d+\.\d+\.\d+)/g,                          // llms-ctx footer
+  /(Keskeiset ominaisuudet \(v)(\d+\.\d+\.\d+)(\))/g,                // llms-ctx feature head
+];
+
 if (HAS_SITE) {
-  for (const f of [join(SITE, 'en', 'seo-intel', 'index.html'), join(SITE, 'seo-intel', 'index.html')]) {
+  const versionSurfaces = [
+    join(SITE, 'en', 'seo-intel', 'index.html'), join(SITE, 'seo-intel', 'index.html'),
+    join(SITE, 'index.html'), join(SITE, 'en', 'index.html'),
+    join(SITE, 'seo-intel', 'setup', 'index.html'), join(SITE, 'en', 'seo-intel', 'setup', 'index.html'),
+    join(SITE, 'llms.txt'), join(SITE, 'llms-ctx.txt'),
+    join(SITE, 'seo-intel', 'llms.txt'), join(SITE, 'seo-intel', 'llms-ctx.txt'),
+  ];
+  for (const f of versionSurfaces) {
+    if (!existsSync(f)) { fail('version', 'Version surface missing', f); continue; }
     let src = read(f);
-    const stale = [...src.matchAll(/v(\d+\.\d+\.\d+)/g)].map(m => m[1]).filter(v => v !== VERSION);
-    if (stale.length) {
+    const stale = new Set();
+    let next = src;
+    for (const re of CURRENT_VERSION_PATTERNS) {
+      next = next.replace(re, (full, pre, v, ...rest) => {
+        // String.replace passes (match, ...groups, offset, string). A pattern with
+        // only two groups puts the numeric offset here; only a captured string
+        // is a suffix to keep — the first version of this wrote "v1.7.134881".
+        const post = typeof rest[0] === 'string' ? rest[0] : '';
+        if (v !== VERSION) stale.add(v);
+        return pre + VERSION + post;
+      });
+    }
+    if (stale.size) {
       if (FIX) {
-        writeFileSync(f, src.replace(/v\d+\.\d+\.\d+/g, `v${VERSION}`));
-        fixed.push(`${rel(f)}: badge ${[...new Set(stale)].join(', ')} → ${VERSION}`);
+        writeFileSync(f, next);
+        fixed.push(`${rel(f)}: version ${[...stale].join(', ')} → ${VERSION}`);
       } else {
-        fail('version', `Visible badge shows v${[...new Set(stale)].join(', v')}, expected v${VERSION}`, f, 'run with --fix');
+        fail('version', `States v${[...stale].join(', v')}, expected v${VERSION}`, f, 'run with --fix');
       }
     }
   }
@@ -197,7 +237,10 @@ if (!new RegExp(`^## ${VERSION.replace(/\./g, '\\.')} `, 'm').test(changelog)) {
 // ── 3. MIRROR COHERENCE ─────────────────────────────────────────────────────
 
 const canonicalSkill = read(join(REPO, 'skill', 'SKILL.md'));
-const mirrors = [join(REPO, 'skills', 'seo-intel', 'SKILL.md')];
+const mirrors = [
+  join(REPO, 'skills', 'seo-intel', 'SKILL.md'),                       // Claude Code plugin bundle
+  join(REPO, 'hermes', 'seo-intel', 'skills', 'seo-intel', 'SKILL.md'), // Hermes package
+];
 if (HAS_SITE) mirrors.push(join(SITE, 'skill.md'), join(SITE, 'seo-intel', 'skill.md'));
 
 for (const m of mirrors) {
@@ -226,6 +269,21 @@ for (const f of countSurfaces) {
     if (n > 5 && n !== truth.mcpTools && n !== truth.mcpFree) {
       fail('count', `Claims "${m[0]}" — actual is ${truth.mcpTools} tools (${truth.mcpFree} free)`, f);
     }
+  }
+  // "N of the M are free", "N of M tools", "(N free)" — the free count said 17 from
+  // v1.5.56 to v1.7.0 while the code had 22, because only the total was checked.
+  for (const m of src.matchAll(/(\d+)\s+of\s+(?:the\s+)?(\d+)\s+(?:are\s+free|(?:native\s+)?(?:MCP\s+)?tools)/gi)) {
+    if (Number(m[1]) !== truth.mcpFree || Number(m[2]) !== truth.mcpTools) {
+      fail('count', `Claims "${m[0]}" — actual is ${truth.mcpFree} free of ${truth.mcpTools}`, f);
+    }
+  }
+  for (const m of src.matchAll(/(\d+)\s+työkalua\s+(\d+):st[aä]/gi)) {   // Finnish storefront
+    if (Number(m[1]) !== truth.mcpFree || Number(m[2]) !== truth.mcpTools) {
+      fail('count', `Claims "${m[0]}" — actual is ${truth.mcpFree} free of ${truth.mcpTools}`, f);
+    }
+  }
+  for (const m of src.matchAll(/\((\d+)\s+free\)/gi)) {
+    if (Number(m[1]) !== truth.mcpFree) fail('count', `Claims "${m[0]}" — ${truth.mcpFree} tools are free`, f);
   }
   for (const m of src.matchAll(/(\d+|six|seven|eight|kuuden|seitsemän)\s+(?:citability\s+)?signal/gi)) {
     const n = Number(m[1]) || WORD_NUM[m[1].toLowerCase()];

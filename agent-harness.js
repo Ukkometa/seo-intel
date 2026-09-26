@@ -21,6 +21,7 @@ import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getDb, getActiveInsights, getSchemasByProject } from './db/db.js';
+import { DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -134,6 +135,17 @@ export const capabilities = [
     outputs: { pages: 'number', domains: 'number', schemas: 'number' },
     phase: 'collect',
     tier: 'free',
+  },
+  {
+    id: 'gsc-fetch',
+    name: 'Search Console Fetch',
+    description: `Pull your own Search Console rows from the API into the database with real dates — page×query daily (${GSC_FETCH_DEFAULTS.days} days), page daily and query daily (${GSC_FETCH_DEFAULTS.months} months). Incremental; page-contract reads it, and a page with no rows is measured absence, not missing data.`,
+    requires: ['google-oauth'],
+    inputs: { project: 'string', options: { days: 'number', months: 'number', dryRun: 'boolean' } },
+    outputs: { property: 'string', grains: 'array<{grain, windows, rows, requests}>', coverage: 'object' },
+    phase: 'collect',
+    tier: 'free',
+    dependsOn: [],
   },
   {
     id: 'extract',
@@ -360,6 +372,7 @@ export const pipeline = {
   phases: ['collect', 'extract', 'analyze', 'report', 'create'],
   graph: {
     crawl: [],
+    'gsc-fetch': [],
     extract: ['crawl'],
     aeo: ['crawl'],
     rescore: ['aeo'],
@@ -457,6 +470,21 @@ export async function run(command, project, opts = {}) {
       case 'gsc-import': {
         const { importGscQueries } = await import('./lib/gsc-import.js');
         return wrap(importGscQueries(db, project));
+      }
+
+      case 'gsc-fetch': {
+        const { runGscFetch } = await import('./analyses/gsc-fetch/index.js');
+        const grains = Array.isArray(opts.grains) ? opts.grains : (opts.grains ? String(opts.grains).split(',') : undefined);
+        try {
+          return wrap(await runGscFetch(db, project, config, {
+            days: opts.days, months: opts.months, grains,
+            property: opts.property, dryRun: !!opts.dryRun,
+          }));
+        } catch (err) {
+          // The transport's hint (reconnect, wait, enable the API) is the
+          // actionable half of a GscApiError; keep it in the failure text.
+          return fail(err.hint ? `${err.message} — ${err.hint}` : err.message);
+        }
       }
 
       case 'backlink-import': {

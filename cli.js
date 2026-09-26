@@ -49,6 +49,9 @@ import { buildExportPayload, formatActionsJson, formatActionsBrief } from './exp
 import { assertHasCrawlData, getLatestAnalysis } from './exports/queries.js';
 import { requirePro, enforceLimits, capPages, printLicenseStatus } from './lib/gate.js';
 import { isPro, loadLicense, activateLicense } from './lib/license.js';
+import { isConnected } from './lib/oauth.js';
+import { GscApiError } from './lib/gsc-api.js';
+import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 import { getCurrentVersion, checkForUpdates, printUpdateNotice, forceUpdateCheck } from './lib/updater.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1438,6 +1441,19 @@ program
     if (blocked) parts.push(chalk.red(`blocked`));
     console.log(chalk.green(`\n✅ Crawled ${parts.join(' · ')}`));
     if (skipped > 0) console.log(chalk.blue(`  📊 Incremental: ${skipped} pages skipped (same content hash)`));
+
+    // Search Console rides along with the scheduled crawl so gsc_daily stays
+    // current without a second cron entry. Incremental, so a covered project
+    // costs a handful of requests. Best-effort: quota, a missing property or
+    // an expired token must never sink the run.
+    if (isConnected('google')) {
+      try {
+        const gsc = await runGscFetch(db, next.project, loadConfig(next.project), {});
+        console.log(chalk.green(`  📈 Search Console: +${gsc.grains.reduce((n, g) => n + g.rows, 0)} rows (${gsc.property})`));
+      } catch (err) {
+        console.log(chalk.dim(`  Search Console fetch skipped: ${err.message}`));
+      }
+    }
 
     // Check if analysis needed for this project
     if (needsAnalysis(db, next.project)) {
@@ -6050,6 +6066,59 @@ program
       console.log(chalk.gray('  in Search Console, filter by Page, then Export → save into gsc/' + project + '-<label>/'));
     }
     console.log('');
+  });
+
+program
+  .command('gsc-fetch <project>')
+  .description('Fetch Search Console data for your site into the database (page×query daily, page daily, query daily)')
+  .option('--days <n>', `Days of page×query history to fetch (default: ${GSC_FETCH_DEFAULTS.days})`, v => parseInt(v, 10))
+  .option('--months <n>', `Months of page and query history to fetch, up to the API's ${GSC_FETCH_DEFAULTS.maxMonths} (default: ${GSC_FETCH_DEFAULTS.months})`, v => parseInt(v, 10))
+  .option('--grains <list>', 'Comma-separated subset of page_query,page,query (default: all three)')
+  .option('--property <siteUrl>', 'Search Console property to fetch (sc-domain:example.com or https://www.example.com/), overriding auto-detection')
+  .option('--dry-run', 'Plan the date windows without making any Search Analytics request')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('gsc-fetch')) return;
+    const config = loadConfig(project);
+    const brief = opts.format !== 'json';
+    const grains = opts.grains ? opts.grains.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+    if (brief) console.log(`\n  ${chalk.bold('Search Console Fetch')}  ${chalk.gray(project)}${opts.dryRun ? chalk.yellow('  (dry run — no requests made)') : ''}`);
+    let result;
+    try {
+      result = await runGscFetch(getDb(), project, config, {
+        days: opts.days, months: opts.months, grains, property: opts.property, dryRun: !!opts.dryRun,
+        // A first fetch is dozens of requests over a minute or more; show each
+        // window as it lands so a 429 halfway through is not a silent stall.
+        onProgress: brief ? ({ grain, window, rows, requests, truncated }) => {
+          console.log(chalk.gray(`  ${grain.padEnd(10)} ${window.start}..${window.end}  ${rows} rows  ${requests} req${truncated ? chalk.yellow('  truncated at the row cap') : ''}`));
+        } : undefined,
+      });
+    } catch (err) {
+      // GscApiError carries the fix in `hint` (401 → reconnect, 429 → wait).
+      // Config and property errors carry it in the message itself: a miss
+      // lists the account's properties and names the gsc.property fix.
+      const hint = err instanceof GscApiError ? err.hint : null;
+      if (!brief) { console.log(JSON.stringify({ command: 'gsc-fetch', project, error: err.message, hint })); process.exitCode = 1; return; }
+      console.error(chalk.red(`\n  ✗ ${err.message}`));
+      if (hint) console.error(chalk.dim(`  ${hint}`));
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+    if (!brief) { console.log(JSON.stringify({ command: 'gsc-fetch', ...result }, null, 2)); return; }
+    const chosen = result.property_reason === 'configured' ? 'configured (gsc.property or --property)' : `auto-matched: ${result.property_reason}`;
+    console.log(`  Property: ${chalk.cyan(result.property)}  ${chalk.gray(chosen)}\n`);
+    for (const g of result.grains) {
+      const span = g.windows.length ? `${g.windows[0].start}..${g.windows[g.windows.length - 1].end}` : 'already current';
+      if (result.dry_run) console.log(`  ${g.grain.padEnd(10)} ${g.windows.length} window(s) to fetch  ${chalk.gray(span)}`);
+      else console.log(`  ${g.grain.padEnd(10)} ${g.windows.length} window(s)  ${g.rows} rows  ${chalk.gray(`${g.requests} requests · ${span}`)}`);
+    }
+    console.log(`\n  ${chalk.bold('Coverage')}  ${chalk.gray(result.property)}`);
+    for (const [grain, c] of Object.entries(result.coverage)) {
+      if (c) console.log(`  ${grain.padEnd(10)} ${c.min_date}..${c.max_date}  ${c.days} days  ${chalk.gray(`${c.rows} rows`)}`);
+      else console.log(chalk.gray(`  ${grain.padEnd(10)} none`));
+    }
+    console.log(chalk.gray(`\n  page_contract now reads this data; run: seo-intel page-contract ${project} --url <url>\n`));
   });
 
 program

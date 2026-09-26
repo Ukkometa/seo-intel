@@ -37,7 +37,7 @@ claude mcp add seo-intel "npx seo-intel-mcp"      # Claude Code
 
 ## MCP Server — Native AI Agent Integration (v1.5.26+, competitor tools v1.5.56+)
 
-The MCP server exposes 34 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 23 of the 34 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
+The MCP server exposes 35 tools as native AI agent calls. Agents discover tool descriptions automatically; no extra prompting required. 24 of the 35 are free: everything that reads or audits **your own** site. Solo covers the three things an agent cannot do for itself — competitor analysis, history and trends, and content production: `scan_site`, `get_competitor_positioning`, `gap_intel`, `find_shallow_competitor_pages`, `find_decaying_competitor_pages`, `audit_competitor_headings`, `get_entity_coverage`, `find_competitor_friction`, `run_content_loop`, `draft_blog_prompt` and `prescore_draft`, plus the `competitor` slice of `get_intel` and the `analyses` table of `export_intel`.
 
 ### Free tier MCP tools (own-site, no license required)
 | Tool | Purpose |
@@ -59,6 +59,9 @@ The MCP server exposes 34 tools as native AI agent calls. Agents discover tool d
 | `mark_problem_status(project, problem_id, status, agent_name?)` | Mark a problem done/dismissed |
 | `run_citability_audit(project, include_competitors?, check_ai_access?)` | AEO scoring (7 signals incl. AI-crawler access); checks robots.txt for ClaudeBot/GPTBot/PerplexityBot/Google-Extended blocks; persists scores + upserts insights |
 | `tech_audit(project, domain?, sitemap_head?, limit?)` | Technical SEO audit from crawled data — titles, meta, noindex/robots conflicts, redirects, canonicals, sitemap diff. Severity-sorted findings |
+| `fetch_gsc(project, days?, months?, dry_run?, property?)` | **Search Console straight from the API** — stores page×query daily (last 90 days), page daily and query daily (16 months, the API's horizon) with real dates. Incremental, so repeat calls are cheap; `dry_run` shows the windows without spending quota. Needs `seo-intel auth google`. `page_contract` prefers this over CSV exports, and under it a page with no rows is measured absence (no reportable impressions in the window), not missing data |
+| `import_gsc_queries(project)` | The CSV route — imports Search Console exports from `gsc/<project>*/` with the scope each export's own `Filters.csv` declares: a page-filtered export is page-level evidence, an unfiltered one is property-wide context only |
+| `page_contract(project, url, brand_terms?)` | What ONE page needs, from measured demand — `expand` / `consolidate` / `reposition` / `protect` / `no_action_yet`, plus `blocked_recommendations` (binding: advice not to give yet, each with the input that unblocks it) and `allowed_now` (correctness work that never waits on demand data). Needs `fetch_gsc` or `import_gsc_queries` first |
 | `suggest_models(vram_gb?)` | Suggest **local** extraction models for the user's hardware (Gemma 4 E2B/E4B/12B, Qwen 3.5 4B/9B). Always returns a cloud disclaimer — extraction should be done locally |
 | `export_intel(project, tables?, max_rows_per_table?)` | Bulk export of own-site tables (pages, keywords, headings, links, technical, schemas, extractions, citability scores, insights). Includes a `notice` field telling the agent NOT to ingest wholesale — pipe to file or use targeted tools instead |
 
@@ -143,7 +146,7 @@ Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
 | **Review** | `seo-intel review <project> [--url <page>]` | Free | Pure DB read — needs_input / safe_now / opportunities / working |
 | **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
-| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 34 native MCP tools for AI agents (23 free) |
+| MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 35 native MCP tools for AI agents (24 free) |
 
 ### Agent interpretation rule
 
@@ -188,6 +191,7 @@ seo-intel export <project>         # Raw data export (JSON/CSV)
 seo-intel entity-audit <project>   # Organization/sameAs identity map; --live tests redirects + reciprocal links
 seo-intel triangulation <project>  # Embedded YouTube + GitHub + TechArticle/SoftwareSourceCode proof matrix
 seo-intel gsc-platform <project> --input gsc-platform.json # Website vs supported-platform query gaps
+seo-intel gsc-fetch <project>      # Search Console → database: page×query (90 d), page + query daily (16 mo); page-contract reads it
 seo-intel geo <project>            # LLM retrieval-shape audit for technical content
 seo-intel schema-audit <project>   # Schema type specificity + required offers/price fields
 seo-intel backlink-import <project> # Import Search Console links export from links/
@@ -285,17 +289,20 @@ seo-intel templates <project>         # URL pattern / content type mapping
 
 - `entity-audit <project>` reads crawled `Organization` JSON-LD and checks `sameAs` placement. `--live` resolves redirects and checks accessible profile HTML for a direct canonical-site reference. Treat an inaccessible or bot-blocked profile as **unknown**, not proof of a missing backlink.
 - `gsc-platform <project> --input <file>` compares Search Console query exports across `web`, `youtube`, `x`, `instagram`, and/or `tiktok`. The JSON input accepts native Search Console response shapes (`{ "rows": [{ "keys": ["query"], ... }] }`). It outputs **High-Intent Web Content Gaps** (platform query absent from web) and cross-surface SERP opportunities. `--api` is intentionally opt-in: configure exact verified property IDs under `gsc.platformProperties`; it uses the Google account connected with `seo-intel auth google` (`GSC_ACCESS_TOKEN` still works as an override); do not guess platform property IDs.
+- `gsc-fetch <project>` pulls your own Search Console rows straight from the Search Analytics API into the database, with real dates instead of "Last 28 days" labels: page×query daily for the last 90 days (what `page-contract` reads), plus page daily and query daily for 16 months — the API's own horizon, collected now so the history exists later. It is incremental (each run extends what is stored and re-fetches only the last few days Google still revises) and rides along with the scheduled `run`. The property is matched from `target.domain` or pinned with `gsc.property`; a miss lists what the account has. `page_contract` prefers these rows over CSV exports, and because one fetch covers every page the property reported, a page with **no rows is measured absence** — no reportable impressions in the window — not missing data, so no export is asked for. `--dry-run` plans the windows without a request. The Links report has no API, so `backlink-import` stays a CSV import. Free: it is your own data.
 - `triangulation <project>` scores the three proof signals only when evidenced: a YouTube **iframe** (confirmed by `--live`), a direct active GitHub link, and matching `TechArticle` or `SoftwareSourceCode` markup. `--video-metadata` checks descriptions through the YouTube Data API only when `YOUTUBE_API_KEY` is configured.
 - `geo <project>` scores technical pages for concise opening definitions, flat list structure, syntax-tagged code blocks, and, with `--live`, detected copy controls. It measures extraction affordances; it does not claim a particular LLM will cite the page.
 - `schema-audit <project>` checks whether a schema type is the *right* type and carries the fields its rich result needs. It flags `Product` markup on API, docs, dashboard, or app surfaces (where `SoftwareApplication` / `WebApplication` is the typed match), `Product` with no priced `offers`/`aggregateRating`/`review`, and `offers.price` without `priceCurrency`. A price of `0` is valid for a free tier.
 
 - `backlink-audit <project>` audits the link profile Google reports for you. It is **not a link index** — it cannot find links Google has not reported and cannot see competitor backlinks. It answers what is wrong with the links you already have: **reclamation** (domains linking under a product or brand name the site no longer uses — existing relationships, cheaper to correct than new links are to earn, one outreach per domain), followed vs `nofollow`, domain concentration, and which of your pages receive no links at all. `--live` fetches the linking pages to recover the target URL and anchor text, which Search Console does not export. A site that blocks bots or renders links client-side is reported as **unknown**, never as a lost link. Use the "Latest links" export: under the export cap it holds the same URLs as "More sample links" plus a date.
 
-All five write their findings to the Intelligence Ledger, so they accumulate and dedupe across runs, appear on the dashboard under **Own-site Findings**, and reach agents through `list_problems`. Marking one done or dismissed keeps it from returning.
+`entity-audit`, `gsc-platform`, `triangulation`, `geo` and `schema-audit` write their findings to the Intelligence Ledger, so they accumulate and dedupe across runs, appear on the dashboard under **Own-site Findings**, and reach agents through `list_problems`. Marking one done or dismissed keeps it from returning.
 
-```json
+```jsonc
 {
   "gsc": {
+    // optional — gsc-fetch matches a property to target.domain when this is omitted
+    "property": "sc-domain:example.com",
     "platformProperties": {
       "web": "sc-domain:example.com",
       "youtube": "YOUR_VERIFIED_PLATFORM_PROPERTY_ID"

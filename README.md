@@ -90,6 +90,7 @@ the free audit has shown its worth.
 | `entity-audit <project>` | Organization / `sameAs` placement, canonical-profile, and reciprocal-link audit; add `--live` for redirect/profile checks |
 | `triangulation <project>` | Proof matrix for embedded YouTube + GitHub source + `TechArticle`/`SoftwareSourceCode` schema |
 | `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties and the Google account connected with `seo-intel auth google` (`GSC_ACCESS_TOKEN` still works as an override) |
+| `gsc-fetch <project>` | Pull Search Console data straight from the API — page×query daily (90 days), page and query daily history (16 months) — so `page-contract` decides from measured demand; needs `seo-intel auth google` |
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
 | `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages. `--live` recovers target URL and anchor text |
@@ -215,13 +216,15 @@ Upload your GSC data for ranking insights:
 2. Export Performance data as CSV
 3. Upload via the web wizard or place CSVs in `gsc/<project>/`
 
+Query data no longer needs the export: connect your Google account with `seo-intel auth google` and run `seo-intel gsc-fetch <project>`, which pulls page×query, page and query rows straight from the Search Analytics API — every page at once, with real dates — and `page-contract` reads those first. Links still come from the CSV export (`backlink-import`), because the Search Console API has no Links endpoint.
+
 ## License
 
 ### Free Tier
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
   (AEO), keyword intelligence, dashboards, site graph, Site Watch,
-  technical audit, Search Console insights, and 23 of the 34 MCP tools
+  technical audit, Search Console insights, and 24 of the 35 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
 - Competitor synthesis — gap analysis, positioning, keyword battleground,

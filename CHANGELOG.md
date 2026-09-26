@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### New: gsc-fetch — Search Console straight into the database
+
+`page_contract` decides from measured demand, and until now the only page-level demand it could measure came from a CSV somebody had exported by hand: open Search Console, filter by one page, download, drop the folder under `gsc/<project>-<label>/`, import. So it could reason about the two or three pages anyone had bothered to export and had to answer "no data" for every other page — which is not the same as "no demand", and it had no way to tell the two apart. The tool was starved, and the fix was never going to be more exporting.
+
+`seo-intel gsc-fetch <project>` (MCP: `fetch_gsc`) pulls the rows straight from the Search Analytics API into a new `gsc_daily` table. One pull, grouped by date × page × query, gives the same evidence for every page the property reported, so `page_contract` can decide on any URL without anyone exporting anything. It reads this data first and falls back to CSV imports only when a project has none.
+
+Three grains are stored, each for a reason:
+
+- **page × query, daily** — the last 90 days by default. This is what `page_contract` reads, over 28- and 90-day windows. It is also the bulky one (a busy property produces thousands of rows a day), hence the shorter default.
+- **page, daily** and **query, daily** — 16 months by default. Small, and 16 months is the API's own horizon: a month not fetched today is a month lost. Trends over those series are a later feature; the rows are collected now so the history exists when it ships.
+
+Every row carries a real date. A CSV export carries a label — "Last 28 days" — that means a different window every time it is read; API rows say which days they cover, so an evidence window is an actual date range that `page_contract` reports (the library call takes a `windowDays` option, 28 by default), and its property-wide context comes from the same window as the page-level evidence. Fetches are incremental: each run extends what is stored and re-fetches only the last three days, which Google keeps revising after first publishing them, and nothing fresher than three days old is requested at all because it is not final yet. Windows are split at month boundaries and committed one at a time, so a run that dies on a quota error resumes from where it stopped rather than from the beginning. `--dry-run` shows the plan without a single request.
+
+Absence became evidence. A page-filtered export says nothing about a page that was never exported; an API pull covers every page the property reported, so a page with no rows in the window is known to have earned no reportable impressions. `page_contract` now says exactly that — Search Console reports no impressions for this URL between these dates, coverage is complete, so the absence is measured, not missing — asks for no export, and `search_review` carries the same wording into `needs_input`. Under a CSV import the old "no page-filtered export covers this URL" state stands, because there it is true.
+
+The property is matched to `target.domain` from the account's site list — the domain property first, then a URL-prefix property, https before http — or pinned with `gsc.property` in the project config (`--property` on the command). A miss lists the properties the account does have, so the fix is a config line rather than a guess. API failures name their fix: a 401 says reconnect with `seo-intel auth google`, a 403 says check the property's users or enable the Search Console API in the Cloud project behind the OAuth client, a 429 says wait.
+
+The Links report has no API endpoint, so `backlink-import` stays a CSV import; everything the Search Console UI exports as query data is now reachable without the UI.
+
+Free, because it is your own data about your own site. The scheduled `run` command (Solo) fetches after each crawl when the Google account is connected, so `gsc_daily` stays current without a second cron entry; a quota error, a missing property or an expired token is reported on its own line and never sinks the run.
+
+Also from this work: the Search Console transport — endpoints, token precedence, error hints — moved out of `gsc-platform` into `lib/gsc-api.js`, so `gsc-platform --api` reports the same actionable failures. The MCP surface goes from 34 tools to 35; 24 are free.
+
 ### OAuth tokens move to `~/.seo-intel/tokens/`
 
 `seo-intel auth google` wrote its tokens to `.tokens/` inside the package directory. For a global install that directory sits inside `node_modules`, so every `npm update -g` silently disconnected Google; and the files were created with the default mode, so on a shared machine the refresh token — a standing credential for the account — was readable by every other user. Tokens now live beside `install.json` under `~/.seo-intel/tokens/`: the directory is created `0700` and each file is written `0600`, and tightened again on every save, so a file left loose by an older version is fixed the next time it is refreshed. A token file in the old location is moved over automatically the first time it is needed, and `seo-intel auth google --disconnect` removes both copies so a disconnect cannot be undone by the migration.
@@ -12,6 +35,7 @@
 
 ### Fixed
 
+- `page_contract` summed overlapping CSV exports for one page. A "Last 28 days" export and a "Last 3 months" export of the same URL both counted, so the page was credited with the same impressions twice and could clear the demand floor on duplicated data. Page-level evidence now comes from one window only, the freshest declared — the rule the property-wide context already followed.
 - Problem lists that contained a schema type mismatch sorted unpredictably. The insight-type registry declared `schema_specificity` as `error`, the audit's own word, while `list_problems`, `search_review` and the dashboard rank `critical` / `warn` / `info`. An unranked severity made the comparator's subtraction `NaN`, so those findings fell through to the difficulty tie-break against everything else while everything else was ordered by severity — an inconsistent comparator, and the order of the whole list was whatever the sort engine happened to do. The registry now says `critical`, and `lib/problems.js` normalizes every severity it copies onto a problem (`error` → `critical`, anything unknown → `warn`), so no unranked value reaches the sort again.
 - The README listed `blog-draft` and `loop` in the Free command table, and called blog drafts free in the prose and the License section, although both have run through the Solo gate since 1.6.0. The counts were right and the phrasing was clean; only the placement was wrong, which no prose check sees. Both rows now sit under **Content production** in the Solo table, the skill's tier tables say the same, and the layer checker reads every command row in the README tables and compares its placement with the `requirePro()` gate that command runs through in `cli.js`, so `npm run check` fails the next time a row sits in the wrong tier.
 - CI never tested a pull request's code. The smoke-test job installs `seo-intel@latest` from the npm registry, so every step in it exercised whatever was last published. A new `unit` job runs the repo's own test suite and the layer check against the checkout, on Node 22 and 23.

@@ -39,10 +39,13 @@ const OPPORTUNITY_CATEGORIES = new Set(['keyword', 'content', 'positioning']);
 /**
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} project
- * @param {{ includePaid?: boolean, urls?: string[], limit?: number }} opts
+ * @param {{ includePaid?: boolean, urls?: string[], limit?: number, windowDays?: number }} opts
+ *   windowDays is handed through to each page contract's evidence window. It
+ *   is a library option: `seo-intel review` and the search_review tool do not
+ *   expose it yet, so nothing in the review text asks a caller to set it.
  */
 export function runReview(db, project, opts = {}) {
-  const { includePaid = false, urls = [], limit = 0 } = opts;
+  const { includePaid = false, urls = [], limit = 0, windowDays } = opts;
 
   const freshness = getFreshness(db, project);
   const problems = getProblems(db, project, { includePaid });
@@ -61,9 +64,9 @@ export function runReview(db, project, opts = {}) {
   }
 
   // Per-URL contracts contribute the evidence-gap half of needs_input: these
-  // are blocks no crawl can clear, only a Search Console import can.
+  // are blocks no crawl can clear, only Search Console data can.
   for (const url of urls) {
-    const contract = runPageContract(db, project, url, { skipLedger: true });
+    const contract = runPageContract(db, project, url, { windowDays });
     for (const b of contract.blocked_recommendations) {
       needs_input.push({
         id: `contract::${b.action}::${url}`,
@@ -74,9 +77,7 @@ export function runReview(db, project, opts = {}) {
         decision_basis: contract.decision_basis,
         safe_action: b.reason,
         blocked_by: b.unblocked_by,
-        evidence: [{ source: 'gsc', url, observed: contract.evidence.scope === 'none'
-          ? 'No page-filtered Search Console export covers this URL.'
-          : `Page-level evidence present (${contract.evidence.scope} scope).` }],
+        evidence: [{ source: 'gsc', url, observed: observedEvidence(contract.evidence) }],
       });
     }
     for (const a of contract.allowed_now) {
@@ -102,6 +103,32 @@ export function runReview(db, project, opts = {}) {
     working: getPassingChecks(db, project, freshness),
     counts: getProblemCounts(db, project, { includePaid }),
   };
+}
+
+/**
+ * What Search Console showed for a contract's URL. "No rows" reads differently
+ * by source and coverage: a complete API fetch covers every page, so its
+ * silence is a measurement over the days it fetched; a fetch that stopped at
+ * its row cap dropped the low-click pages, so its silence is a gap; an export
+ * only covers what was exported, so its silence is a gap too. The window
+ * printed is the fetched one — page-contract has already clamped it — so the
+ * dates here never name a day nobody requested.
+ */
+function observedEvidence(evidence) {
+  const w = evidence.window;
+  const span = w ? `${w.start}..${w.end}` : '';
+  const shortfall = w && w.days < w.requested_days ? ` (${w.days} of ${w.requested_days} days fetched)` : '';
+  if (evidence.scope !== 'none') {
+    return evidence.source === 'api' && evidence.truncated
+      ? `Page-level evidence present (${evidence.scope} scope); totals are a floor — the fetch for ${span} hit its row cap.`
+      : `Page-level evidence present (${evidence.scope} scope).`;
+  }
+  if (evidence.source === 'api' && w) {
+    return evidence.coverage === 'complete'
+      ? `Search Console reports no impressions for this URL in the ${span} window${shortfall}.`
+      : `Search Console returned no rows for this URL in the ${span} window, but the fetch hit its row cap there and dropped the lowest-click pages, so this is a gap in the inputs, not a measurement.`;
+  }
+  return 'No page-filtered Search Console export covers this URL.';
 }
 
 /** Problem → ReviewItem. Keeps problems.js's own vocabulary; adds no new one. */

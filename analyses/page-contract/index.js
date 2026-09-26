@@ -19,11 +19,42 @@
  * *correctness*: invalid markup is invalid whether or not anyone searches for
  * the page, and blocking hygiene behind a GSC export nobody has exported yet
  * just stalls work that was never in question.
+ *
+ * Demand evidence comes from lib/gsc-import.js, which prefers Search Console
+ * API rows over CSV exports. The source changes what "no rows" means: under
+ * the API's complete page coverage, zero rows is a measurement (the page got
+ * no reportable impressions); under an export it is a missing input; and
+ * under an API walk that stopped at its row cap (coverage 'partial') it is a
+ * gap again, because the rows a capped walk drops are the low-click pages —
+ * the very pages a "no demand" verdict would be about. The three states get
+ * different wording, different unblocking steps, and the missing input is
+ * named only when something is actually missing.
+ *
+ * Every date this module prints is a day that was fetched. The evidence
+ * window is clamped to what gsc_daily holds (7 days after `gsc-fetch --days 7`,
+ * whatever was asked for) and the shortfall is stated, so "no impressions
+ * between A and B" never names days nobody requested.
+ *
+ * Unblocking steps name only inputs the caller can supply. The read window
+ * (opts.windowDays) is a library parameter that neither the CLI nor the MCP
+ * tool exposes, so no block asks for it: the step every caller has is another
+ * fetch, which adds days while the window is short of what was asked for and
+ * otherwise brings the impressions a later verdict would rest on.
  */
 
 import { deriveBrandTerms, splitBranded } from '../../lib/brand.js';
-import { getPageQueryEvidence, normalizeUrlKey } from '../../lib/gsc-import.js';
+import {
+  EVIDENCE_WINDOW_DAYS,
+  getPageQueryEvidence,
+  getPropertyQueryContext,
+  normalizeUrlKey,
+  pickFreshestRange,
+} from '../../lib/gsc-import.js';
 import { runSchemaAudit } from '../schema-audit/index.js';
+
+// Re-exported so existing consumers keep importing it from here; the ranking
+// itself lives next to the CSV path it serves.
+export { pickFreshestRange };
 
 // Evidence thresholds. Deliberately conservative: below these, a decision would
 // be reading noise, and saying so is more useful than producing a confident number.
@@ -34,24 +65,6 @@ const STRONG_POSITION = 10;
 // Everything derived from crawl data — markup, headings, word count — inherits
 // that doubt, so it is declared rather than presented as current fact.
 const STALE_CRAWL_DAYS = 30;
-
-/**
- * GSC writes its window as prose ("Last 28 days"). Rank by the span it covers,
- * shortest first, so the freshest window wins deterministically.
- */
-function rangeSpanDays(range) {
-  const m = /last\s+(\d+)\s+(day|week|month|year)/i.exec(String(range || ''));
-  if (!m) return Number.MAX_SAFE_INTEGER;
-  const n = Number(m[1]);
-  const unit = m[2].toLowerCase();
-  return n * ({ day: 1, week: 7, month: 30, year: 365 }[unit] || 1);
-}
-
-export function pickFreshestRange(ranges) {
-  const uniq = [...new Set((ranges || []).filter(Boolean))];
-  if (!uniq.length) return null;
-  return uniq.sort((a, b) => rangeSpanDays(a) - rangeSpanDays(b) || a.localeCompare(b))[0];
-}
 
 function agg(rows) {
   const clicks = rows.reduce((n, r) => n + (r.clicks || 0), 0);
@@ -70,15 +83,66 @@ function block(action, reason, unblockedBy) {
   return { action, reason, unblocked_by: unblockedBy };
 }
 
+/** True when fewer days were fetched than the window asked for. */
+function windowIsShort(window) {
+  return Boolean(window) && window.days < window.requested_days;
+}
+
+/**
+ * How many days the API window really covers, for the decision basis. Reads
+ * "28 days" when the fetch holds them all and states the shortfall otherwise,
+ * so a reader is never left assuming the default.
+ */
+function describeDays(window) {
+  return windowIsShort(window)
+    ? `${window.days} of the ${window.requested_days} days asked for have been fetched`
+    : `${window.days} days`;
+}
+
+/**
+ * The step that turns "too little signal" into a readable one. With an export
+ * it is a longer export; with API data it is a later fetch — the one input
+ * every caller has (see the header on windowDays) — which also lengthens a
+ * window that is short of what was asked for.
+ * Returned without a full stop so callers can extend the sentence.
+ */
+function widerEvidenceHint(evidence, project) {
+  if (evidence.source !== 'api') return 'A 3-month or 12-month page-filtered export';
+  const growth = windowIsShort(evidence.window)
+    ? ` — the window holds ${evidence.window.days} of the ${evidence.window.requested_days} days asked for, and each fetch adds days`
+    : '';
+  return `A rise in non-branded impressions on a later fetch (seo-intel gsc-fetch ${project})${growth}`;
+}
+
+/**
+ * Caveats a verdict built on API rows must carry: a capped walk makes the
+ * totals a floor, and a short window is fewer days than the reader expects.
+ */
+function windowNotes(evidence) {
+  const notes = [];
+  if (evidence.source !== 'api' || !evidence.window) return notes;
+  const w = evidence.window;
+  if (evidence.truncated) {
+    notes.push(`The page_query fetch for ${evidence.property} hit its row cap inside this window, so these totals are a floor: the API returns rows in click order, and the rows below the cap were dropped.`);
+  }
+  if (windowIsShort(w)) {
+    notes.push(`Only ${w.days} of the ${w.requested_days} days asked for have been fetched (${w.start}..${w.end}); later fetches add days.`);
+  }
+  return notes;
+}
+
 /**
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} project
  * @param {string} url
- * @param {{ brandTerms?: string[] }} opts
+ * @param {{ brandTerms?: string[], windowDays?: number }} opts
  */
 export function runPageContract(db, project, url, opts = {}) {
+  const windowDays = Number.isInteger(opts.windowDays) && opts.windowDays >= 1
+    ? opts.windowDays
+    : EVIDENCE_WINDOW_DAYS;
   const brand = deriveBrandTerms(db, project, opts.brandTerms || []);
-  const evidence = getPageQueryEvidence(db, project, url);
+  const evidence = getPageQueryEvidence(db, project, url, { windowDays });
   const key = normalizeUrlKey(url);
 
   const page = db.prepare(`
@@ -90,30 +154,81 @@ export function runPageContract(db, project, url, opts = {}) {
   const crawlAgeDays = page?.crawled_at ? Math.floor((Date.now() - page.crawled_at) / 86_400_000) : null;
   const crawlStale = crawlAgeDays !== null && crawlAgeDays > STALE_CRAWL_DAYS;
 
-  // Property-wide rows are context, never evidence about this page.
-  let propertyRows = [];
-  try {
-    propertyRows = db.prepare(
-      'SELECT * FROM gsc_queries WHERE project = ? AND page_url IS NULL ORDER BY impressions DESC'
-    ).all(project);
-  } catch { /* not imported yet */ }
-  // Every row from one import shares an imported_at, so sorting by it picks an
-  // arbitrary window. Rank the declared ranges by how recent they are instead,
-  // so the context shown is reproducible.
-  const newestRange = pickFreshestRange(propertyRows.map(r => r.date_range));
-  const propertyScoped = propertyRows.filter(r => r.date_range === newestRange);
+  // Property-wide rows are context, never evidence about this page. API rows
+  // win when present; otherwise the unfiltered CSV exports, from one window.
+  let propertyScoped, newestRange, propertySource;
+  const apiContext = getPropertyQueryContext(db, project, { windowDays });
+  if (apiContext) {
+    propertyScoped = apiContext.rows;
+    newestRange = apiContext.date_range;
+    propertySource = apiContext.source;
+  } else {
+    let propertyRows = [];
+    try {
+      propertyRows = db.prepare(
+        'SELECT * FROM gsc_queries WHERE project = ? AND page_url IS NULL ORDER BY impressions DESC'
+      ).all(project);
+    } catch { /* not imported yet */ }
+    // Every row from one import shares an imported_at, so sorting by it picks an
+    // arbitrary window. Rank the declared ranges by how recent they are instead,
+    // so the context shown is reproducible.
+    newestRange = pickFreshestRange(propertyRows.map(r => r.date_range));
+    propertyScoped = propertyRows.filter(r => r.date_range === newestRange);
+    propertySource = newestRange ? 'csv' : null;
+  }
   const propSplit = splitBranded(propertyScoped, brand.terms);
 
   const pageSplit = splitBranded(evidence.rows, brand.terms);
   const pageBranded = agg(pageSplit.branded);
   const pageNonBranded = agg(pageSplit.nonBranded);
   const hasPageEvidence = evidence.rows.length > 0;
+  const fromApi = evidence.source === 'api';
+  // Zero rows under complete API coverage is a measurement. Under a walk that
+  // stopped at its row cap it is not: the rows dropped were the low-click
+  // ones, and nothing says which pages they belonged to.
+  const measuredAbsence = !hasPageEvidence && fromApi && evidence.coverage === 'complete';
+  const truncatedAbsence = !hasPageEvidence && fromApi && !measuredAbsence;
 
   // ── Decision, computed only from what is measured ────────────────────────
   let decision, basis;
   const blocked = [];
 
-  if (!hasPageEvidence) {
+  if (measuredAbsence) {
+    // The fetch covered every page the property reported over these days.
+    // This one was not among them, so the absence is a fact about the page,
+    // not about the inputs — over exactly the days named, no more.
+    const { start, end } = evidence.window;
+    decision = 'no_action_yet';
+    basis = [
+      `Search Console reports no impressions for this URL between ${start} and ${end} (${describeDays(evidence.window)}); page-level coverage for this property is complete over those days, so that absence is measured, not missing.`,
+    ];
+    const growth = windowIsShort(evidence.window)
+      ? `; each later fetch also adds days to the window, which holds ${evidence.window.days} of the ${evidence.window.requested_days} asked for`
+      : '';
+    const unblock = `Non-branded impressions on this URL in a later fetch (seo-intel gsc-fetch ${project})${growth}.`;
+    blocked.push(
+      block('expand', 'Expanding content requires proof that non-branded demand reaches this page. Search Console measured none in the window.', unblock),
+      block('reposition', 'Repositioning requires knowing which queries currently land here. Search Console recorded none.', unblock),
+      block('consolidate', 'Consolidation requires query overlap with another page. This page has no measured queries to overlap.', unblock),
+      block('claim_category_ownership', 'Property-wide rankings cannot be attributed to a single page, and this page has no rankings of its own in the window.', unblock),
+    );
+  } else if (truncatedAbsence) {
+    // The walk stopped at its row cap somewhere in the window. The API returns
+    // rows in click order, so the pages it dropped are the low-click ones —
+    // this URL may be one of them. Its silence is a gap in the inputs.
+    const { start, end } = evidence.window;
+    decision = 'no_action_yet';
+    basis = [
+      `Search Console returned no rows for this URL between ${start} and ${end}, but the page_query fetch for ${evidence.property} hit its row cap in that window. The API hands rows back in click order, so the rows dropped were the lowest-click pages — this one may be among them. The absence is a gap in the inputs, not a measurement.`,
+    ];
+    const unblock = `A Search Console export taken with a Page filter set to ${url}, saved to gsc/${project}-<label>/ and re-imported (seo-intel gsc-import ${project}); page-filtered rows for this URL are read even where the API walk was cut short.`;
+    blocked.push(
+      block('expand', 'Expanding content requires proof that non-branded demand reaches this page. The fetch that would have shown it stopped at its row cap, so none has been measured.', unblock),
+      block('reposition', 'Repositioning requires knowing which queries currently land here. The truncated fetch recorded none for this URL.', unblock),
+      block('consolidate', 'Consolidation requires query overlap with another page. No queries are recorded for this URL, and the fetch was cut short.', unblock),
+      block('claim_category_ownership', 'Property-wide rankings cannot be attributed to a single page, and no rankings for this page survived the row cap.', unblock),
+    );
+  } else if (!hasPageEvidence) {
     decision = 'no_action_yet';
     basis = evidence.hasPageScopedExports
       ? ['Page-filtered exports exist for this project, but none cover this URL.']
@@ -121,7 +236,7 @@ export function runPageContract(db, project, url, opts = {}) {
           'No page-filtered Search Console export has been imported for this project.',
           `Property-wide data covers ${propertyScoped.length} queries but says nothing about which of them land on this URL.`,
         ];
-    const unblock = `A Search Console export taken with a Page filter set to ${url}, saved to gsc/${project}-<label>/ and re-imported.`;
+    const unblock = `A Search Console export taken with a Page filter set to ${url}, saved to gsc/${project}-<label>/ and re-imported — or seo-intel gsc-fetch ${project} (connected Google account), which covers every page at once.`;
     blocked.push(
       block('expand', 'Expanding content requires proof that non-branded demand reaches this page. None has been measured.', unblock),
       block('reposition', 'Repositioning requires knowing which queries currently land here. Unknown.', unblock),
@@ -136,11 +251,13 @@ export function runPageContract(db, project, url, opts = {}) {
     ];
     blocked.push(block('expand',
       `Non-branded demand (${pageNonBranded.impressions} impressions) is below the ${MIN_IMPRESSIONS} floor, so any content bet would be built on noise.`,
-      'A longer date range, or a rise in non-branded impressions on a later export.'));
+      evidence.source === 'api'
+        ? `${widerEvidenceHint(evidence, project)}.`
+        : 'A longer date range, or a rise in non-branded impressions on a later export.'));
   } else if (pageNonBranded.impressions < MIN_IMPRESSIONS) {
     decision = 'no_action_yet';
     basis = [`Only ${pageNonBranded.impressions} non-branded impressions recorded, below the ${MIN_IMPRESSIONS}-impression floor.`];
-    blocked.push(block('expand', 'Demand too small to distinguish from noise.', 'A 3-month or 12-month page-filtered export.'));
+    blocked.push(block('expand', 'Demand too small to distinguish from noise.', `${widerEvidenceHint(evidence, project)}.`));
   } else if (pageNonBranded.avgPosition !== null && pageNonBranded.avgPosition <= WINNABLE_POSITION) {
     decision = 'expand';
     basis = [
@@ -160,6 +277,7 @@ export function runPageContract(db, project, url, opts = {}) {
       `At position ${pageNonBranded.avgPosition}, adding length rarely moves a page onto page one; the mismatch is what the page is about.`,
       'Evidence that the page targets the right query cluster — or a decision to reposition first.'));
   }
+  if (hasPageEvidence) basis.push(...windowNotes(evidence));
 
   // ── Hygiene is never gated on demand ─────────────────────────────────────
   const schema = runSchemaAudit(db, project, { skipLedger: true });
@@ -186,9 +304,18 @@ export function runPageContract(db, project, url, opts = {}) {
     allowed_now: allowed,
     evidence: {
       scope: hasPageEvidence ? 'page' : 'none',
+      source: evidence.source,
+      coverage: evidence.coverage,
+      truncated: evidence.truncated,
+      property: evidence.property,
+      // start..end are fetched days only; days < requested_days says the
+      // fetch holds fewer than the window asked for.
+      window: evidence.window,
       page_level: hasPageEvidence ? { branded: pageBranded, non_branded: pageNonBranded, date_ranges: evidence.dateRanges } : null,
       property_level_context: {
         date_range: newestRange,
+        source: propertySource,
+        truncated: apiContext?.truncated ?? false,
         branded: agg(propSplit.branded),
         non_branded: agg(propSplit.nonBranded),
         note: 'Property-wide totals. Context only — they cannot be attributed to this URL.',
@@ -205,8 +332,14 @@ export function runPageContract(db, project, url, opts = {}) {
               : `Crawl is ${crawlAgeDays} days old.`)
           : 'This URL is not in the crawl data at all, so no crawl-derived finding is available for it.',
       },
+      // Under complete API coverage nothing is missing: the absence of rows
+      // is the finding, so no export is asked for. Under a truncated walk the
+      // export is the one input that reaches past the row cap.
       missing_inputs: [
-        ...(hasPageEvidence ? [] : [`Page-filtered Search Console export for ${url}`]),
+        ...(hasPageEvidence || measuredAbsence ? []
+          : truncatedAbsence
+            ? [`Page-filtered Search Console export for ${url} — the API fetch for this window hit its row cap, so its silence on this URL is not a measurement`]
+            : [`Page-filtered Search Console export for ${url}, or seo-intel gsc-fetch ${project}`]),
         ...(crawlStale ? [`Fresh crawl — current data is ${crawlAgeDays} days old (seo-intel crawl ${project} --domain ${(() => { try { return new URL(url).hostname; } catch { return url; } })()})`] : []),
         ...(page ? [] : ['This URL has never been crawled']),
       ],

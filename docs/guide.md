@@ -141,6 +141,7 @@ If you have subdomains (blog, docs, etc.) that you also want crawled:
 | `context.maturity` | Yes | `pre-launch` / `early stage` / `growth stage` / `established` |
 | `target` | Yes | Your main site (one per project) |
 | `owned` | No | Additional properties you control (subdomains, microsites) |
+| `gsc.property` | No | Search Console property `gsc-fetch` pulls from (`sc-domain:example.com` or `https://www.example.com/`); matched to `target.domain` when omitted |
 | `competitors` | Yes | Sites you're competing against (2-10 recommended) |
 
 ---
@@ -220,6 +221,7 @@ The multi-project dashboard includes a dropdown at the top to switch between pro
 | Command | Description | Example |
 |---------|-------------|---------|
 | `keywords <project>` | Generate keyword cluster matrix | `node cli.js keywords mysite --count 120 --save` |
+| `gsc-fetch <project>` | Pull your Search Console data from the API into the database (page×query 90 days; page and query daily 16 months); needs `seo-intel auth google` | `node cli.js gsc-fetch mysite --dry-run` |
 | `report <project>` | Print latest analysis to terminal | `node cli.js report mysite` |
 | `status` | Show crawl freshness + extraction progress | `node cli.js status` |
 | `run` | Smart cron: crawl next stale domain | `node cli.js run` |

@@ -501,3 +501,43 @@ jobs:
         run: node scripts/mock-crawl-test.js
         working-directory: ${{ github.workspace }}
         shell: bash
+
+  # ═══════════════════════════════════════════════════════════════════
+  # UNIT — tests the checkout, not the published package
+  # ═══════════════════════════════════════════════════════════════════
+  # smoke-test installs seo-intel@latest from the npm registry, so every step
+  # in it exercises whatever was last published — never this pull request's
+  # code. This job runs the repo's own test suite and layer check against the
+  # checked-out tree so a PR that breaks a unit test cannot stay green.
+  unit:
+    name: Unit tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '23']
+    env:
+      # Tests import only node built-ins and local modules; Playwright's
+      # browser binaries are not needed and would only slow down install.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # node:sqlite prints an ExperimentalWarning to stderr on Node 22.
+      # That is expected and harmless; only the exit code decides pass/fail.
+      - name: Unit tests
+        run: npm test
+
+      - name: Layer coherence check
+        run: npm run check

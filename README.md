@@ -65,8 +65,10 @@ seo-intel suggest-usecases myproject --scope docs      # infer what pages/docs s
 **The line: everything about your own site is free. Solo adds your competitors.**
 
 Analysis of your own site is free because a capable agent commoditizes one-shot
-analysis anyway. The paywall sits on what you structurally can't do alone:
-competitor synthesis, automation, and history.
+analysis anyway. The paywall sits on what you structurally can't do alone —
+competitor synthesis, automation, and history — plus content production (blog
+drafts and the content loop), the "do the work for me" step you reach only after
+the free audit has shown its worth.
 
 ### Free — your own site, no page or project limits
 
@@ -80,8 +82,6 @@ competitor synthesis, automation, and history.
 | `aeo <project>` | AI Citability Audit — score every page across 7 signals |
 | `rescore <project> <url>` | Verify a fix — before/after/delta on the raw-HTML score |
 | `keywords <project>` | Keyword intelligence matrix |
-| `blog-draft <project>` | AEO-optimised blog draft from the Intelligence Ledger |
-| `loop <project>` | Content loop: top gap → draft → prescore → queue |
 | `html <project>` / `graph <project>` | Full dashboard and site-graph visualization |
 | `watch <project>` | Site Watch — health score and change detection |
 | `tech-audit <project>` | Technical SEO audit from crawl data |
@@ -89,7 +89,7 @@ competitor synthesis, automation, and history.
 | `schemas <project>` | Schema.org coverage analysis |
 | `entity-audit <project>` | Organization / `sameAs` placement, canonical-profile, and reciprocal-link audit; add `--live` for redirect/profile checks |
 | `triangulation <project>` | Proof matrix for embedded YouTube + GitHub source + `TechArticle`/`SoftwareSourceCode` schema |
-| `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties + `GSC_ACCESS_TOKEN` |
+| `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties and the Google account connected with `seo-intel auth google` (`GSC_ACCESS_TOKEN` still works as an override) |
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
 | `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages. `--live` recovers target URL and anchor text |
@@ -118,6 +118,9 @@ competitor synthesis, automation, and history.
 | **History & trends** | |
 | `brief <project>` | Crawl change brief — what changed since last run |
 | `velocity <project>` | Publishing velocity — how fast each domain ships |
+| **Content production** | |
+| `blog-draft <project>` | AEO-optimised blog draft from the Intelligence Ledger |
+| `loop <project>` | Content loop: top gap → draft → prescore → queue |
 
 ## Project Configuration
 
@@ -217,7 +220,7 @@ Upload your GSC data for ranking insights:
 ### Free Tier
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
-  (AEO), keyword intelligence, blog drafts, dashboards, site graph, Site Watch,
+  (AEO), keyword intelligence, dashboards, site graph, Site Watch,
   technical audit, Search Console insights, and 23 of the 34 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
@@ -225,6 +228,7 @@ Upload your GSC data for ranking insights:
   shallow/decay/entity/friction attacks, competitor exports and digests
 - Automation — the smart scheduler (`run`)
 - History and trends — crawl change brief, publishing velocity
+- Content production — AEO blog drafts (`blog-draft`) and the content loop (`loop`)
 
 ```bash
 # Set your license key
@@ -248,7 +252,7 @@ Updates are checked automatically in the background and shown at the end of `seo
 - Scraped content is HTML-stripped and sanitized before reaching any model
 - Extraction outputs are validated against schema before DB insert
 - API keys are stored in `.env` (gitignored)
-- OAuth tokens stored in `.tokens/` (gitignored)
+- OAuth tokens stored owner-only (`0600`) in `~/.seo-intel/tokens/`, outside the package directory and any git checkout
 
 ## Agent Harness Integration
 

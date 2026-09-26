@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### OAuth tokens move to `~/.seo-intel/tokens/`
+
+`seo-intel auth google` wrote its tokens to `.tokens/` inside the package directory. For a global install that directory sits inside `node_modules`, so every `npm update -g` silently disconnected Google; and the files were created with the default mode, so on a shared machine the refresh token — a standing credential for the account — was readable by every other user. Tokens now live beside `install.json` under `~/.seo-intel/tokens/`: the directory is created `0700` and each file is written `0600`, and tightened again on every save, so a file left loose by an older version is fixed the next time it is refreshed. A token file in the old location is moved over automatically the first time it is needed, and `seo-intel auth google --disconnect` removes both copies so a disconnect cannot be undone by the migration.
+
+### `gsc-platform --api` uses the connected Google account
+
+`--api` demanded `GSC_ACCESS_TOKEN` even when the account was already connected, which made the OAuth connection worthless for the one command that talks to the Search Console API. It now uses the connected account, refreshing the token as needed. `GSC_ACCESS_TOKEN` still wins when set — that is the override for CI and hand-issued short-lived tokens — and when neither exists the error names the command that fixes it.
+
+### Fixed
+
+- Problem lists that contained a schema type mismatch sorted unpredictably. The insight-type registry declared `schema_specificity` as `error`, the audit's own word, while `list_problems`, `search_review` and the dashboard rank `critical` / `warn` / `info`. An unranked severity made the comparator's subtraction `NaN`, so those findings fell through to the difficulty tie-break against everything else while everything else was ordered by severity — an inconsistent comparator, and the order of the whole list was whatever the sort engine happened to do. The registry now says `critical`, and `lib/problems.js` normalizes every severity it copies onto a problem (`error` → `critical`, anything unknown → `warn`), so no unranked value reaches the sort again.
+- The README listed `blog-draft` and `loop` in the Free command table, and called blog drafts free in the prose and the License section, although both have run through the Solo gate since 1.6.0. The counts were right and the phrasing was clean; only the placement was wrong, which no prose check sees. Both rows now sit under **Content production** in the Solo table, the skill's tier tables say the same, and the layer checker reads every command row in the README tables and compares its placement with the `requirePro()` gate that command runs through in `cli.js`, so `npm run check` fails the next time a row sits in the wrong tier.
+- CI never tested a pull request's code. The smoke-test job installs `seo-intel@latest` from the npm registry, so every step in it exercised whatever was last published. A new `unit` job runs the repo's own test suite and the layer check against the checkout, on Node 22 and 23.
+
 ## 1.7.1 (2026-09-15)
 
 ### New: Search Review — the decide phase

@@ -4,8 +4,21 @@
  * Compares query exports from a verified website property and one or more
  * supported platform properties (YouTube, X, TikTok, Instagram). It accepts a
  * portable JSON export by default and can query the Search Console API when
- * configured property IDs and an OAuth access token are supplied.
+ * configured property IDs and an OAuth access token are available.
+ *
+ * Token resolution for --api, in order:
+ *   1. opts.accessToken      explicit, for programmatic callers and tests
+ *   2. GSC_ACCESS_TOKEN      env override for CI and hand-issued short-lived tokens
+ *   3. lib/oauth.js          the account connected with "seo-intel auth google",
+ *                            auto-refreshed by getAccessToken()
+ * The OAuth module and fetch are injectable (opts.oauth, opts.fetch) so tests
+ * can simulate "not connected" and API responses without touching the real
+ * token store or the network.
  */
+
+import { getAccessToken, isConnected } from '../../lib/oauth.js';
+
+const defaultOauth = { getAccessToken, isConnected };
 
 function asNumber(value) {
   const n = Number(value);
@@ -53,9 +66,9 @@ function gapPriority(surfaces) {
   return Math.round(impressions + clicks * 8);
 }
 
-async function fetchPropertyQueries(property, accessToken, { startDate, endDate, rowLimit = 5_000 } = {}) {
+async function fetchPropertyQueries(property, accessToken, { startDate, endDate, rowLimit = 5_000, fetch: fetchImpl = globalThis.fetch } = {}) {
   const endpoint = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(property)}/searchAnalytics/query`;
-  const res = await fetch(endpoint, {
+  const res = await fetchImpl(endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
     body: JSON.stringify({ startDate, endDate, dimensions: ['query'], rowLimit }),
@@ -111,6 +124,22 @@ export function analyzePlatformQueryGaps(source) {
   };
 }
 
+/**
+ * Resolve the Bearer token for the Search Console API. See the module header
+ * for the precedence; the connected-account path is only consulted when the
+ * explicit and env overrides are absent so a CI token never triggers a refresh.
+ */
+async function resolveAccessToken(opts) {
+  if (opts.accessToken) return opts.accessToken;
+  if (process.env.GSC_ACCESS_TOKEN) return process.env.GSC_ACCESS_TOKEN;
+  const oauth = opts.oauth || defaultOauth;
+  if (oauth.isConnected('google')) return oauth.getAccessToken('google');
+  throw new Error(
+    'No Google Search Console credentials. Run "seo-intel auth google" to connect your Google account, '
+    + 'or set GSC_ACCESS_TOKEN with a short-lived OAuth token, before using --api.',
+  );
+}
+
 export async function runPlatformGapAnalysis(config, opts = {}) {
   let source;
   let mode;
@@ -120,16 +149,16 @@ export async function runPlatformGapAnalysis(config, opts = {}) {
     mode = 'import';
   } else if (opts.api) {
     const properties = config?.gsc?.platformProperties;
-    const token = process.env.GSC_ACCESS_TOKEN;
     if (!properties || typeof properties !== 'object' || !Object.keys(properties).length) {
       throw new Error('Configure gsc.platformProperties with verified Search Console property IDs before using --api.');
     }
-    if (!token) throw new Error('Set GSC_ACCESS_TOKEN with a short-lived OAuth token before using --api.');
+    const token = await resolveAccessToken(opts);
+    const fetchImpl = opts.fetch || globalThis.fetch;
     const endDate = opts.endDate || new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
     const startDate = opts.startDate || new Date(Date.now() - 31 * 86_400_000).toISOString().slice(0, 10);
     source = {};
     for (const [surface, property] of Object.entries(properties)) {
-      source[surface] = await fetchPropertyQueries(property, token, { startDate, endDate });
+      source[surface] = await fetchPropertyQueries(property, token, { startDate, endDate, fetch: fetchImpl });
     }
     mode = 'api';
   } else {

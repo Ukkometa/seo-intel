@@ -1880,7 +1880,9 @@ program
 
       // Show API key auth alongside OAuth
       console.log(chalk.bold.cyan('  🔑 API Key Auth\n'));
-      const env = readFileSync(join(__dirname, '.env'), 'utf8').split('\n');
+      // A fresh install has no .env yet; status must still print, not throw ENOENT.
+      const envPath = join(__dirname, '.env');
+      const env = existsSync(envPath) ? readFileSync(envPath, 'utf8').split('\n') : [];
       const keys = ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY'];
       for (const key of keys) {
         const line = env.find(l => l.startsWith(key + '='));
@@ -5957,7 +5959,7 @@ program
   .command('gsc-platform <project>')
   .description('Compare website and verified social-platform Search Console query data for web-content and cross-SERP gaps')
   .option('--input <path>', 'JSON export: { web: { rows: [...] }, youtube: { rows: [...] }, x: { rows: [...] } }')
-  .option('--api', 'Query configured verified properties through Search Console API (requires GSC_ACCESS_TOKEN)')
+  .option('--api', 'Query configured verified properties through the Search Console API using the connected Google account (seo-intel auth google) or GSC_ACCESS_TOKEN')
   .option('--start-date <YYYY-MM-DD>', 'API start date (default: 31 days ago)')
   .option('--end-date <YYYY-MM-DD>', 'API end date (default: 3 days ago)')
   .option('--format <type>', 'Output format: brief or json', 'brief')
@@ -5965,7 +5967,17 @@ program
     if (!requirePro('gsc-platform')) return;
     const config = loadConfig(project);
     const { runPlatformGapAnalysis } = await import('./analyses/gsc-platform/index.js');
-    const result = await runPlatformGapAnalysis(config, opts);
+    let result;
+    try {
+      result = await runPlatformGapAnalysis(config, opts);
+    } catch (err) {
+      // Missing-credentials and missing-config errors carry the fix in their
+      // message ("run seo-intel auth google"), so surface them as-is.
+      if (opts.format === 'json') { console.log(JSON.stringify({ command: 'gsc-platform', project, error: err.message })); process.exitCode = 1; return; }
+      console.error(chalk.red(`\n  ✗ ${err.message}\n`));
+      process.exitCode = 1;
+      return;
+    }
     // The top gaps accumulate in the Ledger so blog-draft and the dashboard can
     // act on them; the long tail of low-signal queries is left out on purpose.
     try {

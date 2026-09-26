@@ -6128,7 +6128,7 @@ function buildOwnSiteFindingsCard(latestAnalysis, escapeHtml, project) {
       // The dashboard's dot classes are info / warn / crit — map the registry's
       // severity vocabulary onto them rather than inventing a parallel one.
       const sev = String(item.severity || meta.severity);
-      const dot = sev === 'error' ? 'crit' : sev === 'info' ? 'info' : 'warn';
+      const dot = (sev === 'error' || sev === 'critical') ? 'crit' : sev === 'info' ? 'info' : 'warn';
       return `
             <tr data-insight-id="${item._insight_id || ''}">
               <td><span class="vb-severity-dot ${dot}"></span> <strong>${escapeHtml(String(title))}</strong>${url ? `<div class="muted small">${escapeHtml(url)}</div>` : ''}</td>

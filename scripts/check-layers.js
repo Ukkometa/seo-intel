@@ -295,9 +295,11 @@ for (const f of countSurfaces) {
 
 // ── 5. GATING COHERENCE ─────────────────────────────────────────────────────
 //
-// Prose cannot be fully verified mechanically, so this does two things it CAN
-// do reliably: ban phrases that only make sense under the old model, and assert
-// that no free feature is listed inside a Solo pricing card.
+// Prose cannot be fully verified mechanically, so this does three things it CAN
+// do reliably: ban phrases that only make sense under the old model, assert
+// that no free feature is listed inside a Solo pricing card (and no paid one in
+// the Free card), and check every command row in the README tables against the
+// gate that command actually runs through.
 
 const FORBIDDEN = [
   { re: /crawl-only dashboard|crawl-only-dashboard/i, why: 'free tier has the full dashboard' },
@@ -355,6 +357,67 @@ if (HAS_SITE) {
     const free = cards[0];
     for (const { re, feature } of PAID_IN_FREE) {
       if (re.test(free)) fail('gating', `Free pricing card lists "${feature}", which is paid in gate.js`, f);
+    }
+  }
+}
+
+// README command tables. Every command row sits under "### Free" or "### Solo",
+// and nothing above looks at WHICH. blog-draft and loop moved behind Solo in
+// v1.6.0 (2026-08-22) and sat in the Free table until 2026-09-26: the counts
+// were right, the phrasing was clean, the placement was wrong. So judge each
+// row by the gate the command actually runs through — a literal
+// requirePro('<cmd>') in cli.js whose feature name IS the command name. That
+// is the only evidence that ties a row to a tier by itself; intel gates a
+// template literal and export-actions / competitive-actions / suggest-usecases
+// gate 'competitive', so those rows are skipped rather than guessed.
+// Not auto-fixable: a moved row needs a group heading, which is a judgment.
+
+const DIRECT_GATES = new Set(gatedCalls);
+
+// One table block → the command names in it. The first cell may hold several
+// backticked commands ("`serve` / `status`") or one command with arguments
+// ("`gsc-platform <project> --input <file>`"); the name is the first token of
+// each backtick span. Bold group rows ("**Competitors**"), the header and the
+// separator carry no backticks and drop out on their own. Cells split on
+// unescaped pipes only — `intel --for raw\|audit\|blog\|graph` has escaped ones.
+function tableCommands(block) {
+  const names = [];
+  for (const line of block.split('\n')) {
+    if (!line.startsWith('|')) continue;
+    const firstCell = line.split(/(?<!\\)\|/)[1] || '';
+    for (const span of firstCell.matchAll(/`([^`]+)`/g)) {
+      for (const part of span[1].split(' / ')) {
+        const cmd = part.trim().split(/\s+/)[0];
+        if (cmd) names.push(cmd);
+      }
+    }
+  }
+  return names;
+}
+
+const readmePath = join(REPO, 'README.md');
+const readme = read(readmePath);
+const freeAt = readme.indexOf('\n### Free');
+const soloAt = readme.indexOf('\n### Solo', freeAt + 1);
+const soloEnd = soloAt < 0 ? -1 : readme.indexOf('\n## ', soloAt + 1);
+if (freeAt < 0 || soloAt < 0) {
+  fail('gating', 'Could not find the "### Free" and "### Solo" command tables in README.md — the headings moved', readmePath);
+} else {
+  const README_FREE = tableCommands(readme.slice(freeAt, soloAt));
+  const README_SOLO = tableCommands(readme.slice(soloAt, soloEnd < 0 ? undefined : soloEnd));
+  if (!README_FREE.length || !README_SOLO.length) {
+    fail('gating', 'Parsed no command names from a README command table — the row regex needs updating', readmePath);
+  }
+  for (const cmd of README_FREE) {
+    if (DIRECT_GATES.has(cmd) && !FREE_FEATURES.includes(cmd)) {
+      fail('gating', `README Free table lists \`${cmd}\`, but cli.js calls requirePro('${cmd}') and lib/gate.js does not make it free`,
+        readmePath, `move the \`${cmd}\` row to the Solo table under the right group`);
+    }
+  }
+  for (const cmd of README_SOLO) {
+    if (DIRECT_GATES.has(cmd) && FREE_FEATURES.includes(cmd)) {
+      fail('gating', `README Solo table lists \`${cmd}\`, which lib/gate.js makes free`,
+        readmePath, `move the \`${cmd}\` row to the Free table`);
     }
   }
 }

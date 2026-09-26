@@ -92,6 +92,7 @@ the free audit has shown its worth.
 | `gsc-platform <project> --input <file>` | Website vs verified platform-property query gaps; `--api` uses configured properties and the Google account connected with `seo-intel auth google` (`GSC_ACCESS_TOKEN` still works as an override) |
 | `gsc-fetch <project>` | Pull Search Console data straight from the API — page×query daily (90 days), page and query daily history (16 months) — so `page-contract` decides from measured demand; needs `seo-intel auth google` |
 | `gsc-inspect <project>` | Ask Google whether your pages are indexed — URL Inspection verdicts, coverage state and chosen canonical, stored locally; demand-first, quota-aware; feeds `review` and `list_problems` |
+| `demand <project>` | Quick wins and long tails computed from your own Search Console rows — striking-distance queries with a CTR below the baseline, page-two queries, unserved long-tail demand; rule-sourced, so `review` lists them as opportunities; needs `gsc-fetch` |
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
 | `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages. `--live` recovers target URL and anchor text |
@@ -122,6 +123,7 @@ Every finding carries its provenance, whether a crawl rule, the competitor-analy
 | **History & trends** | |
 | `brief <project>` | Crawl change brief — what changed since last run |
 | `velocity <project>` | Publishing velocity — how fast each domain ships |
+| `trends <project>` | Clicks decay and growth per page between the last two windows of Search Console data |
 | **Content production** | |
 | `blog-draft <project>` | AEO-optimised blog draft from the Intelligence Ledger |
 | `loop <project>` | Content loop: top gap → draft → prescore → queue |
@@ -219,7 +221,7 @@ Upload your GSC data for ranking insights:
 2. Export Performance data as CSV
 3. Upload via the web wizard or place CSVs in `gsc/<project>/`
 
-Query data no longer needs the export: connect your Google account with `seo-intel auth google` and run `seo-intel gsc-fetch <project>`, which pulls page×query, page and query rows straight from the Search Analytics API — every page at once, with real dates — and `page-contract` reads those first. Links still come from the CSV export (`backlink-import`), because the Search Console API has no Links endpoint. And `seo-intel gsc-inspect <project>` asks Google the question no crawl can answer — has it indexed this page? — storing the URL Inspection verdict, coverage state and chosen canonical for your busiest pages first, within the API's 2,000-a-day quota, so `review` and `list_problems` show Google's fact rather than the crawl's inference.
+Query data no longer needs the export: connect your Google account with `seo-intel auth google` and run `seo-intel gsc-fetch <project>`, which pulls page×query, page and query rows straight from the Search Analytics API — every page at once, with real dates — and `page-contract` reads those first. Links still come from the CSV export (`backlink-import`), because the Search Console API has no Links endpoint. And `seo-intel gsc-inspect <project>` asks Google the question no crawl can answer — has it indexed this page? — storing the URL Inspection verdict, coverage state and chosen canonical for your busiest pages first, within the API's 2,000-a-day quota, so `review` and `list_problems` show Google's fact rather than the crawl's inference. And `seo-intel demand <project>` turns the fetched rows into quick wins and long tails — the queries already within reach whose snippet or page-two position is leaving clicks behind, and the phrases people search that no page of yours answers — replacing the keyword-volume estimates a paid index sells with the demand Google actually measured for your site; `review` lists them under opportunities.
 
 ## License
 
@@ -227,13 +229,13 @@ Query data no longer needs the export: connect your Google account with `seo-int
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
   (AEO), keyword intelligence, dashboards, site graph, Site Watch,
-  technical audit, Search Console insights, and 25 of the 36 MCP tools
+  technical audit, Search Console insights, demand quick wins, and 26 of the 38 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
 - Competitor synthesis — gap analysis, positioning, keyword battleground,
   shallow/decay/entity/friction attacks, competitor exports and digests
 - Automation — the smart scheduler (`run`)
-- History and trends — crawl change brief, publishing velocity
+- History and trends — crawl change brief, publishing velocity, Search Console traffic trends (`trends`)
 - Content production — AEO blog drafts (`blog-draft`) and the content loop (`loop`)
 
 ```bash

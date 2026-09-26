@@ -29,7 +29,7 @@ import { spawn } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
-import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getCompetitorSummary, recordDraftCreated, markGapsInProgress } from '../db/db.js';
+import { getDb, insertAgentInsight, AGENT_INSIGHT_TYPES, getActiveInsights, getCompetitorSummary, recordDraftCreated } from '../db/db.js';
 import { getIntel, INTEL_SLICES, FREE_SLICES } from '../lib/intel.js';
 import { isPro } from '../lib/license.js';
 import { readProgress } from '../lib/progress.js';
@@ -47,10 +47,14 @@ import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js
 // (light.js → html-extract.js → sanitize.js → turndown), and a slow/hanging
 // turndown import would otherwise block the entire MCP stdio boot — no tools,
 // no banner, no handshake. Keep the crawler subtree off the boot path.
-import { runContentLoop } from '../analyses/loop/orchestrator.js';
+// markDraftedGapsInProgress rather than db.js markGapsInProgress: the loop's
+// helper also flips the gsc_quick_win / gsc_long_tail rows a draft on a
+// measured query closes, so prescore_draft and `seo-intel loop` agree.
+import { runContentLoop, markDraftedGapsInProgress } from '../analyses/loop/orchestrator.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
 import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from '../analyses/gsc-fetch/index.js';
 import { runGscInspect, DEFAULTS as GSC_INSPECT_DEFAULTS } from '../analyses/gsc-inspect/index.js';
+import { runDemand, DEFAULTS as DEMAND_DEFAULTS } from '../analyses/demand/index.js';
 import { GscApiError, URL_INSPECTION_QUOTA } from '../lib/gsc-api.js';
 import { run } from '../agent-harness.js';
 
@@ -864,6 +868,100 @@ server.registerTool(
   },
 );
 
+// ── Tool: demand_opportunities (FREE) ─────────────────────────────────────
+server.registerTool(
+  'demand_opportunities',
+  {
+    description: [
+      `Quick wins and long tails computed from the project's own Search Console rows (fetch_gsc data) over the last ${DEMAND_DEFAULTS.windowDays} days by default. Arithmetic over stored rows — no request, no model, nothing estimated: every impression, click and position is what Google reported for this property. This is the measured counterpart of the keyword-volume estimates Ahrefs and Semrush sell.`,
+      '',
+      `A quick win is a query the site already ranks for within striking distance (positions ${DEMAND_DEFAULTS.strikingMin}-${DEMAND_DEFAULTS.strikingMax}) with ${DEMAND_DEFAULTS.minImpressions}+ impressions in the window, where either the click-through rate is well under the baseline for that position (kind ctr_gap: a title and meta description rewrite recovers clicks without ranking any higher) or the page sits on page two (kind page_two: internal links and depth move it onto page one), or both. potential_clicks sizes each in clicks per window.`,
+      '',
+      `A long tail is a phrase of ${DEMAND_DEFAULTS.longTailMinWords}+ words the property is shown for (${DEMAND_DEFAULTS.minLongTailImpressions}+ impressions) at position ${DEMAND_DEFAULTS.longTailMinPosition} or worse with no page of its own on page one. best_page names the page most shown for the phrase, to strengthen; null means a page is missing.`,
+      '',
+      'The CTR baseline (expected_ctr) is a heuristic industry curve — steep at the top, flat past position 10 — used to rank rows against each other and to size an estimate. It is not a measurement of this site, so read potential_clicks as "about", never as a forecast.',
+      '',
+      'Both kinds are written to the Intelligence Ledger as rule-sourced insights (gsc_quick_win, gsc_long_tail), so search_review(project).opportunities lists them next to the model\'s, and a win missing from a later complete run is resolved because the position moved or the CTR recovered. Requires fetch_gsc to have run; with no rows the response says so instead of returning empty lists. Free tier — it is your own Search Console data.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      window_days: z.number().int().min(7).optional().describe(`Days of Search Console history to aggregate. Default ${DEMAND_DEFAULTS.windowDays}; clamped to the days actually fetched.`),
+      min_impressions: z.number().int().positive().optional().describe(`Impressions a query needs in the window to count as a quick win. Default ${DEMAND_DEFAULTS.minImpressions}.`),
+    },
+  },
+  async ({ project, window_days, min_impressions }) => {
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const result = runDemand(getDb(), project, { windowDays: window_days, minImpressions: min_impressions, trends: false });
+      let hint;
+      if (result.skipped_reason) {
+        hint = `${result.hint} — then call this again.`;
+      } else {
+        hint = `${result.counts.quick_wins} quick win(s) and ${result.counts.long_tails} long tail(s) over ${result.window.start}..${result.window.end}, filed in the Ledger as rule-sourced findings; search_review("${project}").opportunities lists them. ctr_gap wins are snippet rewrites, page_two wins are internal-link work; a long tail with a best_page is a section to add there, one without is a page to create. Call page_contract before recommending content changes on any page named here.`;
+        if (Object.values(result.coverage).includes('partial')) hint += ' Coverage is partial (a fetch hit its row cap), so findings are recorded but none resolved this run.';
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ ...result, hint }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  },
+);
+
+// ── Tool: demand_trends (PAID) ────────────────────────────────────────────
+server.registerTool(
+  'demand_trends',
+  {
+    description: [
+      `Traffic decay and growth from the project's own Search Console history: the page grain of the last ${DEMAND_DEFAULTS.windowDays} days (window_days) against the same-length window ending the day before. A page is decaying when its clicks fell ${DEMAND_DEFAULTS.decayPct}%+ from ${DEMAND_DEFAULTS.minTrendClicks}+ clicks, growing when they rose ${DEMAND_DEFAULTS.growthPct}%+ from that floor; the floor keeps 3 → 1 clicks from reading as a trend. Each entry carries both windows' clicks, impressions and position, and a recommendation naming the lever the two windows point at: a page gone, a ranking slipped, demand fallen with position held, or a snippet converting less.`,
+      '',
+      'Arithmetic over stored rows — no request, no model. Decays are written to the Ledger as gsc_decay (scope history) and reach search_review and list_problems under a Solo licence; growth is returned but not filed. The comparison is skipped, and nothing written, when the previous window is shorter than the current one — history that does not yet reach back two windows would make every page look like growth; a smaller window_days fits two windows into what is fetched.',
+      '',
+      'Requires fetch_gsc to have run; it pulls months of page history, so two windows are usually available from the first fetch. Paid tier (Solo): history is what one crawl or one fetch cannot give.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      window_days: z.number().int().min(7).optional().describe(`Days per window; the previous window is the same length, ending the day before this one starts. Default ${DEMAND_DEFAULTS.windowDays}.`),
+    },
+  },
+  async ({ project, window_days }) => {
+    if (!isPro()) return paidGate('demand_trends');
+    if (!loadProjectConfig(project)) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const result = runDemand(getDb(), project, { windowDays: window_days, trends: true });
+      const t = result.trends;
+      let hint;
+      if (result.skipped_reason) {
+        hint = `${result.hint} — then call this again.`;
+      } else if (t.skipped_reason === 'no_page_grain') {
+        hint = `No page-grain rows stored; fetch_gsc("${project}") pulls them.`;
+      } else if (t.skipped_reason === 'previous_window_short') {
+        hint = `Not compared: the previous window (${t.previous_window ? `${t.previous_window.days} day(s)` : 'none'}) is shorter than the current ${result.window.days}. Pass a smaller window_days to fit two windows into the fetched history, or wait for more fetches. Nothing was written.`;
+      } else {
+        hint = `${t.decays.length} decaying and ${t.growth.length} growing page(s), ${t.previous_window.start}..${t.previous_window.end} → ${result.window.start}..${result.window.end}. Decays are filed as gsc_decay; search_review("${project}") lists them under opportunities. Each recommendation names the lever the two windows point at — read the position and impression columns before choosing another.`;
+        if (result.coverage.page === 'partial') hint += ' Coverage is partial (a fetch hit its row cap in one window), so decays are recorded but none resolved this run.';
+      }
+      // The trends half only: quick wins and long tails are demand_opportunities'
+      // (free), even though this run refreshed them in the Ledger too.
+      const out = {
+        project: result.project, property: result.property, search_type: result.search_type,
+        window: result.window, previous_window: t?.previous_window ?? null,
+        coverage: result.coverage?.page ?? null,
+        decays: t?.decays ?? [], growth: t?.growth ?? [],
+        counts: { decays: result.counts.decays, growth: result.counts.growth },
+        skipped_reason: result.skipped_reason ?? t?.skipped_reason ?? null,
+        hint,
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: `seo-intel error: ${err.message}` }], isError: true };
+    }
+  },
+);
+
 // ── Tool: page_contract (FREE) ────────────────────────────────────────────
 server.registerTool(
   'page_contract',
@@ -1395,7 +1493,7 @@ server.registerTool(
             tier: score.tier,
             wordCount: score.wordCount,
           });
-          const marked = markGapsInProgress(db, project, effectiveTopic);
+          const marked = markDraftedGapsInProgress(db, project, effectiveTopic);
           out.ledger = {
             recorded: true,
             topic: effectiveTopic || '(auto)',
@@ -1778,7 +1876,7 @@ if (!TOOL_COUNT) {
 }
 const PAID_TOOL_NAMES = [
   'scan_site', 'get_competitor_positioning', 'prescore_draft', 'draft_blog_prompt',
-  'run_content_loop', ...competitorTools.map(t => t.name),
+  'run_content_loop', 'demand_trends', ...competitorTools.map(t => t.name),
 ];
 
 async function main() {

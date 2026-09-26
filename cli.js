@@ -49,7 +49,7 @@ import {
   getPageHash, getSchemasByProject,
   upsertInsightsFromAnalysis, upsertInsightsFromKeywords,
   upsertSitemapUrls,
-  recordDraftCreated, markGapsInProgress,
+  recordDraftCreated,
 } from './db/db.js';
 import { generateMultiDashboard } from './reports/generate-html.js';
 import { buildTechnicalActions } from './exports/technical.js';
@@ -63,6 +63,7 @@ import { isConnected } from './lib/oauth.js';
 import { GscApiError } from './lib/gsc-api.js';
 import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 import { runGscInspect, DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
+import { runDemand, DEFAULTS as DEMAND_DEFAULTS } from './analyses/demand/index.js';
 import { getCurrentVersion, checkForUpdates, printUpdateNotice, forceUpdateCheck } from './lib/updater.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1502,6 +1503,27 @@ program
       } catch (err) {
         console.log(chalk.dim(`  URL Inspection skipped: ${err.message}`));
       }
+    }
+
+    // Demand findings ride along whenever gsc_daily has rows, connected or
+    // not: arithmetic over stored rows, no request. Trends are on because the
+    // scheduler is itself Solo (requirePro('run') above) and this is the one
+    // place history accumulates unattended, so a decay is filed the run it
+    // appears. Best-effort like the two above; one line either way.
+    try {
+      const demand = runDemand(db, next.project, { trends: true });
+      if (demand.skipped_reason) {
+        console.log(chalk.dim(`  Demand skipped: ${demand.hint}`));
+      } else {
+        const c = demand.counts;
+        const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+        const trendNote = demand.trends?.skipped_reason
+          ? ` · trends not compared (${demand.trends.skipped_reason.replace(/_/g, ' ')})`
+          : ` · ${plural(c.decays, 'decay')} · ${c.growth} growing`;
+        console.log(chalk.green(`  📊 Demand: ${plural(c.quick_wins, 'quick win')} · ${plural(c.long_tails, 'long tail')}${trendNote} (${demand.window.start}..${demand.window.end})`));
+      }
+    } catch (err) {
+      console.log(chalk.dim(`  Demand skipped: ${err.message}`));
     }
 
     // Check if analysis needed for this project
@@ -4228,6 +4250,82 @@ program
     }
   });
 
+// ── TRAFFIC TRENDS ───────────────────────────────────────────────────────
+// The paid half of analyses/demand: two windows of your own Search Console
+// page grain subtracted. History is the Solo line (brief, velocity, this), so
+// the gate is on the command, and runDemand is told to compare (trends: true)
+// only here and in the scheduler.
+program
+  .command('trends <project>')
+  .description('Traffic trends from your Search Console history — pages whose clicks fell or rose against the previous window')
+  .option('--window <days>', `Days per window; the previous window is the same length, ending the day before (default: ${DEMAND_DEFAULTS.windowDays}, at least 7)`, wholeNumberAtLeast(7))
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action((project, opts) => {
+    if (!requirePro('trends')) return;
+    loadConfig(project);
+    const brief = opts.format !== 'json';
+    const result = runDemand(getDb(), project, { windowDays: opts.window, trends: true });
+    const t = result.trends;
+    // Only the trends half is printed: quick wins and long tails belong to the
+    // free `demand` command, even though this run refreshed them too.
+    const out = {
+      command: 'trends', project, property: result.property, search_type: result.search_type,
+      window: result.window, previous_window: t?.previous_window ?? null,
+      coverage: result.coverage?.page ?? null,
+      decays: t?.decays ?? [], growth: t?.growth ?? [],
+      counts: { decays: result.counts.decays, growth: result.counts.growth },
+      skipped_reason: result.skipped_reason ?? t?.skipped_reason ?? null,
+      hint: result.hint ?? null,
+    };
+    if (!brief) { console.log(JSON.stringify(out, null, 2)); return; }
+
+    console.log(`\n  ${chalk.bold('Traffic Trends')}  ${chalk.gray(project)}`);
+    if (result.skipped_reason) {
+      console.log(chalk.yellow(`  ${result.hint}`));
+      console.log('');
+      return;
+    }
+    console.log(`  Property: ${chalk.cyan(result.property)}`);
+    console.log(`  Window:   ${demandWindowLabel(result.window)}`);
+    if (t.skipped_reason === 'no_page_grain') {
+      console.log(chalk.yellow(`  No page-grain rows fetched — trends compare the page grain. Run: seo-intel gsc-fetch ${project}`));
+      console.log('');
+      return;
+    }
+    console.log(`  Previous: ${t.previous_window ? demandWindowLabel(t.previous_window) : chalk.gray('none fetched')}`);
+    if (t.skipped_reason === 'previous_window_short') {
+      console.log(chalk.yellow(`  Not compared: the previous window is shorter than the current one, and a short window would make every page look like growth. A smaller --window fits two windows into the ${GSC_FETCH_DEFAULTS.months} months gsc-fetch pulls, or wait for more fetches.`));
+      console.log('');
+      return;
+    }
+    if (result.coverage.page === 'partial') console.log(chalk.yellow('  Partial coverage: a fetch hit its row cap in one of the windows, so decays are recorded but none is resolved.'));
+
+    const SHOW = 15;
+    const andMore = (n) => { if (n > SHOW) console.log(chalk.gray(`      … and ${n - SHOW} more (--format json for all)`)); };
+    const header = () => console.log(chalk.gray(`      ${'page'.padEnd(44)} ${'clicks before → after'.padEnd(21)} ${'delta'.padStart(8)}  position before → after`));
+    const row = (d, paint) => {
+      const delta = `${d.delta_pct > 0 ? '+' : ''}${d.delta_pct}%`;
+      console.log(`      ${paint(demandClip(demandPath(d.page_url), 44).padEnd(44))} ${String(d.previous_clicks).padStart(9)} → ${String(d.clicks).padEnd(9)} ${paint(delta.padStart(8))}  ${chalk.gray(`${d.previous_position ?? '—'} → ${d.position ?? '—'}`)}`);
+    };
+
+    console.log(`\n  ${chalk.bold(chalk.red('Decays'))} ${chalk.gray(`(${t.decays.length})`)}${chalk.gray(`  — clicks down ${DEMAND_DEFAULTS.decayPct}%+ from ${DEMAND_DEFAULTS.minTrendClicks}+ clicks`)}`);
+    if (!t.decays.length) console.log(chalk.gray('      none'));
+    else {
+      header();
+      for (const d of t.decays.slice(0, SHOW)) row(d, chalk.red);
+      andMore(t.decays.length);
+    }
+
+    console.log(`\n  ${chalk.bold(chalk.green('Growth'))} ${chalk.gray(`(${t.growth.length})`)}${chalk.gray(`  — clicks up ${DEMAND_DEFAULTS.growthPct}%+ from ${DEMAND_DEFAULTS.minTrendClicks}+ clicks`)}`);
+    if (!t.growth.length) console.log(chalk.gray('      none'));
+    else {
+      header();
+      for (const g of t.growth.slice(0, SHOW)) row(g, chalk.green);
+      andMore(t.growth.length);
+    }
+    console.log(chalk.gray(`\n  Decays are filed as gsc_decay; each recommendation names the lever the two windows point at. The review lists them under Opportunities: seo-intel review ${project}\n`));
+  });
+
 // ── JS RENDERING DELTA ───────────────────────────────────────────────────
 program
   .command('js-delta <project>')
@@ -5339,7 +5437,12 @@ program
         contentType: opts.type || 'blog',
         savedPath,
       });
-      const marked = markGapsInProgress(db, project, effectiveTopic);
+      // Through the loop's helper rather than db.js directly: it also flips
+      // the gsc_quick_win / gsc_long_tail rows a draft on a measured query
+      // closes, which db.js markGapsInProgress alone does not see. Lazy, like
+      // every analyses import in this file, to keep it off the boot path.
+      const { markDraftedGapsInProgress } = await import('./analyses/loop/orchestrator.js');
+      const marked = markDraftedGapsInProgress(db, project, effectiveTopic);
       if (marked > 0) {
         console.log(chalk.gray(`  📌 Ledger: ${marked} gap(s) marked in-progress — they'll stop resurfacing until re-audited.`));
       } else {
@@ -6304,6 +6407,88 @@ program
     for (const url of result.skipped_out_of_property.slice(0, 5)) console.log(chalk.gray(`    not in ${result.property}: ${url}`));
     if (result.stopped_reason) console.log(chalk.yellow(`  Stopped: ${result.stopped_reason === 'quota' ? "Google answered 429 — today's inspection quota is spent; the stored verdicts are kept and the next run resumes with the rest" : result.stopped_reason}`));
     console.log(chalk.gray(`\n  search_review and list_problems now include Google's index verdicts: seo-intel review ${project}\n`));
+  });
+
+// ── Demand table helpers ────────────────────────────────────────────────────
+// Shared by `demand` and `trends`. A page shows as its path because the
+// property is printed once above the table, and a cell that would push a row
+// past the terminal is cut with an ellipsis rather than wrapped, so the
+// columns stay columns.
+function demandPath(url) {
+  return String(url || '').replace(/^https?:\/\/[^/]+/, '') || '/';
+}
+function demandClip(text, width) {
+  const s = String(text ?? '');
+  return s.length > width ? s.slice(0, width - 1) + '…' : s;
+}
+/** "2026-08-30..2026-09-26 (28 days)", noting a window shorter than asked. */
+function demandWindowLabel(w) {
+  if (!w) return 'no window';
+  const short = w.days < w.requested_days ? chalk.yellow(` — ${w.requested_days} asked, ${w.days} fetched`) : '';
+  return `${w.start}..${w.end} (${w.days} days)${short}`;
+}
+
+program
+  .command('demand <project>')
+  .description('Quick wins and long tails from your own Search Console rows — striking-distance queries losing clicks, and phrases no page of yours answers yet')
+  // At least 7: a shorter window is a few days of noise, and 0 or a typo would
+  // otherwise fall back to the default while the header claimed the number asked.
+  .option('--window <days>', `Days of Search Console history to aggregate (default: ${DEMAND_DEFAULTS.windowDays}, at least 7)`, wholeNumberAtLeast(7))
+  .option('--min-impressions <n>', `Impressions a query needs in the window to count as a quick win (default: ${DEMAND_DEFAULTS.minImpressions})`, wholeNumberAtLeast(1))
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action((project, opts) => {
+    if (!requirePro('demand')) return;
+    loadConfig(project);
+    const brief = opts.format !== 'json';
+    // No network and no model: arithmetic over gsc_daily, so there is no
+    // GscApiError to catch here — a project without rows comes back with
+    // skipped_reason and a hint naming gsc-fetch.
+    const result = runDemand(getDb(), project, { windowDays: opts.window, minImpressions: opts.minImpressions, trends: false });
+    if (!brief) { console.log(JSON.stringify({ command: 'demand', ...result }, null, 2)); return; }
+
+    console.log(`\n  ${chalk.bold('Search Demand')}  ${chalk.gray(project)}`);
+    if (result.skipped_reason) {
+      console.log(chalk.yellow(`  ${result.hint}`));
+      console.log('');
+      return;
+    }
+    console.log(`  Property: ${chalk.cyan(result.property)}  ${chalk.gray(demandWindowLabel(result.window))}`);
+    const partial = Object.entries(result.coverage).filter(([, c]) => c === 'partial').map(([g]) => g);
+    if (partial.length) console.log(chalk.yellow(`  Partial coverage (${partial.join(', ')}): a fetch hit its row cap in this window, so findings are recorded but none is resolved.`));
+
+    const SHOW = 15;
+    const andMore = (n) => { if (n > SHOW) console.log(chalk.gray(`      … and ${n - SHOW} more (--format json for all)`)); };
+    const minImpressions = opts.minImpressions ?? DEMAND_DEFAULTS.minImpressions;
+
+    const wins = result.quick_wins;
+    console.log(`\n  ${chalk.bold(chalk.cyan('Quick wins'))} ${chalk.gray(`(${wins.length})`)}${chalk.gray('  — striking distance, CTR under the baseline or on page two')}`);
+    if (!result.coverage.page_query) {
+      console.log(chalk.gray(`      no page×query rows fetched — run: seo-intel gsc-fetch ${project}`));
+    } else if (!wins.length) {
+      console.log(chalk.gray(`      none: no query with ${minImpressions}+ impressions at positions ${DEMAND_DEFAULTS.strikingMin}-${DEMAND_DEFAULTS.strikingMax} is under the baseline or on page two`));
+    } else {
+      console.log(chalk.gray(`      ${'query'.padEnd(32)} ${'page'.padEnd(28)} ${'impr'.padStart(6)} ${'pos'.padStart(5)}  ${'CTR / base'.padEnd(14)} ${'kind'.padEnd(8)} ${'+clicks'.padStart(7)}`));
+      for (const w of wins.slice(0, SHOW)) {
+        console.log(`      ${demandClip(w.query, 32).padEnd(32)} ${chalk.gray(demandClip(demandPath(w.page_url), 28).padEnd(28))} ${String(w.impressions).padStart(6)} ${String(w.position).padStart(5)}  ${`${w.ctr}% / ${w.expected_ctr}%`.padEnd(14)} ${w.kind.padEnd(8)} ${chalk.cyan(String(w.potential_clicks).padStart(7))}`);
+      }
+      andMore(wins.length);
+    }
+
+    const tails = result.long_tails;
+    console.log(`\n  ${chalk.bold(chalk.cyan('Long tails'))} ${chalk.gray(`(${tails.length})`)}${chalk.gray(`  — phrases of ${DEMAND_DEFAULTS.longTailMinWords}+ words you are shown for with no page on page one`)}`);
+    if (!result.coverage.query || !result.coverage.page_query) {
+      console.log(chalk.gray(`      needs the query and page×query grains — run: seo-intel gsc-fetch ${project}`));
+    } else if (!tails.length) {
+      console.log(chalk.gray(`      none: every such phrase with ${DEMAND_DEFAULTS.minLongTailImpressions}+ impressions already has a page on page one`));
+    } else {
+      console.log(chalk.gray(`      ${'query'.padEnd(44)} ${'impr'.padStart(6)} ${'pos'.padStart(5)}  best page`));
+      for (const t of tails.slice(0, SHOW)) {
+        const best = t.best_page ? `${demandClip(demandPath(t.best_page), 40)} ${chalk.gray(`@ ${t.best_position}`)}` : chalk.yellow('no page');
+        console.log(`      ${demandClip(t.query, 44).padEnd(44)} ${String(t.impressions).padStart(6)} ${String(t.position).padStart(5)}  ${best}`);
+      }
+      andMore(tails.length);
+    }
+    console.log(chalk.gray(`\n  Rule-sourced from your own Search Console rows, not estimated; the review lists them under Opportunities: seo-intel review ${project}\n`));
   });
 
 program

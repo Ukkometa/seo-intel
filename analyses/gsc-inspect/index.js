@@ -93,7 +93,7 @@ function demandByKey(db, project) {
   const byKey = new Map();
   try {
     // The pair is chosen first and on its own, as lib/gsc-import.js
-    // windowRows() does. Folding MAX(date) into this SELECT would make it a
+    // getWindowRows() does. Folding MAX(date) into this SELECT would make it a
     // one-row aggregate whose property and search_type are those of whichever
     // row holds the latest date, with the ORDER BY deciding nothing — and a
     // project that moved to a domain property would then be ordered by the

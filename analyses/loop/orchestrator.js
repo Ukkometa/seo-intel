@@ -9,7 +9,11 @@
  * MCP can hand the prompt back to the agent's own LLM (generate = null).
  *
  * Builds on F1 (v1.5.42): a finished draft records a `draft_created` insight and
- * flips matching gaps to in_progress, so the loop remembers its own work.
+ * flips matching gaps to in_progress, so the loop remembers its own work. The
+ * flip covers the measured demand rows too (markDraftedGapsInProgress below):
+ * db/db.js markGapsInProgress knows the model's gap types and fields, not a
+ * gsc_* row's `query`, and without the complement the two sources this loop
+ * ranks highest were re-drafted on every run.
  * F3 (re-audit → flip in_progress→done once the live page clears 60) is NOT here.
  */
 
@@ -18,14 +22,19 @@ import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../blog-draft/index.js';
 import { prescore, extractDraftTopic } from '../blog-draft/prescorer.js';
-import { recordDraftCreated, markGapsInProgress } from '../../db/db.js';
+import { recordDraftCreated, markGapsInProgress, getActiveInsights, updateInsightStatus } from '../../db/db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '../..');
 const REPORTS_DIR = join(REPO_ROOT, 'reports');
 
 const PRIORITY_W = { high: 3, medium: 2, low: 1 };
-const SOURCE_W = { citability_gap: 1.3, content_gap: 1.3, keyword_gap: 1.1, long_tail: 1.0, keyword_inventor: 1.0 };
+// Measured demand outranks a model's guess. A gsc_quick_win or gsc_long_tail is
+// a count of searches Google actually served (analyses/demand, over gsc_daily);
+// a keyword_gap or long_tail is an LLM's hypothesis about what people might
+// search. When both name the same topic the measured one must win the dedupe
+// below, so the two Search Console sources sit at the top of this table.
+const SOURCE_W = { gsc_quick_win: 1.5, gsc_long_tail: 1.4, citability_gap: 1.3, content_gap: 1.3, keyword_gap: 1.1, long_tail: 1.0, keyword_inventor: 1.0 };
 const HOT_INTENT = /decision|comparison|implementation|compare|\bvs\b|best|should/i;
 
 function slugify(s) {
@@ -48,6 +57,14 @@ export function rankGaps(ctx) {
   for (const kw of ctx.kwInventor || []) add('keyword_inventor', kw.phrase, kw.priority, kw.intent);
   for (const cg of ctx.contentGaps || []) add('content_gap', typeof cg === 'string' ? cg : (cg.topic || cg.suggested_title || cg.gap), cg.priority || 'high', null);
   for (const cgap of ctx.citabilityGaps || []) add('citability_gap', cgap.title || cgap.url, (cgap.score ?? 50) < 35 ? 'high' : 'medium', (cgap.ai_intents || [])[0], { url: cgap.url, current_score: cgap.score });
+  // Measured demand. A quick win already has a ranking page, so the candidate
+  // carries its URL and the draft strengthens that page rather than opening a
+  // second one on the same query; potential_clicks is the demand module's own
+  // estimate of what a page-one landing or a fixed snippet would add. A long
+  // tail has impressions but no page-one landing, so it is a new-page bet, and
+  // impressions are the only measure of its size.
+  for (const qw of ctx.gscQuickWins || []) add('gsc_quick_win', qw.query, qw.potential_clicks >= 50 ? 'high' : 'medium', null, { url: qw.page_url });
+  for (const lt of ctx.gscLongTails || []) add('gsc_long_tail', lt.query, lt.impressions >= 100 ? 'high' : 'medium', null);
 
   // Dedupe by lowercased topic, keep highest leverage.
   const best = new Map();
@@ -56,6 +73,56 @@ export function rankGaps(ctx) {
     if (!best.has(k) || best.get(k).leverage < c.leverage) best.set(k, c);
   }
   return [...best.values()].sort((a, b) => b.leverage - a.leverage);
+}
+
+/**
+ * Flip active gsc_quick_win / gsc_long_tail rows whose `query` matches `topic`
+ * to in_progress. Complements db/db.js markGapsInProgress, which lists only the
+ * model's gap types and matches on their fields (keyword, phrase, topic, title,
+ * url): a demand row is neither, so a draft on 'gadget review' left the quick
+ * win active, and rankGaps — where the gsc_* sources weigh the most — picked
+ * the same query again on the next run until a demand re-run happened to
+ * resolve it.
+ *
+ * Same match as db.js, on purpose: the whole query as one term, needle in term
+ * or term in needle, never a word split that would over-match. A quick win's
+ * page_url is not matched: the loop's topic for a quick win IS its query
+ * (rankGaps), and a URL-shaped topic from a citability gap must not sweep up
+ * every query that page ranks for. Reads through getActiveInsights, so a
+ * database without the insights table, or a registry without the gsc_* group
+ * keys, marks nothing rather than throwing into a finished draft. The mark is
+ * durable: the next complete demand run keeps in_progress on re-emission and
+ * resolves only active rows (db.js REEMIT_UPDATE, upsertInsights).
+ * @returns {number} rows marked
+ */
+export function markDemandGapsInProgress(db, project, topic) {
+  const needle = (topic || '').toString().toLowerCase().trim();
+  if (!needle) return 0;
+  let active;
+  try { active = getActiveInsights(db, project); } catch { return 0; }
+  let marked = 0;
+  for (const group of ['gsc_quick_wins', 'gsc_long_tails']) {
+    for (const row of active[group] || []) {
+      const term = (row.query || '').toString().toLowerCase().trim();
+      if (!term || row._insight_id == null) continue;
+      if (!(needle.includes(term) || term.includes(needle))) continue;
+      updateInsightStatus(db, row._insight_id, 'in_progress');
+      marked++;
+    }
+  }
+  return marked;
+}
+
+/**
+ * The one write-back every drafting path calls — the loop below, `seo-intel
+ * blog-draft` and MCP prescore_draft — so the three cannot disagree about
+ * which gaps a draft closes. The model's gap types go through db.js, the
+ * demand rows through the complement above; folding that complement into
+ * markGapsInProgress itself would leave this a plain re-export.
+ * @returns {number} rows marked across both
+ */
+export function markDraftedGapsInProgress(db, project, topic) {
+  return markGapsInProgress(db, project, topic) + markDemandGapsInProgress(db, project, topic);
 }
 
 /**
@@ -88,7 +155,7 @@ export async function runContentLoop(db, project, opts = {}) {
   if (!ranked.length) {
     return {
       project, mode: 'no-gaps', drafts: [], skipped: [],
-      next_action: 'No active gaps to draft. Run `seo-intel aeo` + `seo-intel keywords` (own-site, free) or `seo-intel analyze` (competitor, Solo) to populate the Ledger.',
+      next_action: 'No active gaps to draft. Run `seo-intel gsc-fetch` + `seo-intel demand` (measured demand, free), `seo-intel aeo` + `seo-intel keywords` (own-site, free) or `seo-intel analyze` (competitor, Solo) to populate the Ledger.',
     };
   }
 
@@ -153,7 +220,7 @@ export async function runContentLoop(db, project, opts = {}) {
     let marked = 0;
     try {
       recordDraftCreated(db, project, { topic: effectiveTopic, score: score.score, tier: score.tier, wordCount: score.wordCount, lang, contentType, savedPath: queuedPath });
-      marked = markGapsInProgress(db, project, effectiveTopic);
+      marked = markDraftedGapsInProgress(db, project, effectiveTopic);
     } catch { /* best-effort */ }
 
     drafts.push({

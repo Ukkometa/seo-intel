@@ -12,7 +12,7 @@ if (major < 22 || (major === 22 && minor < 5)) {
 }
 
 import 'dotenv/config';
-import { program } from 'commander';
+import { program, InvalidArgumentError } from 'commander';
 import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
@@ -52,6 +52,7 @@ import { isPro, loadLicense, activateLicense } from './lib/license.js';
 import { isConnected } from './lib/oauth.js';
 import { GscApiError } from './lib/gsc-api.js';
 import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
+import { runGscInspect, DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
 import { getCurrentVersion, checkForUpdates, printUpdateNotice, forceUpdateCheck } from './lib/updater.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1452,6 +1453,17 @@ program
         console.log(chalk.green(`  📈 Search Console: +${gsc.grains.reduce((n, g) => n + g.rows, 0)} rows (${gsc.property})`));
       } catch (err) {
         console.log(chalk.dim(`  Search Console fetch skipped: ${err.message}`));
+      }
+      // Google's index verdicts ride along too, 50 URLs a run: demand first,
+      // skipping anything asked this week, so a 6-hourly cron spends at most
+      // 200 of the property's 2,000 daily inspections and the review's
+      // "indexed" tick is Google's fact rather than the crawl's inference.
+      try {
+        const insp = await runGscInspect(db, next.project, loadConfig(next.project), { limit: 50 });
+        const v = insp.verdicts;
+        console.log(chalk.green(`  🔍 URL Inspection: ${insp.inspected} inspected (${v.PASS} PASS · ${v.PARTIAL} PARTIAL · ${v.FAIL} FAIL · ${v.NEUTRAL} NEUTRAL)${insp.stopped_reason === 'quota' ? chalk.yellow(' — daily quota reached') : ''}`));
+      } catch (err) {
+        console.log(chalk.dim(`  URL Inspection skipped: ${err.message}`));
       }
     }
 
@@ -6119,6 +6131,124 @@ program
       else console.log(chalk.gray(`  ${grain.padEnd(10)} none`));
     }
     console.log(chalk.gray(`\n  page_contract now reads this data; run: seo-intel page-contract ${project} --url <url>\n`));
+  });
+
+/**
+ * A commander option parser for a whole number no smaller than `min`, for the
+ * options that decide how much of a daily quota a run spends. Commander prints
+ * the error and exits before the action runs, so nothing is requested.
+ */
+function wholeNumberAtLeast(min) {
+  return (value) => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min) throw new InvalidArgumentError(`Expected a whole number of at least ${min}.`);
+    return n;
+  };
+}
+
+program
+  .command('gsc-inspect <project>')
+  .description("Ask Google whether it has indexed your pages (URL Inspection API) and store each verdict; demand-first, 2,000 per property per day")
+  .option('--url <urls...>', 'Inspect exactly these URLs (space-separated), ignoring the limit and the recency skip')
+  // Refused before a request is made, unlike the lenient parseInt elsewhere:
+  // runGscInspect quietly replaces 0 or NaN with its defaults, so a typo like
+  // `--limit 0` would spend a hundred of the day's 2,000 inspections, and
+  // `--max-age abc` would run on 7 days while the summary said "NaN day(s)".
+  .option('--limit <n>', `URLs to inspect this run (default: ${GSC_INSPECT_DEFAULTS.limit})`, wholeNumberAtLeast(1))
+  .option('--max-age <days>', `Skip URLs inspected more recently than this many days; 0 re-asks everything (default: ${GSC_INSPECT_DEFAULTS.maxAgeDays})`, wholeNumberAtLeast(0))
+  .option('--property <siteUrl>', 'Search Console property to inspect against (sc-domain:example.com or https://www.example.com/), overriding auto-detection')
+  .option('--dry-run', 'Select and list the URLs without making any URL Inspection request')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('gsc-inspect')) return;
+    const config = loadConfig(project);
+    const brief = opts.format !== 'json';
+    // The window the run actually used, for the two "day(s)" lines below: the
+    // option parser admits only whole numbers >= 0, so absent means default.
+    const maxAge = opts.maxAge ?? GSC_INSPECT_DEFAULTS.maxAgeDays;
+    if (brief) console.log(`\n  ${chalk.bold('Search Console URL Inspection')}  ${chalk.gray(project)}${opts.dryRun ? chalk.yellow('  (dry run — no requests made)') : ''}`);
+    // A live counter only where a person is watching: a hundred inspections
+    // take a minute, and a silent minute looks like a stall. Piped output
+    // gets the summary alone, without carriage returns in it.
+    const live = brief && process.stdout.isTTY;
+    let result;
+    try {
+      result = await runGscInspect(getDb(), project, config, {
+        urls: opts.url, limit: opts.limit, maxAgeDays: opts.maxAge, property: opts.property, dryRun: !!opts.dryRun,
+        onProgress: live ? ({ done, total }) => { process.stdout.write(`\r  ${done}/${total} inspected`); } : undefined,
+      });
+      if (live && result.inspected) process.stdout.write('\n');
+    } catch (err) {
+      // GscApiError carries the fix in `hint` (401 → reconnect, 429 → the
+      // day's quota is spent). Config and property errors carry it in the
+      // message itself: a miss lists the account's properties and names the
+      // gsc.property fix.
+      const hint = err instanceof GscApiError ? err.hint : null;
+      if (!brief) { console.log(JSON.stringify({ command: 'gsc-inspect', project, error: err.message, hint })); process.exitCode = 1; return; }
+      console.error(chalk.red(`\n  ✗ ${err.message}`));
+      if (hint) console.error(chalk.dim(`  ${hint}`));
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+    if (!brief) { console.log(JSON.stringify({ command: 'gsc-inspect', ...result }, null, 2)); return; }
+    const chosen = result.property_reason === 'configured' ? 'configured (gsc.property or --property)' : `auto-matched: ${result.property_reason}`;
+    console.log(`  Property: ${chalk.cyan(result.property)}  ${chalk.gray(chosen)}\n`);
+
+    const LIST_CAP = 25;
+    const andMore = (n) => (n > LIST_CAP ? chalk.gray(`  … and ${n - LIST_CAP} more`) : null);
+    if (result.dry_run) {
+      console.log(`  ${result.planned.length} URL(s) would be inspected${result.planned.length ? ':' : ''}`);
+      for (const url of result.planned.slice(0, LIST_CAP)) console.log(chalk.gray(`    ${url}`));
+      const more = andMore(result.planned.length);
+      if (more) console.log(more);
+    } else {
+      const v = result.verdicts;
+      const verdictColor = { PASS: chalk.green, PARTIAL: chalk.yellow, FAIL: chalk.red, NEUTRAL: chalk.gray };
+      console.log(`  ${result.inspected} inspected: ${chalk.green(`${v.PASS} PASS`)} · ${chalk.yellow(`${v.PARTIAL} PARTIAL`)} · ${chalk.red(`${v.FAIL} FAIL`)} · ${chalk.gray(`${v.NEUTRAL} NEUTRAL`)}${v.other ? ` · ${v.other} unspecified` : ''}`);
+      const attention = result.results.filter(r => r.verdict !== 'PASS');
+      if (attention.length) {
+        console.log(chalk.gray('\n  Not a plain PASS (NEUTRAL is often an intended noindex or canonical — read it against the page):'));
+        for (const r of attention.slice(0, LIST_CAP)) {
+          const paint = verdictColor[r.verdict] || chalk.white;
+          console.log(`    ${r.url} — ${paint(r.verdict || 'VERDICT_UNSPECIFIED')} — ${chalk.gray(r.coverage_state || 'no coverage state')}`);
+        }
+        const more = andMore(attention.length);
+        if (more) console.log(more);
+      }
+      if (result.errors.length) {
+        console.log(chalk.red(`\n  ${result.errors.length} URL(s) Google would not inspect:`));
+        for (const e of result.errors.slice(0, LIST_CAP)) {
+          console.log(`    ${e.url} — ${chalk.red(e.error)}`);
+          if (e.hint) console.log(chalk.gray(`      ${e.hint}`));
+        }
+        const more = andMore(result.errors.length);
+        if (more) console.log(more);
+      }
+    }
+    if (!result.planned.length) {
+      // An empty plan has one of three causes, and the person needs to know
+      // which before deciding whether to crawl, wait or pass --max-age 0.
+      const why = result.skipped_recent
+        ? `every candidate was inspected within the last ${maxAge} day(s); --max-age 0 re-asks`
+        : result.quota_capped
+          ? "today's inspection quota for this property is already spent; try again tomorrow"
+          : result.skipped_out_of_property.length
+            ? 'every named URL lies outside the property'
+            : `no crawled target page answered 200; run: seo-intel crawl ${project}, or name pages with --url`;
+      console.log(chalk.gray(`  Nothing to inspect: ${why}`));
+    }
+
+    const q = result.quota;
+    console.log(`\n  ${chalk.bold('Quota')}  used ${q.per_day - q.remaining_after} of ${q.per_day} today, ${q.remaining_after} remaining  ${chalk.gray(`(${result.requests} request(s) this run)`)}`);
+    const skipped = [];
+    if (result.skipped_recent) skipped.push(`${result.skipped_recent} inspected within the last ${maxAge} day(s)`);
+    if (result.skipped_out_of_property.length) skipped.push(`${result.skipped_out_of_property.length} outside the property`);
+    if (result.quota_capped) skipped.push(`${result.quota_capped} beyond today's quota`);
+    if (skipped.length) console.log(chalk.gray(`  Skipped: ${skipped.join(' · ')}`));
+    for (const url of result.skipped_out_of_property.slice(0, 5)) console.log(chalk.gray(`    not in ${result.property}: ${url}`));
+    if (result.stopped_reason) console.log(chalk.yellow(`  Stopped: ${result.stopped_reason === 'quota' ? "Google answered 429 — today's inspection quota is spent; the stored verdicts are kept and the next run resumes with the rest" : result.stopped_reason}`));
+    console.log(chalk.gray(`\n  search_review and list_problems now include Google's index verdicts: seo-intel review ${project}\n`));
   });
 
 program

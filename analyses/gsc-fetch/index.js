@@ -169,7 +169,7 @@ function resolveGrains(wanted) {
  * is matched against the target domain and a miss names what the account
  * does have, so the fix is a config line rather than a guess.
  */
-async function resolveProperty({ configured, config, accessToken, fetchImpl }) {
+export async function resolveProperty({ configured, config, accessToken, fetchImpl }) {
   if (configured) return { property: String(configured).trim(), reason: 'configured' };
   const domain = config?.target?.domain;
   if (!domain) {

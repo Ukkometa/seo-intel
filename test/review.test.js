@@ -4,8 +4,8 @@
  */
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { runReview } from '../analyses/review/index.js';
-import { getProblems, normalizeSeverity } from '../lib/problems.js';
+import { runReview, indexedByGoogle } from '../analyses/review/index.js';
+import { getProblems, normalizeSeverity, coverageFamily, getInspectedPages } from '../lib/problems.js';
 
 const DAY = 86_400_000;
 
@@ -57,7 +57,29 @@ function fixture({ crawledAt = Date.now() } = {}) {
       requests    INTEGER NOT NULL,
       truncated   INTEGER NOT NULL DEFAULT 0,
       fetched_at  INTEGER NOT NULL
-    );`);
+    );
+    CREATE TABLE IF NOT EXISTS gsc_inspections (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      project               TEXT NOT NULL,
+      property              TEXT NOT NULL,
+      url                   TEXT NOT NULL,        -- as inspected (the crawled spelling)
+      inspected_at          INTEGER NOT NULL,
+      verdict               TEXT,                 -- PASS | PARTIAL | FAIL | NEUTRAL | VERDICT_UNSPECIFIED
+      coverage_state        TEXT,                 -- Google's prose
+      robots_txt_state      TEXT,
+      indexing_state        TEXT,
+      page_fetch_state      TEXT,
+      last_crawl_time       TEXT,                 -- RFC3339 as Google returns it
+      crawled_as            TEXT,
+      google_canonical      TEXT,
+      user_canonical        TEXT,
+      sitemaps              TEXT,                 -- JSON array
+      referring_urls        TEXT,                 -- JSON array
+      rich_results_verdict  TEXT,
+      raw                   TEXT,                 -- the full inspectionResult JSON
+      UNIQUE(project, url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gsc_inspections_project ON gsc_inspections(project, inspected_at);`);
   db.prepare('INSERT INTO domains VALUES (?,?,?,?)').run(1, 'acme.io', 'fx', 'target');
   const page = (id, url, opts) => db.prepare(`INSERT INTO pages (id, domain_id, url, title, body_text, word_count, status_code, is_indexable, click_depth, crawled_at, first_seen_at)
     VALUES (?,1,?,?,?,?,?,?,?,?,?)`).run(id, url, opts.title || url, 'text', opts.words ?? 400, opts.status ?? 200, opts.indexable ?? 1, opts.depth ?? 1, crawledAt, crawledAt);
@@ -268,6 +290,331 @@ const addFetch = (db, start, end, truncated = false) =>
   for (const it of evidence) {
     assert.equal(it.evidence[0].observed, 'No page-filtered Search Console export covers this URL.');
   }
+}
+
+// ── URL Inspection: Google's verdicts become problems and one pass ───────────
+// One stored inspection per (project, url); a fresh one replaces the old, as
+// the table's upsert does. `extra` names the enum fields the fixture varies.
+const inspect = (db, url, verdict, coverage, extra = {}) =>
+  db.prepare(`INSERT INTO gsc_inspections (project, property, url, inspected_at, verdict, coverage_state, robots_txt_state,
+                indexing_state, page_fetch_state, last_crawl_time, crawled_as, google_canonical, user_canonical,
+                sitemaps, referring_urls, rich_results_verdict, raw)
+              VALUES ('fx', 'sc-domain:acme.io', ?, ?, ?, ?, ?, ?, ?, ?, 'MOBILE', ?, ?, '[]', '[]', NULL, '{}')
+              ON CONFLICT(project, url) DO UPDATE SET
+                inspected_at = excluded.inspected_at, verdict = excluded.verdict, coverage_state = excluded.coverage_state,
+                robots_txt_state = excluded.robots_txt_state, indexing_state = excluded.indexing_state,
+                page_fetch_state = excluded.page_fetch_state, last_crawl_time = excluded.last_crawl_time,
+                google_canonical = excluded.google_canonical, user_canonical = excluded.user_canonical`)
+    .run(url, extra.inspectedAt ?? Date.now(), verdict, coverage,
+      extra.robots ?? 'ALLOWED', extra.indexing ?? 'INDEXING_ALLOWED', extra.fetch ?? 'SUCCESSFUL',
+      extra.lastCrawl ?? '2026-09-20T03:14:15Z', extra.googleCanonical ?? null, extra.userCanonical ?? null);
+
+const notIndexed = (db) => getProblems(db, 'fx', {}).filter(p => p.id.startsWith('indexability::not-indexed::'));
+
+// A FAIL on an indexable page is a problem; on a sitemap URL, a critical one.
+// The fix follows the coverage family, not the verdict.
+{
+  const db = fixture();
+  inspect(db, 'https://acme.io/noschema', 'FAIL', 'Crawled - currently not indexed');
+  inspect(db, 'https://acme.io/orphan', 'FAIL', 'Server error (5xx)', { fetch: 'SERVER_ERROR' });
+  const problems = notIndexed(db);
+  assert.equal(problems.length, 2);
+  const submitted = problems.find(p => p.affected_urls[0] === 'https://acme.io/noschema');
+  assert.equal(submitted.severity, 'critical', 'submitted in the sitemap and refused: critical');
+  assert.equal(submitted.category, 'indexability');
+  assert.equal(submitted.tier, 'free');
+  assert.ok(submitted.title.startsWith('Not indexed: acme.io/noschema — Crawled - currently not indexed'), submitted.title);
+  assert.ok(/internal links/.test(submitted.fix_template) && /request indexing/.test(submitted.fix_template),
+    'crawled-not-indexed is a content-quality fix: links and a request');
+  assert.equal(submitted.fix_difficulty, 4);
+  assert.deepEqual(submitted.evidence, {
+    verdict: 'FAIL', coverage_state: 'Crawled - currently not indexed', indexing_state: 'INDEXING_ALLOWED',
+    robots_txt_state: 'ALLOWED', page_fetch_state: 'SUCCESSFUL', last_crawl_time: '2026-09-20T03:14:15Z', in_sitemap: true,
+  });
+  assert.ok(submitted.description.includes('"Crawled - currently not indexed"') && submitted.description.includes('2026-09-20T03:14:15Z'),
+    'the description quotes Google\'s state and last crawl');
+  assert.ok(submitted.verification.includes('seo-intel gsc-inspect fx --url https://acme.io/noschema') && /inspect_urls/.test(submitted.verification));
+  assert.equal(submitted.first_seen, submitted.last_seen);
+  const unlisted = problems.find(p => p.affected_urls[0] === 'https://acme.io/orphan');
+  assert.equal(unlisted.severity, 'warn', 'not in the sitemap: warn');
+  assert.equal(unlisted.evidence.in_sitemap, false);
+  assert.ok(/Search Console/.test(unlisted.fix_template), 'a state no family claims gets the generic template');
+  // In the review these are Search Console evidence, and hygiene an agent may act on.
+  const r = runReview(db, 'fx', {});
+  const item = r.safe_now.find(i => i.id === submitted.id);
+  assert.ok(item, 'a Google verdict with a fix template is hygiene');
+  assert.equal(item.evidence[0].source, 'gsc');
+  assert.ok(r.safe_now.filter(i => i.category === 'tech').every(i => i.evidence[0].source === 'crawl'), 'crawl findings keep their source');
+}
+
+// NEUTRAL where the site meant it, or where the crawl already says broken, is not a problem.
+{
+  const db = fixture();
+  inspect(db, 'https://acme.io/private', 'NEUTRAL', "Excluded by 'noindex' tag", { indexing: 'BLOCKED_BY_META_TAG' });
+  inspect(db, 'https://acme.io/gone', 'NEUTRAL', 'Not found (404)', { fetch: 'NOT_FOUND' });
+  assert.equal(getProblems(db, 'fx', {}).filter(p => p.category === 'indexability').length, 0,
+    'a noindex page excluded, or a 404 not indexed, is intent or an existing finding, not a new problem');
+  assert.ok(runReview(db, 'fx', {}).working.some(w => w.id === 'noindex_intent'), 'the deliberate noindex is still a pass');
+}
+
+// Nor is a FAIL on those pages: Google saying "Submitted URL marked 'noindex'"
+// about a page the crawl saw noindex on, or "Not found (404)" about a 404, is
+// the crawl's own finding in Google's words. Reported as index status it read
+// "a noindex reaches Google that the crawl did not see" — the crawl did — and
+// listed the 404 a second time next to the tech finding.
+{
+  const db = fixture();
+  inspect(db, 'https://acme.io/private', 'FAIL', "Submitted URL marked 'noindex'", { indexing: 'BLOCKED_BY_META_TAG' });
+  inspect(db, 'https://acme.io/gone', 'FAIL', 'Not found (404)', { fetch: 'NOT_FOUND' });
+  const problems = getProblems(db, 'fx', {});
+  assert.equal(problems.filter(p => p.category === 'indexability').length, 0,
+    'FAIL on a deliberate noindex or on a 404 restates the crawl, and is not an index-status problem');
+  const gone = problems.filter(p => p.affected_urls[0] === 'https://acme.io/gone');
+  assert.equal(gone.length, 1, 'the 404 is listed once');
+  assert.equal(gone[0].category, 'tech', 'by the crawl');
+  const r = runReview(db, 'fx', {});
+  assert.ok(r.working.some(w => w.id === 'noindex_intent'), 'the deliberate noindex is still a pass');
+  assert.ok(!r.safe_now.some(i => i.id.startsWith('indexability::')), 'nothing sends an agent to undo what the site chose');
+}
+
+// NEUTRAL on a page the crawl calls indexable is a problem, and the fix names what the crawl missed.
+{
+  const db = fixture();
+  inspect(db, 'https://acme.io/noschema', 'NEUTRAL', "Excluded by 'noindex' tag", { indexing: 'BLOCKED_BY_HTTP_HEADER' });
+  inspect(db, 'https://acme.io/orphan', 'NEUTRAL', 'Blocked by robots.txt',
+    { robots: 'DISALLOWED', indexing: 'BLOCKED_BY_ROBOTS_TXT', fetch: 'BLOCKED_ROBOTS_TXT' });
+  const problems = notIndexed(db);
+  const noindex = problems.find(p => p.affected_urls[0] === 'https://acme.io/noschema');
+  assert.ok(noindex, 'a noindex Google saw on a page the crawl calls indexable is a problem');
+  assert.ok(['warn', 'critical'].includes(noindex.severity));
+  assert.equal(noindex.severity, 'critical', 'the URL is in the sitemap');
+  assert.ok(/noindex reaches Google that the crawl did not see/.test(noindex.fix_template) && /CDN/.test(noindex.fix_template) && /render time/.test(noindex.fix_template));
+  assert.equal(noindex.fix_difficulty, 2);
+  assert.equal(noindex.evidence.indexing_state, 'BLOCKED_BY_HTTP_HEADER');
+  const robots = problems.find(p => p.affected_urls[0] === 'https://acme.io/orphan');
+  assert.ok(/robots\.txt/.test(robots.fix_template) && /Allow the path/.test(robots.fix_template));
+  assert.equal(robots.fix_difficulty, 2);
+  assert.equal(robots.evidence.robots_txt_state, 'DISALLOWED');
+}
+
+// The family is read from Google's prose, backed by the enums where they are more explicit.
+{
+  const fam = (coverage_state, extra = {}) => coverageFamily({ url: 'https://acme.io/x', coverage_state, ...extra });
+  assert.equal(fam('Crawled - currently not indexed'), 'crawled');
+  assert.equal(fam('Discovered - currently not indexed'), 'discovered');
+  assert.equal(fam('Duplicate without user-selected canonical'), 'duplicate');
+  assert.equal(fam('Duplicate, Google chose different canonical than user'), 'duplicate');
+  assert.equal(fam('Alternate page with proper canonical tag'), 'duplicate');
+  assert.equal(fam("Excluded by 'noindex' tag"), 'noindex');
+  assert.equal(fam('Crawled - currently not indexed', { indexing_state: 'BLOCKED_BY_HTTP_HEADER' }), 'noindex', 'a header block outranks the prose');
+  assert.equal(fam('Blocked by robots.txt'), 'robots');
+  assert.equal(fam('Some wording Google adds later', { robots_txt_state: 'DISALLOWED' }), 'robots');
+  assert.equal(fam('Soft 404'), 'not_found');
+  assert.equal(fam('Not found (404)'), 'not_found');
+  assert.equal(fam('Page with redirect'), 'redirect');
+  assert.equal(fam('URL is unknown to Google'), 'unknown');
+  assert.equal(fam(null), 'unknown');
+  assert.equal(fam('Crawled - currently not indexed', { google_canonical: 'https://acme.io/y' }), 'duplicate',
+    'indexed under another URL is a canonical decision whatever the prose says');
+  assert.equal(fam('Crawled - currently not indexed', { google_canonical: 'https://www.acme.io/x/' }), 'crawled',
+    'Google\'s spelling of the same URL is not another canonical');
+  assert.equal(fam('Crawled - currently not indexed', { url: 'https://acme.io/x?sort=price', google_canonical: 'https://acme.io/x' }), 'duplicate',
+    'the bare path is another canonical for a query-string variant');
+  assert.equal(fam('Crawled - currently not indexed', { url: 'https://acme.io/x?sort=price', google_canonical: 'https://www.acme.io/x/?sort=price' }), 'crawled',
+    'the same variant in Google\'s spelling is not');
+}
+
+// PASS under a different canonical: indexed, but not here.
+{
+  const db = fixture();
+  inspect(db, 'https://acme.io/noschema', 'PASS', 'Submitted and indexed',
+    { googleCanonical: 'https://acme.io/', userCanonical: 'https://acme.io/noschema' });
+  inspect(db, 'https://acme.io/orphan', 'PASS', 'Indexed, not submitted in sitemap', { googleCanonical: 'https://www.acme.io/orphan/' });
+  inspect(db, 'https://acme.io/', 'PASS', 'Submitted and indexed', { googleCanonical: 'https://acme.io/' });
+  // A sorted variant indexed under the bare path is the commonest mismatch of
+  // all, and the join key alone cannot see it: it drops the query string.
+  const crawledAt = db.prepare('SELECT MAX(crawled_at) AS t FROM pages').get().t;
+  for (const [id, url] of [[6, 'https://acme.io/products?sort=price'], [7, 'https://acme.io/products']]) {
+    db.prepare(`INSERT INTO pages (id, domain_id, url, title, body_text, word_count, status_code, is_indexable, click_depth, crawled_at, first_seen_at)
+                VALUES (?, 1, ?, 'Products', 'text', 400, 200, 1, 1, ?, ?)`).run(id, url, crawledAt, crawledAt);
+    inspect(db, url, 'PASS', 'Indexed, not submitted in sitemap', { googleCanonical: 'https://acme.io/products' });
+  }
+  const problems = getProblems(db, 'fx', {}).filter(p => p.category === 'indexability');
+  assert.deepEqual(problems.map(p => p.affected_urls[0]).sort(), ['https://acme.io/noschema', 'https://acme.io/products?sort=price'],
+    'only the URLs whose canonical is elsewhere; a spelling difference is not a mismatch, a query-string difference is');
+  const variant = problems.find(p => p.affected_urls[0] === 'https://acme.io/products?sort=price');
+  assert.ok(variant.id.startsWith('indexability::canonical-mismatch::'));
+  assert.equal(variant.evidence.google_canonical, 'https://acme.io/products');
+  const mismatch = problems.find(p => p.affected_urls[0] === 'https://acme.io/noschema');
+  assert.ok(mismatch.id.startsWith('indexability::canonical-mismatch::'));
+  assert.equal(mismatch.severity, 'warn');
+  assert.equal(mismatch.fix_difficulty, 3);
+  assert.equal(mismatch.affected_urls[0], 'https://acme.io/noschema');
+  assert.equal(mismatch.title, 'Google chose a different canonical for acme.io/noschema');
+  assert.ok(mismatch.description.includes('`https://acme.io/`'), 'names the canonical Google chose');
+  assert.ok(/rel=canonical/.test(mismatch.fix_template) && /internal links/.test(mismatch.fix_template));
+  assert.equal(mismatch.evidence.google_canonical, 'https://acme.io/');
+  assert.equal(mismatch.evidence.user_canonical, 'https://acme.io/noschema');
+  assert.equal(runReview(db, 'fx', {}).safe_now.find(i => i.id === mismatch.id)?.evidence[0].source, 'gsc');
+}
+
+// Inspections join to pages on the comparison key, so Google's spelling of a
+// crawled URL still lands on the page; an inspected URL the crawl never reached does not.
+{
+  const db = fixture();
+  inspect(db, 'https://www.acme.io/noschema/', 'FAIL', 'Crawled - currently not indexed');
+  const rows = getInspectedPages(db, 'fx');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].page.url, 'https://acme.io/noschema');
+  assert.equal(rows[0].in_sitemap, true, 'the sitemap match survives the spelling too');
+  assert.equal(notIndexed(db)[0].severity, 'critical');
+  inspect(db, 'https://acme.io/never-crawled', 'FAIL', 'Not found (404)');
+  assert.equal(getInspectedPages(db, 'fx').length, 1, 'no crawled page, no finding');
+}
+
+// The problem's id keys on the crawled page, so a newer inspection of the same
+// page under another spelling keeps the id — and the mark somebody put on it.
+{
+  const db = fixture();
+  inspect(db, 'https://acme.io/noschema', 'FAIL', 'Crawled - currently not indexed', { inspectedAt: Date.now() - DAY });
+  const [first] = notIndexed(db);
+  inspect(db, 'https://www.acme.io/noschema/', 'FAIL', 'Crawled - currently not indexed');
+  const [second] = notIndexed(db);
+  assert.equal(notIndexed(db).length, 1, 'two spellings, one page, one problem');
+  assert.equal(second.affected_urls[0], 'https://www.acme.io/noschema/', 'the newer inspection supersedes');
+  assert.equal(second.id, first.id, 'the id survives the spelling change');
+  db.prepare(`INSERT INTO problem_status VALUES (?, 'fx', 'wont_fix', ?, 'cli', NULL, NULL)`).run(first.id, Date.now());
+  assert.equal(notIndexed(db).length, 0, 'a mark on the old id still holds');
+}
+
+// Ten indexable pages inspected — the fixture's three plus seven more — with
+// `passes` of them PASS. The noindex page and the 404 are inspected too and
+// must stay out of the pass's denominator.
+function inspectSite(db, { passes, inspectedAt = Date.now() }) {
+  const crawledAt = db.prepare('SELECT MAX(crawled_at) AS t FROM pages').get().t;
+  for (let i = 6; i <= 12; i++) {
+    db.prepare(`INSERT INTO pages (id, domain_id, url, title, body_text, word_count, status_code, is_indexable, click_depth, crawled_at, first_seen_at)
+                VALUES (?, 1, ?, ?, 'text', 400, 200, 1, 1, ?, ?)`).run(i, `https://acme.io/p${i}`, `P${i}`, crawledAt, crawledAt);
+  }
+  const indexable = ['https://acme.io/', 'https://acme.io/orphan', 'https://acme.io/noschema',
+    ...Array.from({ length: 7 }, (_, i) => `https://acme.io/p${i + 6}`)];
+  indexable.forEach((url, i) => inspect(db, url, i < passes ? 'PASS' : 'NEUTRAL',
+    i < passes ? 'Submitted and indexed' : 'Crawled - currently not indexed', { inspectedAt }));
+  inspect(db, 'https://acme.io/private', 'NEUTRAL', "Excluded by 'noindex' tag", { inspectedAt });
+  inspect(db, 'https://acme.io/gone', 'FAIL', 'Not found (404)', { inspectedAt });
+}
+
+{
+  const db = fixture();
+  inspectSite(db, { passes: 9 });
+  const r = runReview(db, 'fx', {});
+  const w = r.working.find(x => x.id === 'indexed_by_google');
+  assert.ok(w, '9 of 10 fresh indexable inspections PASS: a pass');
+  assert.equal(w.title, 'Google has indexed your pages');
+  assert.equal(w.observed, '9 of 10 indexable pages inspected within the last 30 days return PASS in URL Inspection (oldest counted inspection 0 days ago).');
+  assert.deepEqual(Object.keys(r.freshness.inspections).sort(), ['age_days', 'count', 'newest_at']);
+  assert.equal(r.freshness.inspections.count, 12);
+  assert.equal(r.freshness.inspections.age_days, 0);
+  const misses = r.safe_now.filter(i => i.id.startsWith('indexability::not-indexed::'));
+  assert.deepEqual(misses.map(i => i.evidence[0].url), ['https://acme.io/p12'],
+    'the pass does not hide the one indexable miss, and the 404 is not listed as a second one');
+}
+{
+  const db = fixture();
+  inspectSite(db, { passes: 8 });
+  assert.ok(!runReview(db, 'fx', {}).working.some(x => x.id === 'indexed_by_google'), '80% is not a pass');
+}
+{
+  const db = fixture();
+  inspectSite(db, { passes: 10, inspectedAt: Date.now() - 40 * DAY });
+  const r = runReview(db, 'fx', {});
+  assert.equal(r.freshness.state, 'fresh');
+  assert.equal(r.freshness.inspections.age_days, 40);
+  assert.ok(!r.working.some(x => x.id === 'indexed_by_google'), '40-day-old verdicts do not vouch for the pages');
+  assert.ok(r.working.some(x => x.id === 'sitemap'), 'the crawl-based passes are unaffected');
+}
+// Freshness is judged per verdict, not by the newest row in the table. One
+// inspection run today must not renew ten verdicts from six weeks ago —
+// whether it inspected a URL the crawl never reached or re-asked about one
+// page. The table-wide metadata still says "0 days", which is why the pass
+// cannot be gated on it.
+{
+  const db = fixture();
+  inspectSite(db, { passes: 10, inspectedAt: Date.now() - 45 * DAY });
+  inspect(db, 'https://acme.io/never-crawled', 'FAIL', 'Not found (404)');
+  const r = runReview(db, 'fx', {});
+  assert.equal(r.freshness.inspections.age_days, 0, 'the newest row is from today');
+  assert.ok(!r.working.some(x => x.id === 'indexed_by_google'), 'ten stale passes and one fresh row for an uncrawled URL are no pass');
+}
+{
+  const db = fixture();
+  inspectSite(db, { passes: 10, inspectedAt: Date.now() - 45 * DAY });
+  inspect(db, 'https://acme.io/', 'PASS', 'Submitted and indexed');
+  const r = runReview(db, 'fx', {});
+  assert.equal(r.freshness.inspections.age_days, 0);
+  assert.ok(!r.working.some(x => x.id === 'indexed_by_google'), 'one fresh re-inspection does not renew nine stale ones');
+}
+// Within the horizon, the sentence names the oldest verdict it rests on.
+{
+  const db = fixture();
+  inspectSite(db, { passes: 10, inspectedAt: Date.now() - 20 * DAY });
+  inspect(db, 'https://acme.io/', 'PASS', 'Submitted and indexed');
+  const w = runReview(db, 'fx', {}).working.find(x => x.id === 'indexed_by_google');
+  assert.ok(w, 'ten passes within 30 days');
+  assert.equal(w.observed, '10 of 10 indexable pages inspected within the last 30 days return PASS in URL Inspection (oldest counted inspection 20 days ago).');
+}
+{
+  const db = fixture();
+  for (const url of ['https://acme.io/', 'https://acme.io/orphan', 'https://acme.io/noschema', 'https://acme.io/private', 'https://acme.io/gone']) {
+    inspect(db, url, 'PASS', 'Submitted and indexed');
+  }
+  const r = runReview(db, 'fx', {});
+  assert.equal(r.freshness.inspections.count, 5);
+  assert.ok(!r.working.some(x => x.id === 'indexed_by_google'), 'three indexable pages are too small a sample, whatever else was inspected');
+}
+{
+  const db = fixture({ crawledAt: Date.now() - 40 * DAY });
+  inspectSite(db, { passes: 10 });
+  const r = runReview(db, 'fx', {});
+  assert.equal(r.freshness.state, 'stale');
+  assert.equal(r.freshness.inspections.age_days, 0);
+  assert.equal(r.working.length, 0, 'a stale crawl withholds every pass, Google\'s included');
+}
+// The thresholds, at their edges. Rows carry their own inspected_at, measured
+// against the clock the caller passes.
+{
+  const now = Date.now();
+  const row = (verdict, { indexable = 1, status = 200, age = 0 } = {}) =>
+    ({ verdict, inspected_at: now - age * DAY, page: { is_indexable: indexable, status_code: status } });
+  const passes = (n, age = 0) => Array.from({ length: n }, () => row('PASS', { age }));
+  assert.ok(indexedByGoogle(passes(5), now), 'five suffice');
+  assert.equal(indexedByGoogle(passes(4), now), null, 'four do not');
+  assert.ok(indexedByGoogle([...passes(9), row('NEUTRAL')], now), 'exactly 90% passes');
+  assert.equal(indexedByGoogle([...passes(9), row('NEUTRAL'), row('FAIL')], now), null, 'below 90% does not');
+  assert.ok(indexedByGoogle([...passes(9), row('NEUTRAL'), row('FAIL', { status: 404 }), row('NEUTRAL', { indexable: 0 })], now),
+    'a 404 and a noindex page stay out of the denominator');
+  assert.equal(indexedByGoogle(passes(9, 30), now).oldest_age_days, 30, 'day 30 is still fresh');
+  assert.equal(indexedByGoogle(passes(9, 31), now), null, 'day 31 is stale');
+  const mixed = indexedByGoogle([...passes(5), ...passes(5, 45)], now);
+  assert.deepEqual([mixed.passed, mixed.total, mixed.oldest_age_days], [5, 5, 0], 'stale rows leave the sample; the fresh ones carry it');
+  assert.equal(indexedByGoogle([...passes(4), ...passes(6, 45)], now), null, 'stale rows do not fill the sample either');
+  assert.ok(indexedByGoogle([...passes(9), row('NEUTRAL', { age: 45 })], now), 'a stale miss is out of the sample too; the problems list still names it');
+  assert.equal(indexedByGoogle([...passes(4), { verdict: 'PASS', page: { is_indexable: 1, status_code: 200 } }], now), null,
+    'a row without an inspected_at vouches for nothing');
+  assert.equal(indexedByGoogle([], now), null, 'nothing inspected, nothing claimed');
+  assert.equal(indexedByGoogle(null), null);
+}
+// No inspections, and an older database without the table, both read as "nothing inspected".
+{
+  assert.equal(runReview(fixture(), 'fx', {}).freshness.inspections, null);
+  const db = fixture();
+  db.exec('DROP TABLE gsc_inspections');
+  const r = runReview(db, 'fx', {});
+  assert.equal(r.freshness.inspections, null);
+  assert.ok(!r.working.some(x => x.id === 'indexed_by_google'));
+  assert.ok(r.working.some(x => x.id === 'sitemap'), 'the other passes still report');
+  assert.equal(getInspectedPages(db, 'fx').length, 0);
+  assert.equal(getProblems(db, 'fx', {}).filter(p => p.category === 'indexability').length, 0);
 }
 
 console.log('review fixtures: PASS');

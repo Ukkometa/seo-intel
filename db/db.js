@@ -130,6 +130,33 @@ export function getDb(dbPath = resolveDbPath()) {
       fetched_at  INTEGER NOT NULL
     );
 
+    -- Google's own index verdict per URL (URL Inspection API, analyses/gsc-inspect).
+    -- One row per (project, url): a fresh inspection replaces the old one,
+    -- because the question is "what does Google say now", not a history. The
+    -- crawl can only infer indexability from tags; this table holds the fact.
+    CREATE TABLE IF NOT EXISTS gsc_inspections (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      project               TEXT NOT NULL,
+      property              TEXT NOT NULL,
+      url                   TEXT NOT NULL,        -- as inspected (the crawled spelling)
+      inspected_at          INTEGER NOT NULL,
+      verdict               TEXT,                 -- PASS | PARTIAL | FAIL | NEUTRAL | VERDICT_UNSPECIFIED
+      coverage_state        TEXT,                 -- Google's prose
+      robots_txt_state      TEXT,
+      indexing_state        TEXT,
+      page_fetch_state      TEXT,
+      last_crawl_time       TEXT,                 -- RFC3339 as Google returns it
+      crawled_as            TEXT,
+      google_canonical      TEXT,
+      user_canonical        TEXT,
+      sitemaps              TEXT,                 -- JSON array
+      referring_urls        TEXT,                 -- JSON array
+      rich_results_verdict  TEXT,
+      raw                   TEXT,                 -- the full inspectionResult JSON
+      UNIQUE(project, url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gsc_inspections_project ON gsc_inspections(project, inspected_at);
+
     CREATE TABLE IF NOT EXISTS backlinks (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       project        TEXT NOT NULL,
@@ -1129,5 +1156,94 @@ export function getGscCoverage(db, project, { grain, property } = {}) {
     };
   } catch {
     return null;
+  }
+}
+
+// ── URL Inspection (gsc_inspections) ─────────────────────────────────────
+
+const GSC_INSPECTION_COLUMNS = [
+  'project', 'property', 'url', 'inspected_at', 'verdict', 'coverage_state',
+  'robots_txt_state', 'indexing_state', 'page_fetch_state', 'last_crawl_time',
+  'crawled_as', 'google_canonical', 'user_canonical', 'sitemaps', 'referring_urls',
+  'rich_results_verdict', 'raw',
+];
+
+/**
+ * Store one inspection (the shape lib/gsc-api.js inspectionToRow() produces).
+ * A URL inspected again is replaced column for column, property included: the
+ * newest answer from Google is the only one worth reading, and a stale verdict
+ * left in place would be exactly the false green tick this table exists to
+ * prevent. One statement, so there is no half-updated row to read.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {object} row
+ * @returns {number} rows affected (1)
+ */
+export function upsertGscInspection(db, row) {
+  const cols = GSC_INSPECTION_COLUMNS;
+  const updates = cols.filter(c => c !== 'project' && c !== 'url').map(c => `${c} = excluded.${c}`);
+  const res = db.prepare(`
+    INSERT INTO gsc_inspections (${cols.join(', ')})
+    VALUES (${cols.map(() => '?').join(', ')})
+    ON CONFLICT(project, url) DO UPDATE SET ${updates.join(', ')}
+  `).run(...cols.map(c => (c === 'inspected_at' ? (row[c] ?? Date.now()) : (row[c] ?? null))));
+  return Number(res.changes);
+}
+
+function parseJsonArray(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Every stored inspection for a project, newest first, with the JSON list
+ * columns parsed back to arrays. A database that predates the table answers
+ * with none: that is "nothing inspected yet", not a fault.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} project
+ * @returns {object[]}
+ */
+export function getGscInspections(db, project) {
+  let rows;
+  try {
+    rows = db.prepare(
+      'SELECT * FROM gsc_inspections WHERE project = ? ORDER BY inspected_at DESC, url'
+    ).all(project);
+  } catch {
+    return [];
+  }
+  return rows.map(r => ({
+    ...r,
+    sitemaps: parseJsonArray(r.sitemaps),
+    referring_urls: parseJsonArray(r.referring_urls),
+  }));
+}
+
+/**
+ * How many URLs of a property have an inspection stamped at or after
+ * `sinceMs` — the quota already spent today when `sinceMs` is midnight. A URL
+ * inspected twice in the day counts once, because the upsert kept one row;
+ * that undercounts the true spend slightly and never the other way round
+ * into refusing work the quota would allow. Missing table → 0.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} project
+ * @param {string} property
+ * @param {number} sinceMs
+ * @returns {number}
+ */
+export function countInspectionsSince(db, project, property, sinceMs) {
+  try {
+    const row = db.prepare(
+      'SELECT COUNT(*) AS c FROM gsc_inspections WHERE project = ? AND property = ? AND inspected_at >= ?'
+    ).get(project, property, Number(sinceMs) || 0);
+    return Number(row?.c) || 0;
+  } catch {
+    return 0;
   }
 }

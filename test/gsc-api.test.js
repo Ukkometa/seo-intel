@@ -12,7 +12,10 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   GSC_ENDPOINTS,
   GscApiError,
+  URL_INSPECTION_QUOTA,
   hintForStatus,
+  inspectUrl,
+  inspectionToRow,
   listSites,
   matchProperty,
   registrableDomain,
@@ -20,8 +23,16 @@ import {
   rowsToDaily,
   searchAnalytics,
   searchAnalyticsAll,
+  urlBelongsToProperty,
 } from '../lib/gsc-api.js';
-import { upsertGscDaily, recordGscFetch, getGscCoverage } from '../db/db.js';
+import {
+  countInspectionsSince,
+  getGscCoverage,
+  getGscInspections,
+  recordGscFetch,
+  upsertGscDaily,
+  upsertGscInspection,
+} from '../db/db.js';
 
 // ── Endpoints ───────────────────────────────────────────────────────────────
 assert.equal(GSC_ENDPOINTS.sites, 'https://www.googleapis.com/webmasters/v3/sites');
@@ -492,6 +503,240 @@ assert.equal(db.prepare("SELECT ctr FROM gsc_daily WHERE grain = 'query'").get()
 {
   const old = new DatabaseSync(':memory:');
   assert.equal(getGscCoverage(old, 'p'), null);
+}
+
+// ── URL Inspection: quota, property membership ──────────────────────────────
+assert.deepEqual(URL_INSPECTION_QUOTA, { perDay: 2000, perMinute: 600 });
+assert.equal(GSC_ENDPOINTS.urlInspection, 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect');
+
+// A domain property covers the domain, its subdomains, both schemes, any path.
+assert.equal(urlBelongsToProperty('https://example.com/', 'sc-domain:example.com'), true);
+assert.equal(urlBelongsToProperty('https://www.example.com/docs', 'sc-domain:example.com'), true);
+assert.equal(urlBelongsToProperty('http://docs.dev.example.com/a?b=1', 'sc-domain:example.com'), true, 'any depth of subdomain, either scheme');
+assert.equal(urlBelongsToProperty('https://EXAMPLE.com/', 'sc-domain:Example.COM'), true, 'hosts compare case-insensitively');
+assert.equal(urlBelongsToProperty('https://notexample.com/', 'sc-domain:example.com'), false, 'a suffix match needs the dot');
+assert.equal(urlBelongsToProperty('https://example.com.evil.net/', 'sc-domain:example.com'), false);
+assert.equal(urlBelongsToProperty('https://other.org/', 'sc-domain:example.com'), false);
+assert.equal(urlBelongsToProperty('https://example.com/', 'sc-domain:'), false, 'an empty domain covers nothing');
+
+// A URL-prefix property covers URLs that start with it: scheme and host loosely, path exactly.
+assert.equal(urlBelongsToProperty('https://www.example.com/', 'https://www.example.com/'), true);
+assert.equal(urlBelongsToProperty('https://www.example.com/docs/a', 'https://www.example.com/'), true);
+assert.equal(urlBelongsToProperty('HTTPS://WWW.Example.com/docs', 'https://www.example.com/'), true, 'scheme and host are not case-sensitive');
+assert.equal(urlBelongsToProperty('https://example.com/docs', 'https://www.example.com/'), false, 'the bare host is a different property');
+assert.equal(urlBelongsToProperty('http://www.example.com/docs', 'https://www.example.com/'), false, 'so is the other scheme');
+assert.equal(urlBelongsToProperty('https://www.example.com/blog/post', 'https://www.example.com/blog/'), true);
+assert.equal(urlBelongsToProperty('https://www.example.com/blog', 'https://www.example.com/blog/'), false, 'the prefix includes its trailing slash');
+assert.equal(urlBelongsToProperty('https://www.example.com/Blog/post', 'https://www.example.com/blog/'), false, 'paths compare exactly');
+assert.equal(urlBelongsToProperty('https://www.example.com/x', 'https://www.example.com'), true, 'a prefix without a slash is the root');
+
+// Nothing unparseable or non-web qualifies, and it is a false rather than a throw.
+assert.equal(urlBelongsToProperty('not a url', 'sc-domain:example.com'), false);
+assert.equal(urlBelongsToProperty('', 'sc-domain:example.com'), false);
+assert.equal(urlBelongsToProperty(null, 'sc-domain:example.com'), false);
+assert.equal(urlBelongsToProperty('mailto:a@example.com', 'sc-domain:example.com'), false);
+assert.equal(urlBelongsToProperty('ftp://example.com/x', 'sc-domain:example.com'), false, 'only http(s) pages are inspectable');
+assert.equal(urlBelongsToProperty('https://example.com/', 'garbage'), false, 'an unparseable prefix covers nothing');
+assert.equal(urlBelongsToProperty('https://example.com/', ''), false);
+assert.equal(urlBelongsToProperty('https://example.com/', null), false);
+
+// ── URL Inspection: inspectionToRow ─────────────────────────────────────────
+const FULL_RESULT = {
+  inspectionResultLink: 'https://search.google.com/search-console/inspect?resource_id=sc-domain:example.com&id=abc',
+  indexStatusResult: {
+    verdict: 'PASS',
+    coverageState: 'Submitted and indexed',
+    robotsTxtState: 'ALLOWED',
+    indexingState: 'INDEXING_ALLOWED',
+    lastCrawlTime: '2026-09-24T03:12:45Z',
+    pageFetchState: 'SUCCESSFUL',
+    googleCanonical: 'https://example.com/a',
+    userCanonical: 'https://example.com/a',
+    sitemap: ['https://example.com/sitemap.xml'],
+    referringUrls: ['https://example.com/', 'https://example.com/b'],
+    crawledAs: 'MOBILE',
+  },
+  mobileUsabilityResult: { verdict: 'VERDICT_UNSPECIFIED', issues: [] },
+  richResultsResult: { verdict: 'PASS', detectedItems: [{ richResultType: 'FAQ', items: [] }] },
+};
+{
+  const row = inspectionToRow({ project: 'p', property: 'sc-domain:example.com', url: 'https://example.com/a', result: FULL_RESULT, inspectedAt: 1234 });
+  assert.deepEqual(row, {
+    project: 'p',
+    property: 'sc-domain:example.com',
+    url: 'https://example.com/a',
+    inspected_at: 1234,
+    verdict: 'PASS',
+    coverage_state: 'Submitted and indexed',
+    robots_txt_state: 'ALLOWED',
+    indexing_state: 'INDEXING_ALLOWED',
+    page_fetch_state: 'SUCCESSFUL',
+    last_crawl_time: '2026-09-24T03:12:45Z',
+    crawled_as: 'MOBILE',
+    google_canonical: 'https://example.com/a',
+    user_canonical: 'https://example.com/a',
+    sitemaps: '["https://example.com/sitemap.xml"]',
+    referring_urls: '["https://example.com/","https://example.com/b"]',
+    rich_results_verdict: 'PASS',
+    raw: JSON.stringify(FULL_RESULT),
+  });
+  assert.deepEqual(JSON.parse(row.raw).mobileUsabilityResult, { verdict: 'VERDICT_UNSPECIFIED', issues: [] },
+    'the deprecated block is kept in raw, and nowhere else');
+}
+// Absent fields are null, absent lists are '[]', and a missing indexStatusResult is not a crash.
+{
+  const sparse = inspectionToRow({ project: 'p', property: 'x', url: 'https://example.com/u', result: { indexStatusResult: { verdict: 'NEUTRAL', coverageState: "Excluded by 'noindex' tag" } }, inspectedAt: 1 });
+  assert.equal(sparse.verdict, 'NEUTRAL');
+  assert.equal(sparse.coverage_state, "Excluded by 'noindex' tag");
+  for (const col of ['robots_txt_state', 'indexing_state', 'page_fetch_state', 'last_crawl_time', 'crawled_as', 'google_canonical', 'user_canonical', 'rich_results_verdict']) {
+    assert.equal(sparse[col], null, `${col} is null when absent`);
+  }
+  assert.equal(sparse.sitemaps, '[]');
+  assert.equal(sparse.referring_urls, '[]');
+
+  const empty = inspectionToRow({ project: 'p', property: 'x', url: 'https://example.com/u', result: {}, inspectedAt: 1 });
+  assert.equal(empty.verdict, null);
+  assert.equal(empty.sitemaps, '[]');
+  assert.equal(empty.raw, '{}');
+  const nothing = inspectionToRow({ project: 'p', property: 'x', url: 'https://example.com/u', result: undefined, inspectedAt: 1 });
+  assert.equal(nothing.verdict, null);
+  assert.equal(nothing.raw, '{}');
+  assert.equal(typeof inspectionToRow({ project: 'p', property: 'x', url: 'u', result: {} }).inspected_at, 'number', 'inspectedAt defaults to now');
+}
+
+// ── URL Inspection: inspectUrl ──────────────────────────────────────────────
+{
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, init, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, json: async () => ({ inspectionResult: FULL_RESULT }) };
+  };
+  const result = await inspectUrl({ siteUrl: 'sc-domain:example.com', inspectionUrl: 'https://example.com/a', accessToken: 'tok', fetch });
+  assert.deepEqual(result, FULL_RESULT, 'the inspectionResult is returned as is');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, GSC_ENDPOINTS.urlInspection);
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer tok');
+  assert.equal(calls[0].init.headers['content-type'], 'application/json');
+  assert.deepEqual(calls[0].body, { inspectionUrl: 'https://example.com/a', siteUrl: 'sc-domain:example.com', languageCode: 'en-US' });
+
+  await inspectUrl({ siteUrl: 'https://www.example.com/', inspectionUrl: 'https://www.example.com/b', accessToken: 'tok', fetch, languageCode: 'fi-FI' });
+  assert.equal(calls[1].body.languageCode, 'fi-FI');
+  assert.equal(calls[1].body.siteUrl, 'https://www.example.com/', 'a URL-prefix property is sent verbatim, trailing slash included');
+
+  // No inspectionResult in the answer → {} rather than undefined, so callers can read fields off it.
+  const bare = await inspectUrl({ siteUrl: 'x', inspectionUrl: 'https://example.com/', accessToken: 'tok', fetch: async () => ({ ok: true, json: async () => ({}) }) });
+  assert.deepEqual(bare, {});
+
+  await assert.rejects(inspectUrl({ inspectionUrl: 'https://example.com/', accessToken: 'tok', fetch }), /siteUrl is required/);
+  await assert.rejects(inspectUrl({ siteUrl: 'x', accessToken: 'tok', fetch }), /inspectionUrl is required/);
+
+  // A 429 is a GscApiError whose hint speaks of the inspection quota, not of date ranges.
+  const quota = async () => ({ ok: false, status: 429, text: async () => JSON.stringify({ error: { code: 429, message: 'Quota exceeded for quota metric', status: 'RESOURCE_EXHAUSTED' } }) });
+  await assert.rejects(
+    inspectUrl({ siteUrl: 'sc-domain:example.com', inspectionUrl: 'https://example.com/a', accessToken: 'tok', fetch: quota }),
+    err => {
+      assert.ok(err instanceof GscApiError);
+      assert.equal(err.status, 429);
+      assert.match(err.message, /429/);
+      assert.match(err.message, /https:\/\/example.com\/a/, 'the URL that failed is named');
+      assert.match(err.message, /Quota exceeded/, 'the API message is kept');
+      assert.match(err.hint, /2000 inspections per property per day/);
+      assert.doesNotMatch(err.hint, /date range/, 'the Search Analytics fix is not offered for an inspection');
+      return true;
+    },
+  );
+  // A 400 (URL outside the property) keeps the API's own explanation as the hint.
+  const outside = async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: { code: 400, message: 'URL is not in property', status: 'INVALID_ARGUMENT' } }) });
+  await assert.rejects(
+    inspectUrl({ siteUrl: 'sc-domain:example.com', inspectionUrl: 'https://other.org/', accessToken: 'tok', fetch: outside }),
+    err => err instanceof GscApiError && err.status === 400 && err.hint === 'URL is not in property',
+  );
+  // 401 still says reconnect.
+  const stale = async () => ({ ok: false, status: 401, text: async () => '{}' });
+  await assert.rejects(
+    inspectUrl({ siteUrl: 'x', inspectionUrl: 'https://example.com/', accessToken: 'tok', fetch: stale }),
+    err => err.status === 401 && /seo-intel auth google/.test(err.hint),
+  );
+}
+
+// ── gsc_inspections on an in-memory database ────────────────────────────────
+// The DDL below is copied verbatim from db/db.js getDb(). Keep them identical.
+{
+  const idb = new DatabaseSync(':memory:');
+  idb.exec(`
+    CREATE TABLE IF NOT EXISTS gsc_inspections (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      project               TEXT NOT NULL,
+      property              TEXT NOT NULL,
+      url                   TEXT NOT NULL,        -- as inspected (the crawled spelling)
+      inspected_at          INTEGER NOT NULL,
+      verdict               TEXT,                 -- PASS | PARTIAL | FAIL | NEUTRAL | VERDICT_UNSPECIFIED
+      coverage_state        TEXT,                 -- Google's prose
+      robots_txt_state      TEXT,
+      indexing_state        TEXT,
+      page_fetch_state      TEXT,
+      last_crawl_time       TEXT,                 -- RFC3339 as Google returns it
+      crawled_as            TEXT,
+      google_canonical      TEXT,
+      user_canonical        TEXT,
+      sitemaps              TEXT,                 -- JSON array
+      referring_urls        TEXT,                 -- JSON array
+      rich_results_verdict  TEXT,
+      raw                   TEXT,                 -- the full inspectionResult JSON
+      UNIQUE(project, url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gsc_inspections_project ON gsc_inspections(project, inspected_at);
+  `);
+  assert.deepEqual(getGscInspections(idb, 'p'), []);
+  assert.equal(countInspectionsSince(idb, 'p', 'sc-domain:example.com', 0), 0);
+
+  const first = inspectionToRow({ project: 'p', property: 'sc-domain:example.com', url: 'https://example.com/a', result: FULL_RESULT, inspectedAt: 1000 });
+  assert.equal(upsertGscInspection(idb, first), 1);
+  upsertGscInspection(idb, inspectionToRow({ project: 'p', property: 'sc-domain:example.com', url: 'https://example.com/b', result: { indexStatusResult: { verdict: 'NEUTRAL', coverageState: "Excluded by 'noindex' tag" } }, inspectedAt: 2000 }));
+  upsertGscInspection(idb, inspectionToRow({ project: 'other', property: 'sc-domain:other.net', url: 'https://other.net/', result: {}, inspectedAt: 3000 }));
+
+  const rows = getGscInspections(idb, 'p');
+  assert.equal(rows.length, 2, 'scoped to the project');
+  assert.deepEqual(rows.map(r => r.url), ['https://example.com/b', 'https://example.com/a'], 'newest first');
+  assert.deepEqual(rows[1].sitemaps, ['https://example.com/sitemap.xml'], 'JSON lists come back as arrays');
+  assert.deepEqual(rows[1].referring_urls, ['https://example.com/', 'https://example.com/b']);
+  assert.deepEqual(rows[0].sitemaps, [], 'and an empty list is an empty array');
+  assert.equal(rows[0].robots_txt_state, null);
+  assert.equal(JSON.parse(rows[1].raw).indexStatusResult.verdict, 'PASS');
+
+  // A fresh inspection of the same URL replaces every column: the old verdict is gone.
+  const again = inspectionToRow({
+    project: 'p', property: 'https://example.com/', url: 'https://example.com/a', inspectedAt: 5000,
+    result: { indexStatusResult: { verdict: 'FAIL', coverageState: 'Not found (404)', pageFetchState: 'NOT_FOUND' } },
+  });
+  assert.equal(upsertGscInspection(idb, again), 1);
+  assert.equal(idb.prepare('SELECT COUNT(*) c FROM gsc_inspections').get().c, 3, 're-inspecting adds no row');
+  const replaced = getGscInspections(idb, 'p').find(r => r.url === 'https://example.com/a');
+  assert.equal(replaced.verdict, 'FAIL');
+  assert.equal(replaced.coverage_state, 'Not found (404)');
+  assert.equal(replaced.property, 'https://example.com/', 'the property moves with the row');
+  assert.equal(replaced.inspected_at, 5000);
+  assert.equal(replaced.google_canonical, null, 'a column the new answer lacks is cleared, not kept from the old one');
+  assert.deepEqual(replaced.sitemaps, []);
+  assert.equal(replaced.rich_results_verdict, null);
+
+  // countInspectionsSince: per project and property, at or after the stamp.
+  assert.equal(countInspectionsSince(idb, 'p', 'sc-domain:example.com', 0), 1, 'a re-inspected row under another property no longer counts for the old one');
+  assert.equal(countInspectionsSince(idb, 'p', 'https://example.com/', 5000), 1, 'the boundary is inclusive');
+  assert.equal(countInspectionsSince(idb, 'p', 'https://example.com/', 5001), 0);
+  assert.equal(countInspectionsSince(idb, 'other', 'sc-domain:other.net', 0), 1);
+  assert.equal(countInspectionsSince(idb, 'p', 'sc-domain:nope', 0), 0);
+
+  // A malformed JSON list column reads as [] rather than taking the caller down.
+  idb.prepare("UPDATE gsc_inspections SET sitemaps = 'not json' WHERE url = 'https://example.com/b'").run();
+  assert.deepEqual(getGscInspections(idb, 'p').find(r => r.url === 'https://example.com/b').sitemaps, []);
+
+  // An older database without the table answers "no data" rather than throwing.
+  const old = new DatabaseSync(':memory:');
+  assert.deepEqual(getGscInspections(old, 'p'), []);
+  assert.equal(countInspectionsSince(old, 'p', 'x', 0), 0);
+  assert.throws(() => upsertGscInspection(old, first), 'a write against a missing table is an error, not silence');
 }
 
 console.log('gsc-api fixtures: PASS');

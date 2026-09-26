@@ -485,18 +485,22 @@ server.registerTool(
       '  positioning     data: { ...free-form... }    one slot per project',
       '',
       'data must include the identifier field above; otherwise the tool returns an error.',
+      '',
+      'Provenance: rows written here carry source_kind "agent", model = agent_name, and the confidence you pass (never invented — omit it and the row says "unknown"). They expire ttl_days (default 90) after last_seen unless re-ingested; ingesting the same fingerprint again reopens an expired row. An agent-sourced insight never enters search_review.safe_now: it is a claim another agent may not act on unattended, so a problem derived from it lands in needs_input with your agent_name shown, for a person to verify.',
     ].join('\n'),
     inputSchema: {
       project: z.string().describe('Project slug'),
       type: z.enum(AGENT_INSIGHT_TYPES).describe('Insight type from the allowed set'),
       data: z.record(z.any()).describe('Insight payload — JSON object. Must include the identifier field for the chosen type.'),
-      agent_name: z.string().optional().describe('Optional provenance tag (e.g. "claude-opus-4-7"). Stored as source="agent:<name>".'),
+      agent_name: z.string().optional().describe('Optional provenance tag (e.g. "claude-opus-4-7"). Stored as source="agent:<name>" and as the row\'s model.'),
+      confidence: z.number().min(0).max(1).optional().describe('How sure you are, 0..1. Stored as given; omit when unknown rather than guessing — a NULL reads as "unknown", a made-up number reads as a measurement.'),
+      ttl_days: z.number().int().positive().optional().describe('Days after last_seen before the row expires unless re-ingested. Default 90.'),
     },
   },
-  async ({ project, type, data, agent_name }) => {
+  async ({ project, type, data, agent_name, confidence, ttl_days }) => {
     try {
       const db = getDb();
-      const result = insertAgentInsight(db, { project, type, data, agentName: agent_name });
+      const result = insertAgentInsight(db, { project, type, data, agentName: agent_name, confidence, ttlDays: ttl_days });
       if (!result.ok) {
         return { content: [{ type: 'text', text: `seo-intel ingest error: ${result.error}` }], isError: true };
       }
@@ -508,6 +512,10 @@ server.registerTool(
         fingerprint: result.fingerprint,
         deduped: result.deduped,
         source: result.source,
+        source_kind: result.source_kind,
+        model: result.model,
+        confidence: result.confidence,
+        expires_at: result.expires_at ? new Date(result.expires_at).toISOString() : null,
         last_seen: new Date(result.last_seen).toISOString(),
         hint: result.deduped
           ? 'Insight already existed; last_seen refreshed.'
@@ -550,8 +558,22 @@ server.registerTool(
         }
       }
       const results = runAeoAnalysis(db, project, { includeCompetitors: include_competitors, aiAccessByDomain, log: () => {} });
+      if (!results.summary) {
+        // No crawled page has body text: nothing was scored and nothing may be
+        // resolved. The CLI says so; this used to throw on the null summary.
+        const empty = {
+          ok: false, project, target_pages_scored: 0, competitor_pages_scored: 0,
+          hint: `No pages with body_text found for "${project}". Run "seo-intel crawl ${project}" first (the crawl stores body text since v1.1.6).`,
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(empty, null, 2) }], structuredContent: empty };
+      }
       persistAeoScores(db, results, project);
-      upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess);
+      // aiAccessChecked: only a run that actually read robots.txt for every
+      // target domain may resolve the domain-level "crawlers are blocked" rows
+      // it did not re-emit. The summary decides that, not `aiAccessByDomain !=
+      // null`: fetchAiAccessForDomains never throws, so a failed fetch still
+      // hands back a Map — of "assume open" verdicts.
+      upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess, { aiAccessChecked: results.summary.aiAccessChecked });
       const competitorPageCount = [...results.competitors.values()].reduce((a, list) => a + list.length, 0);
       const avgTargetScore = results.target.length
         ? Math.round(results.target.reduce((s, p) => s + p.score, 0) / results.target.length)
@@ -568,6 +590,10 @@ server.registerTool(
         competitor_pages_scored: competitorPageCount,
         avg_target_score: avgTargetScore,
         ai_access: results.summary.aiAccess,
+        // false when robots.txt was skipped or could not be read for a target
+        // domain: each ai_access entry's `fetched` says which. Such a run
+        // scores AI access as open by default and resolves no citability_gap.
+        ai_access_checked: results.summary.aiAccessChecked,
         ai_access_gated_pages: results.summary.gatedPages,
         low_score_target_pages: lowScorePages,
         hint: 'Scores persisted to DB. Call get_intel(project, for=audit) to see the full citability matrix + insights ledger.',
@@ -891,6 +917,8 @@ server.registerTool(
       '  working        checks that passed. Withheld entirely when the crawl is stale or missing, because a wrong green tick stops someone looking.',
       '',
       'Composes list_problems with page_contract. Pass urls to fold per-page decisions in: their blocked recommendations land in needs_input with the exact input that unblocks them, and their allowed work lands in safe_now.',
+      '',
+      'Every item carries source {kind, model, prompt_version, rule_version, confidence}, and safe_now holds only rule-sourced findings — a model- or agent-sourced problem in an autonomous category goes to needs_input with its origin named, because nothing has checked it.',
       '',
       "When inspect_urls has run, Google's own index verdicts are included: pages Google did not index surface as problems, and working reports \"Google has indexed your pages\" from the stored verdicts rather than from the crawl's inference.",
       '',
@@ -1629,7 +1657,8 @@ server.registerTool(
       "Index verdicts from inspect_urls are included under indexability when present: a FAIL, a NEUTRAL on a page the crawl says is indexable, or a canonical Google chose that differs from the page's own.",
       "Paid tier adds: citability (low AEO scores), content/keyword/positioning gaps from the Intelligence Ledger.",
       "",
-      "Each problem returns {id, severity, category, tier, title, description, affected_urls, evidence, fix_template, verification, first_seen, last_seen, fix_difficulty}. fix_difficulty: 1=trivial → 5=deep work.",
+      "Each problem returns {id, severity, category, tier, title, description, affected_urls, evidence, fix_template, verification, first_seen, last_seen, fix_difficulty, source}. fix_difficulty: 1=trivial → 5=deep work.",
+      "Every problem carries source {kind, model, prompt_version, rule_version, confidence} — who found it (a deterministic rule over the crawl, an LLM synthesis, or an agent via ingest_insight) and how far to trust it before acting; search_review's safe_now holds only rule-sourced findings.",
       "",
       "Typical agent loop: list_projects → list_problems(project, severity='critical') → fix highest-leverage one → run_crawl(project) → list_problems again to verify it cleared.",
     ].join("\n"),

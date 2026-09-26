@@ -6,6 +6,7 @@
  */
 
 import { scorePage } from './scorer.js';
+import { upsertInsights } from '../../db/db.js';
 
 /**
  * Run AEO analysis for a project.
@@ -126,16 +127,32 @@ export function runAeoAnalysis(db, project, opts = {}) {
   for (const r of targetResults) tierCounts[r.tier]++;
 
   // Domain-level AI-access rollup (one verdict per target/owned domain).
+  //
+  // Each entry carries `fetched`, and the summary says whether the check was
+  // complete, because fetchAiAccess never throws: a network failure or a
+  // timeout comes back as an "assume open" verdict with fetched: false, and
+  // from the verdict alone that is indistinguishable from a robots.txt that
+  // was read and allows every crawler. A caller that took "the Map exists" as
+  // "robots.txt was checked" would let a failed fetch resolve a critical
+  // "crawlers are blocked" row as no longer detected. aiAccessChecked is true
+  // only when every target/owned domain in this run has a verdict that was
+  // actually read; with no target domains at all nothing was checked.
   const aiAccess = [];
+  let aiAccessChecked = false;
   if (aiAccessByDomain) {
     const seen = new Set();
+    let unread = 0;
     for (const r of targetResults) {
       const key = r.domain.replace(/^www\./, '');
       if (seen.has(key)) continue;
       seen.add(key);
       const v = aiAccessByDomain.get(r.domain) || aiAccessByDomain.get(key);
-      if (v) aiAccess.push({ domain: key, verdict: v.verdict, score: v.score, blocked: !!v.blocked, blockedBots: v.citationBlocked || [], detail: v.detail });
+      if (!v) { unread++; continue; }
+      const fetched = v.fetched !== false;
+      if (!fetched) unread++;
+      aiAccess.push({ domain: key, verdict: v.verdict, score: v.score, blocked: !!v.blocked, blockedBots: v.citationBlocked || [], detail: v.detail, fetched });
     }
+    aiAccessChecked = seen.size > 0 && unread === 0;
   }
   const gatedPages = targetResults.filter(r => r.aiAccessGated).length;
 
@@ -149,6 +166,7 @@ export function runAeoAnalysis(db, project, opts = {}) {
     tierCounts,
     weakestSignals: getWeakestSignals(targetResults),
     aiAccess,
+    aiAccessChecked,
     gatedPages,
   };
 
@@ -243,27 +261,56 @@ export function getCitabilityHistory(db, project, { url = null, limit = 500 } = 
 }
 
 /**
- * Feed low-scoring pages into Intelligence Ledger as citability_gap insights
+ * Feed low-scoring pages into the Intelligence Ledger as citability_gap rows.
+ *
+ * Two families of finding share the type. Domain-level AI-access blocks
+ * (fingerprint `ai-access::<domain>`) are the most severe: robots.txt locks
+ * the answer-engine crawlers out, so nothing on the domain can be cited at
+ * all. Page rows (fingerprint: the URL reduced to [a-z0-9/]) are pages scoring
+ * under 60. The fingerprints and data shapes are the ones this table has held
+ * since v1.2.0, so rows written by older versions dedupe against these.
+ *
+ * Both are a rule's output — the scorer is deterministic over the crawl — so
+ * they go through upsertInsights and get rule provenance (source_kind 'rule',
+ * rule_version, confidence 1, no expiry) and the shared re-emission rule: a row
+ * the data had resolved comes back when detected again, one a person closed
+ * stays closed. Before this the function ran its own INSERT, which left the
+ * provenance columns NULL until the next boot-time backfill guessed them, and
+ * never reopened a resolved row.
+ *
+ * `complete` is what lets a rule finding clear: an active citability_gap this
+ * run did not emit is no longer detected and is resolved. Every target page is
+ * always scored, so the page rows are always complete. The ai-access rows are
+ * complete only when robots.txt was actually read for every domain, and that
+ * is decided here, not by the caller: fetchAiAccess never throws, so a network
+ * failure arrives as an "assume open" verdict with fetched: false, and a
+ * caller that saw a Map of verdicts believed the check had run. Only a rollup
+ * in which every entry was fetched, from a caller that says the check ran
+ * (summary.aiAccessChecked), may resolve; anything less resolves nothing —
+ * better a stale row than a critical "crawlers are blocked" marked no longer
+ * detected because nobody looked.
+ *
+ * Best-effort like every Ledger writer: upsertInsights reports a failed write
+ * and returns 0 rather than failing the audit.
+ *
+ * @param {object} db
+ * @param {string} project
+ * @param {Array} targetResults  every scored target/owned page
+ * @param {Array|null} aiAccess  summary.aiAccess from runAeoAnalysis
+ * @param {{ aiAccessChecked?: boolean }} [opts]  summary.aiAccessChecked; false when robots.txt was not fetched this run
+ * @returns {number} rows written
  */
-export function upsertCitabilityInsights(db, project, targetResults, aiAccess = null) {
-  const upsertStmt = db.prepare(`
-    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
-    VALUES (?, 'citability_gap', 'active', ?, ?, ?, NULL, ?)
-    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
-      last_seen = excluded.last_seen,
-      data = excluded.data
-  `);
+export function upsertCitabilityInsights(db, project, targetResults, aiAccess = null, { aiAccessChecked = true } = {}) {
+  const items = [];
 
-  const ts = Date.now();
-  db.exec('BEGIN');
-  try {
-    // Domain-level AI-access blocks — the highest-severity citability gap: the
-    // page can't be cited at all because robots.txt locks out the crawlers.
-    if (Array.isArray(aiAccess)) {
-      for (const a of aiAccess) {
-        if (a.verdict === 'open') continue;
-        const fp = `ai-access::${a.domain}`;
-        const data = {
+  // Domain-level AI-access blocks — the highest-severity citability gap: the
+  // page can't be cited at all because robots.txt locks out the crawlers.
+  if (Array.isArray(aiAccess)) {
+    for (const a of aiAccess) {
+      if (a.verdict === 'open') continue;
+      items.push({
+        fingerprint: `ai-access::${a.domain}`,
+        data: {
           domain: a.domain,
           score: a.score,
           tier: a.blocked ? 'poor' : 'needs_work',
@@ -273,21 +320,22 @@ export function upsertCitabilityInsights(db, project, targetResults, aiAccess = 
           recommendation: a.blocked
             ? `robots.txt blocks AI answer-engine crawlers (${(a.blockedBots || []).slice(0, 5).join(', ')}). Allow ClaudeBot / GPTBot / PerplexityBot / Google-Extended so the assistants developers use can read and cite ${a.domain}.`
             : `${a.detail} Review robots.txt AI-crawler rules on ${a.domain}.`,
-        };
-        upsertStmt.run(project, fp, ts, ts, JSON.stringify(data));
-      }
+        },
+      });
     }
+  }
 
-    for (const r of targetResults) {
-      if (r.score >= 60) continue; // only flag pages that need work
+  for (const r of (Array.isArray(targetResults) ? targetResults : [])) {
+    if (r.score >= 60) continue; // only flag pages that need work
 
-      const fp = r.url.toLowerCase().replace(/[^a-z0-9/]/g, '').trim();
-      const weakest = Object.entries(r.breakdown)
-        .sort(([, a], [, b]) => a - b)
-        .slice(0, 2)
-        .map(([k]) => k.replace(/_/g, ' '));
+    const weakest = Object.entries(r.breakdown)
+      .sort(([, a], [, b]) => a - b)
+      .slice(0, 2)
+      .map(([k]) => k.replace(/_/g, ' '));
 
-      const data = {
+    items.push({
+      fingerprint: r.url.toLowerCase().replace(/[^a-z0-9/]/g, '').trim(),
+      data: {
         url: r.url,
         title: r.title,
         score: r.score,
@@ -295,15 +343,26 @@ export function upsertCitabilityInsights(db, project, targetResults, aiAccess = 
         weakest_signals: weakest,
         ai_intents: r.aiIntents,
         recommendation: `Improve ${weakest.join(' and ')} to boost AI citability from ${r.score}/100`,
-      };
-
-      upsertStmt.run(project, fp, ts, ts, JSON.stringify(data));
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    console.error('[aeo] insight upsert failed:', e.message);
+      },
+    });
   }
+
+  return upsertInsights(db, project, 'citability_gap', items, { complete: aiAccessChecked && aiAccessFetched(aiAccess) });
+}
+
+/**
+ * Was robots.txt actually read for every domain in an AI-access rollup?
+ *
+ * A verdict with `fetched: false` is analyzeAiAccess's default when the fetch
+ * failed or timed out — "assuming open" — not a measurement, so a rollup
+ * containing one has not checked the site. No rollup at all means the check
+ * was skipped. Pure; exported so the rule can be tested without a network.
+ *
+ * @param {Array|null} aiAccess  summary.aiAccess from runAeoAnalysis
+ * @returns {boolean}
+ */
+export function aiAccessFetched(aiAccess) {
+  return Array.isArray(aiAccess) && aiAccess.every(a => a && a.fetched !== false);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

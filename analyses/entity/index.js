@@ -7,7 +7,17 @@
  */
 
 import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
-import { upsertInsights } from '../../db/db.js';
+import { upsertInsights, getActiveInsights, updateInsightStatus } from '../../db/db.js';
+
+// The codes only a --live run can produce. A local run reads the crawl and
+// probes nothing, so it cannot re-detect these — and a finding a run could not
+// have detected is one it must not resolve either.
+export const LIVE_ONLY_CODES = Object.freeze(['unreachable_entity_url', 'redirecting_entity_url', 'unidirectional_entity_link']);
+
+// upsertInsights stores at most this many characters of a fingerprint. The
+// resolve pass below compares recomputed fingerprints with stored ones, so it
+// has to cut them the same way.
+const FINGERPRINT_MAX = 300;
 
 const SOCIAL_HOSTS = new Set([
   'x.com', 'twitter.com', 'github.com', 'youtube.com', 'www.youtube.com',
@@ -104,6 +114,54 @@ async function probeReciprocity(profileUrl, siteHost) {
       error: error.name === 'AbortError' ? 'timeout' : error.message,
     };
   }
+}
+
+/**
+ * Ledger fingerprint of an entity finding: its code and the URL it is about.
+ * The formula has not changed since entity_gap rows were first written, and
+ * resolveLocalEntityGaps recomputes it from a stored row's data to recognise
+ * the row, so changing it would orphan every open row.
+ */
+export function entityFingerprint(code, url) {
+  return `${code}::${(url || '').toLowerCase().replace(/\/+$/, '')}`;
+}
+
+/**
+ * Resolve the active entity_gap rows a local run no longer detects, leaving
+ * alone the ones it could not have detected.
+ *
+ * The Ledger writer's `complete` flag is all-or-nothing for a type: it would
+ * resolve a live run's unreachable / redirecting / unidirectional findings the
+ * moment a local run — which never probes a URL — failed to repeat them. So
+ * the local run does the resolve step itself, over the active rows minus
+ * LIVE_ONLY_CODES, through the same exported API and under the same rule as
+ * the writer: only `active` rows are touched, so done / dismissed /
+ * in_progress stay as the person left them, and a fingerprint emitted this run
+ * stays active. An empty local run resolves every local-code row, as an empty
+ * complete run would — fixing the last issue must close it.
+ *
+ * Best-effort like the writer: a database without the insights table, or a
+ * failed update, leaves rows active until the next run rather than failing
+ * the audit.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} project
+ * @param {{ fingerprint: string }[]} emitted  what this run wrote
+ * @returns {number} rows resolved
+ */
+export function resolveLocalEntityGaps(db, project, emitted) {
+  const seen = new Set((Array.isArray(emitted) ? emitted : []).map(f => String(f.fingerprint).slice(0, FINGERPRINT_MAX)));
+  let active;
+  try { active = getActiveInsights(db, project).entity_gaps || []; } catch { return 0; }
+  let n = 0;
+  for (const row of active) {
+    // A row without a code cannot be placed on either side of the split, so it
+    // is left as it is rather than resolved on a guess.
+    if (!row?.code || LIVE_ONLY_CODES.includes(row.code)) continue;
+    if (seen.has(entityFingerprint(row.code, row.url).slice(0, FINGERPRINT_MAX))) continue;
+    try { updateInsightStatus(db, row._insight_id, 'resolved'); n++; } catch { /* best-effort */ }
+  }
+  return n;
 }
 
 /**
@@ -224,12 +282,28 @@ export async function runEntityAudit(db, project, opts = {}) {
   // Errors and warnings are actionable, so they accumulate in the Ledger.
   // Notices are advisory ("review whether this is an official profile") and
   // would add a row per sameAs URL per run without ever being resolvable.
-  upsertInsights(db, project, 'entity_gap', issues
+  //
+  // Resolution: this audit reads every crawled target/owned page, so an active
+  // entity_gap a run did not emit is no longer detected — for the codes that
+  // run could have produced. A --live run produces every code and passes
+  // `complete`, letting the Ledger resolve whatever it did not emit. A local
+  // run produces every code but the three reachability ones, so it resolves
+  // only those it could have detected and leaves the live-only rows for the
+  // next --live run (see resolveLocalEntityGaps). Before this split the local
+  // run passed `complete` too, and marked a redirecting profile URL "no longer
+  // detected" without having probed anything.
+  const findings = issues
     .filter(i => i.severity === 'error' || i.severity === 'warning')
     .map(i => ({
-      fingerprint: `${i.code}::${(i.url || i.pageUrl || '').toLowerCase().replace(/\/+$/, '')}`,
+      fingerprint: entityFingerprint(i.code, i.url || i.pageUrl),
       data: { code: i.code, severity: i.severity, url: i.url || i.pageUrl || null, message: i.message, recommendation: i.message },
-    })));
+    }));
+  if (opts.live) {
+    upsertInsights(db, project, 'entity_gap', findings, { complete: true });
+  } else {
+    upsertInsights(db, project, 'entity_gap', findings);
+    resolveLocalEntityGaps(db, project, findings);
+  }
 
   return {
     status,

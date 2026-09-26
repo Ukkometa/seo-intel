@@ -100,6 +100,8 @@ the free audit has shown its worth.
 | `export` / `export-actions --scope technical` | Raw data and technical action exports |
 | `serve` / `status` / `update` / `guide` | Dashboard server, status, updates, guided walkthrough |
 
+Every finding carries its provenance, whether a crawl rule, the competitor-analysis model or an agent produced it: `source {kind: rule|model|agent, model, prompt_version, rule_version, confidence}` on each problem from `list_problems` and each item in `review` / `search_review`. Only rule-sourced findings are marked safe for unattended fixes (`safe_now`); a model- or agent-sourced finding in the same category goes to `needs_input` flagged `Model-sourced finding (<model>): verify before acting.` The Intelligence Ledger also closes findings as the data changes — a rule finding a later complete run no longer detects becomes `resolved`, a model or agent finding expires 90 days after it was last emitted, and both return to `active` if detected again — while `done` and `dismissed` are never flipped by a re-run, because a person decided those.
+
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial · [ukkometa.fi/seo-intel](https://ukkometa.fi/en/seo-intel/))
 
 | Command | Description |

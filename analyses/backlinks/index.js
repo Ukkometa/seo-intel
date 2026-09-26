@@ -24,6 +24,11 @@ import { upsertInsights } from '../../db/db.js';
 
 const NOFOLLOW_RE = /\b(nofollow|ugc|sponsored)\b/i;
 
+// Most backlink_gap rows one run writes to the Ledger; the same number the
+// result's `reclamation` list is cut to. See the upsert below for why the cap
+// also decides whether the run may resolve anything.
+const RECLAMATION_CAP = 25;
+
 // A page that serves almost no anchors or text to a bot has not shown us its
 // links — it rendered them client-side, or it served a wall. Not finding our
 // link in that HTML says nothing about whether the link exists, so the result
@@ -232,21 +237,29 @@ export async function runBacklinkAudit(db, project, opts = {}) {
       linkedOwnPages: linkedKeys.size,
     },
     topDomains: domains.slice(0, 15),
-    reclamation: reclamation.slice(0, 25),
+    reclamation: reclamation.slice(0, RECLAMATION_CAP),
     unlinkedHighValuePages: unlinkedRanking,
     legacyTerms,
     currentBrand: core,
   };
 
   if (!opts.skipLedger) {
-    upsertInsights(db, project, 'backlink_gap', reclamation.slice(0, 25).map(d => ({
+    // complete — relative to the imported export, which is the only evidence
+    // this audit has. Every domain in it was classified, so a reclamation row
+    // absent from this run is a domain that now links under the current brand,
+    // or that Search Console's sample no longer attributes to us; either way
+    // this audit no longer detects it and the Ledger resolves it. The no_data
+    // return above means a missing export resolves nothing. The 25-row cap
+    // is a dashboard guard; when it truncates, the run is partial and resolves
+    // nothing, for the same reason a top-N list is not a detector.
+    upsertInsights(db, project, 'backlink_gap', reclamation.slice(0, RECLAMATION_CAP).map(d => ({
       fingerprint: `reclaim::${d.domain}`,
       data: {
         domain: d.domain, pages: d.pages,
         message: `${d.domain} links to ${project} ${d.pages} time(s) under a name the site no longer uses.`,
         recommendation: `One outreach to ${d.domain} updates ${d.pages} link(s) to the current brand. Existing relationships are cheaper to correct than new links are to earn.`,
       },
-    })));
+    })), { complete: reclamation.length <= RECLAMATION_CAP });
   }
   return result;
 }

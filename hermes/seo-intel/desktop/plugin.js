@@ -19,7 +19,7 @@ let api = null
 
 const BUCKETS = [
   { key: 'needs_input', label: 'Needs you', hint: 'A person decides. Agents must not guess these.' },
-  { key: 'safe_now', label: 'Safe now', hint: 'Hygiene with a fix template. An agent may act unattended.' },
+  { key: 'safe_now', label: 'Safe now', hint: 'Hygiene with a fix template, found by a rule. An agent may act unattended.' },
   { key: 'opportunities', label: 'Bets', hint: 'Growth bets to weigh, not tasks.' },
   { key: 'working', label: 'Working', hint: 'Checks that passed on a fresh crawl.' }
 ]

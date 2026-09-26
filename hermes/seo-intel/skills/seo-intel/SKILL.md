@@ -53,9 +53,9 @@ The MCP server exposes 36 tools as native AI agent calls. Agents discover tool d
 | `get_headings(project, url, limit?)` | Heading structure (H1–H6) for a specific page |
 | `run_crawl(project, stealth?, max_pages?)` | Spawn a crawl as detached subprocess; returns pid |
 | `get_crawl_status()` | Read most recent job's progress with PID liveness |
-| `ingest_insight(project, type, data, agent_name?)` | Persist agent-generated insight to the ledger (deduped) |
-| `search_review(project, urls?, limit?)` | **Start here** — every own-site finding triaged into `needs_input` (a person decides), `safe_now` (an agent may fix unattended), `opportunities` (bets to weigh) and `working` (passes, withheld on a stale crawl). Pass `urls` to fold `page_contract` decisions in |
-| `list_problems(project, severity?, limit?)` | Ahrefs-style "what's broken" — prioritised issues with fix templates |
+| `ingest_insight(project, type, data, agent_name?, confidence?, ttl_days?)` | Persist agent-generated insight to the ledger (deduped). The row carries `source.kind: agent`, `model` = your `agent_name`, and the `confidence` (0..1) you pass — omit it when unknown rather than guess; it is stored as given, never invented. It expires `ttl_days` (default 90) after `last_seen` unless re-ingested, and re-ingesting the same fingerprint reopens an expired row. An agent-sourced finding never enters `search_review.safe_now` |
+| `search_review(project, urls?, limit?)` | **Start here** — every own-site finding triaged into `needs_input` (a person decides), `safe_now` (an agent may fix unattended), `opportunities` (bets to weigh) and `working` (passes, withheld on a stale crawl). Every item carries `source {kind: rule\|model\|agent, model, prompt_version, rule_version, confidence}`. `safe_now` holds only rule-sourced findings — a deterministic detector over the crawl found them, so an agent may act on them unattended. Model- and agent-sourced findings land in `needs_input` (with `Model-sourced finding (<model>): verify before acting.` in `decision_basis`) or `opportunities`, and must be verified before acting. Pass `urls` to fold `page_contract` decisions in |
+| `list_problems(project, severity?, limit?)` | Ahrefs-style "what's broken" — prioritised issues with fix templates. Each problem carries `source {kind, model, prompt_version, rule_version, confidence}`: who found it (a rule over the crawl, an LLM synthesis, or an agent via `ingest_insight`) and how far to trust it before acting |
 | `mark_problem_status(project, problem_id, status, agent_name?)` | Mark a problem done/dismissed |
 | `run_citability_audit(project, include_competitors?, check_ai_access?)` | AEO scoring (7 signals incl. AI-crawler access); checks robots.txt for ClaudeBot/GPTBot/PerplexityBot/Google-Extended blocks; persists scores + upserts insights |
 | `tech_audit(project, domain?, sitemap_head?, limit?)` | Technical SEO audit from crawled data — titles, meta, noindex/robots conflicts, redirects, canonicals, sitemap diff. Severity-sorted findings |
@@ -92,9 +92,15 @@ The MCP server exposes 36 tools as native AI agent calls. Agents discover tool d
    #   freshness.state is stale or missing → run_crawl(project), then call it again
    #   working lists "Google has indexed your pages" only after inspect_urls has run — Google's verdict, never the crawl's inference
 3. needs_input   → ask the person; never guess a blocked decision
+   #   a model- or agent-sourced hygiene item lands here too, its decision_basis saying
+   #   "Model-sourced finding (<model>): verify before acting." — check it against the page first
 4. safe_now      → fix unattended, verify with each item's verification, then mark_problem_status
+   #   rule-sourced only (source.kind === 'rule'): a detector over the crawl found it; nothing here is a hypothesis
 5. opportunities → weigh with the person; page_contract (free) / draft_blog_prompt (Solo) when they choose one
+   #   model- and agent-sourced findings live here or in needs_input, never in safe_now
 ```
+
+**Finding provenance, in agent terms.** Every problem from `list_problems` and every review item carries `source {kind: rule|model|agent, model, prompt_version, rule_version, confidence}`. `safe_now` holds only rule-sourced findings, so an agent may act on them unattended. Model- and agent-sourced findings — competitor gaps, positioning, anything another agent wrote through `ingest_insight` — land in `needs_input` or `opportunities` and must be verified before acting: the model may have been right, but nothing has checked. The Ledger also closes findings on its own as the data changes. A rule finding that a later complete run of the same audit no longer detects becomes `resolved`; a model or agent finding expires 90 days after `last_seen` unless it is re-emitted (`ingest_insight` takes `confidence` and `ttl_days` for this). Both return to `active` when the finding is detected again; `done` and `dismissed` are never flipped by a re-run, because a person decided those.
 
 **Own-site closed loop** (steps 1–5 free; 6–8 are Solo content production):
 ```
@@ -300,7 +306,7 @@ seo-intel templates <project>         # URL pattern / content type mapping
 
 - `backlink-audit <project>` audits the link profile Google reports for you. It is **not a link index** — it cannot find links Google has not reported and cannot see competitor backlinks. It answers what is wrong with the links you already have: **reclamation** (domains linking under a product or brand name the site no longer uses — existing relationships, cheaper to correct than new links are to earn, one outreach per domain), followed vs `nofollow`, domain concentration, and which of your pages receive no links at all. `--live` fetches the linking pages to recover the target URL and anchor text, which Search Console does not export. A site that blocks bots or renders links client-side is reported as **unknown**, never as a lost link. Use the "Latest links" export: under the export cap it holds the same URLs as "More sample links" plus a date.
 
-`entity-audit`, `gsc-platform`, `triangulation`, `geo` and `schema-audit` write their findings to the Intelligence Ledger, so they accumulate and dedupe across runs, appear on the dashboard under **Own-site Findings**, and reach agents through `list_problems`. Marking one done or dismissed keeps it from returning.
+`entity-audit`, `gsc-platform`, `triangulation`, `geo` and `schema-audit` write their findings to the Intelligence Ledger, so they accumulate and dedupe across runs, appear on the dashboard under **Own-site Findings**, and reach agents through `list_problems`. Marking one done or dismissed keeps it from returning. A finding a later complete run of the same audit no longer detects is marked `resolved` on its own and returns to `active` if the audit detects it again; `gsc-platform` writes a top-30 list rather than a complete detection, so its rows clear only when marked.
 
 ```jsonc
 {
@@ -476,11 +482,33 @@ Low-scoring pages automatically feed into the Intelligence Ledger as `citability
 
 ## Intelligence Ledger
 
-Insights from `analyze`, `keywords`, and `aeo` **accumulate across runs** — they're never overwritten. The ledger uses fingerprint-based dedup: same insight found again = updated timestamp, not duplicated.
+Insights from `analyze`, `keywords`, `aeo` and the own-site audits **accumulate across runs** — they're never overwritten. The ledger uses fingerprint-based dedup: same insight found again = updated timestamp, not duplicated.
 
-- Mark insights as **done** (fix applied) or **dismissed** (not relevant)
+- Mark insights as **done** (fix applied) or **dismissed** (not relevant) — a re-detection never reopens either
 - Dashboard shows all active insights with done/dismiss buttons
 - `POST /api/insights/:id/status` to toggle status programmatically
+
+### Finding provenance
+
+Every row says where it came from, in six fields; `list_problems` and `search_review` copy them onto each problem and review item as `source`:
+
+| Field | Meaning |
+|---|---|
+| `source_kind` | `rule` — a deterministic detector over crawl, extraction or Search Console data; `model` — an LLM synthesis (keyword gaps, content gaps, positioning, invented keywords); `agent` — written through `ingest_insight` |
+| `model` | model id, or agent name, behind a model or agent finding; `null` for rules |
+| `prompt_version` | version tag of the prompt that produced a model finding (`PROMPT_VERSION` in `analysis/prompt-builder.js`); `null` otherwise |
+| `rule_version` | version tag of the detector behind a rule finding (`1` today); `null` otherwise |
+| `confidence` | 0..1. Rules write `1.0`; models and agents write what they were given, `null` when unknown — never invented |
+| `expires_at` | epoch ms. `null` for rule findings, which clear when the rule stops firing; model and agent findings expire 90 days after `last_seen` unless re-emitted |
+
+Two statuses sit next to `active` / `done` / `dismissed` / `in_progress`, and the data sets both:
+
+- **`resolved`** — a rule finding that a later complete run of the same audit no longer emitted: no longer detected.
+- **`expired`** — a model or agent finding past `expires_at`; swept on every database open, and readers skip a past-expiry row even before the sweep.
+
+Both are reversible by the data: a re-emitted fingerprint flips `resolved` or `expired` back to `active`. `done` and `dismissed` are never flipped by a re-emission — the person decided. Rows written before these fields existed are classified once, on open: an `agent…` source becomes `agent`, the LLM synthesis types become `model` (the model taken from the analysis row when the insight still points at one), everything else becomes `rule` with confidence `1.0`.
+
+`search_review` reads `source` to place each item: only a rule-sourced problem can enter `safe_now`; a model- or agent-sourced one in an otherwise autonomous category goes to `needs_input` with `Model-sourced finding (<model or agent>): verify before acting.` in its `decision_basis`.
 
 ## Agentic Export Commands
 
@@ -541,6 +569,7 @@ If the agent is writing docs, landing pages, comparison pages, or implementation
 - If schema / headings / orphan issues dominate → start with **technical actions**
 - If AEO scores are low on important pages → restructure for **AI-citable answers**
 - If `suggest-usecases` and `gap-intel` overlap on the same topic → treat that as a **high-confidence build target**
+- If `source.kind` is `model` or `agent` → **verify before acting**; only `rule` findings are safe to fix unattended
 
 ## How to use SEO Intel reports for automation
 

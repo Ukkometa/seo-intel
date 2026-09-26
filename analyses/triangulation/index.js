@@ -134,6 +134,11 @@ export async function runTriangulationScan(db, project, opts = {}) {
   const scored = pages.filter(p => p.githubLinks.length || p.youtubeLinks.length || p.technicalSchema);
 
   // Only pages short of full proof are worth carrying forward.
+  //
+  // complete: every indexable target/owned page was scored and every page short
+  // of proof is written, so a triangulation_gap absent from this run is a page
+  // that is now triangulated (or no longer crawled) and the Ledger resolves it.
+  // Rows are not capped here, so absence really is absence.
   upsertInsights(db, project, 'triangulation_gap', scored
     .filter(p => p.status !== 'triangulated')
     .map(p => ({
@@ -143,7 +148,7 @@ export async function runTriangulationScan(db, project, opts = {}) {
         missing: Object.entries(p.signals).filter(([, v]) => !v).map(([k]) => k.replace(/([A-Z])/g, ' $1').toLowerCase().trim()),
         recommendation: p.actions.join(' '),
       },
-    })));
+    })), { complete: true });
 
   return {
     project, targetDomain: target, live: !!opts.live,

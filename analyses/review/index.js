@@ -16,12 +16,22 @@
  * page-contract's per-URL decisions, and lifts that per-page
  * blocked/allowed split to the site level.
  *
+ * safe_now is the one bucket an agent acts on without asking, which makes a
+ * wrong entry there worse than a missed one: a missed entry waits in
+ * needs_input for a person, a wrong one gets done. So the gate is three-fold —
+ * an autonomous category, a fix template, AND a rule as the source. The first
+ * two were the whole test once, and a model's technical_gap, which carries the
+ * default fix template every insight gets, landed in safe_now next to a 404
+ * the crawler saw. The model may have been right; nothing had checked. A
+ * model- or agent-sourced problem in an autonomous category now goes to
+ * needs_input with its origin named, and the person decides.
+ *
  * One result, four renderers: the MCP `search_review` tool, the dashboard
  * card, `seo-intel review`, and the Hermes desktop pane (desktop/plugin.js
  * via dashboard/plugin_api.py).
  */
 
-import { getProblems, getProblemCounts, getInspectedPages, crawlSaysIndexable, evidenceSourceOf, FREE_CATEGORIES } from '../../lib/problems.js';
+import { getProblems, getProblemCounts, getInspectedPages, crawlSaysIndexable, evidenceSourceOf, FREE_CATEGORIES, RULE_SOURCE } from '../../lib/problems.js';
 import { runPageContract } from '../page-contract/index.js';
 
 // A crawl older than this is reported as stale: findings may describe a
@@ -75,10 +85,15 @@ export function runReview(db, project, opts = {}) {
   for (const p of problems) {
     const item = toReviewItem(p, freshness);
     if (OPPORTUNITY_CATEGORIES.has(p.category)) opportunities.push(item);
-    // Mechanical AND carries a fix_template: an agent may act unattended.
-    else if (AUTONOMOUS_CATEGORIES.has(p.category) && p.fix_template) safe_now.push(item);
-    // Hygiene with no template: correctness, but a person must choose the fix.
-    else needs_input.push(item);
+    // Mechanical, carries a fix_template, AND a rule found it: an agent may
+    // act unattended. See the header for why the third condition exists.
+    else if (AUTONOMOUS_CATEGORIES.has(p.category) && p.fix_template && isRuleSourced(p)) safe_now.push(item);
+    else {
+      // Hygiene with no template: correctness, but a person must choose the
+      // fix. Or hygiene a model proposed: a person must confirm it is real.
+      if (!isRuleSourced(p)) item.decision_basis.push(modelSourcedNote(p.source));
+      needs_input.push(item);
+    }
   }
 
   // Per-URL contracts contribute the evidence-gap half of needs_input: these
@@ -96,6 +111,7 @@ export function runReview(db, project, opts = {}) {
         safe_action: b.reason,
         blocked_by: b.unblocked_by,
         evidence: [{ source: 'gsc', url, observed: observedEvidence(contract.evidence) }],
+        source: RULE_SOURCE,
       });
     }
     for (const a of contract.allowed_now) {
@@ -107,6 +123,7 @@ export function runReview(db, project, opts = {}) {
         decision: contract.decision, decision_basis: contract.decision_basis,
         safe_action: a.reason, blocked_by: null,
         evidence: a.items.map(i => ({ source: 'crawl', url, observed: i })),
+        source: RULE_SOURCE,
       });
     }
   }
@@ -149,6 +166,22 @@ function observedEvidence(evidence) {
   return 'No page-filtered Search Console export covers this URL.';
 }
 
+/**
+ * Whether a detector, not a model or an agent, found the problem. A problem
+ * with no provenance at all is not called rule-sourced: every collector in
+ * lib/problems.js writes one, so its absence means the problem came from
+ * somewhere this module does not know, and unknown is not safe.
+ */
+const isRuleSourced = p => p.source?.kind === 'rule';
+
+/**
+ * The line needs_input carries for a finding a model or agent produced. Names
+ * the model when the row recorded one, else the kind, so a person reading the
+ * review knows what to double-check against before acting.
+ */
+const modelSourcedNote = source =>
+  `Model-sourced finding (${source?.model || source?.kind || 'unknown source'}): verify before acting.`;
+
 /** Problem → ReviewItem. Keeps problems.js's own vocabulary; adds no new one. */
 function toReviewItem(p, freshness) {
   const stale = freshness.state === 'stale'
@@ -166,6 +199,7 @@ function toReviewItem(p, freshness) {
     verification: p.verification || null,
     fix_difficulty: p.fix_difficulty,
     status: p.status,
+    source: p.source || null,       // provenance, as lib/problems.js documents it
     evidence: (Array.isArray(p.affected_urls) ? p.affected_urls : []).map(url => ({
       source: evidenceSourceOf(p),
       url,

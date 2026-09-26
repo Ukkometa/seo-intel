@@ -148,10 +148,14 @@ export function runSchemaAudit(db, project, opts = {}) {
   }
 
   if (!opts.skipLedger) {
+    // complete: every schema block on every crawled target/owned page was
+    // checked and every issue is written, uncapped. A schema_specificity row
+    // absent from this run is a block that is now valid (or gone) and the
+    // Ledger resolves it — the only way a rule finding ever clears.
     upsertInsights(db, project, 'schema_specificity', issues.map(i => ({
       fingerprint: `${i.code}::${i.url.toLowerCase().replace(/\/+$/, '')}`,
       data: { url: i.url, code: i.code, severity: i.severity, schemaType: i.schemaType, message: i.message, recommendation: i.fix },
-    })));
+    })), { complete: true });
   }
 
   const errors = issues.filter(i => i.severity === 'error').length;

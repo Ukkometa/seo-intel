@@ -70,7 +70,7 @@ const PAID_FEATURES = [...new Set(gatedCalls)].filter(f => !FREE_FEATURES.includ
 // the same class of bug this script was built to catch, one layer over.
 // orphans, js-delta and blog-draft drifted this way and were corrected 2026-08-22.
 const harnessSrc = read(join(REPO, 'agent-harness.js'));
-const CAPABILITY_TIERS = [...harnessSrc.matchAll(/id:\s*'([a-z-]+)'[\s\S]{0,600}?tier:\s*'(free|pro)'/g)]
+const CAPABILITY_TIERS = [...harnessSrc.matchAll(/id:\s*'([a-z-]+)'[\s\S]{0,2000}?tier:\s*'(free|pro)'/g)]
   .map(m => ({ id: m[1], tier: m[2] }));
 
 const intelSrc = read(join(REPO, 'lib', 'intel.js'));

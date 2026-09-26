@@ -74,6 +74,19 @@ export function gatherBlogDraftContext(db, project, topic = null) {
 
   const contentGaps = (insights.content_gaps || []).slice(0, 8);
 
+  // Measured demand: gsc_quick_win / gsc_long_tail rows analyses/demand writes
+  // over Search Console data. Unlike everything above they are counts of real
+  // searches, not a model's inference, which is why the loop's ranker weights
+  // them highest. The `|| []` is load-bearing: a registry that predates the two
+  // types has no such group key, and a Ledger with no Search Console fetch has
+  // empty ones — both must read as "no measured demand", never as an error.
+  // Topic-first with a fill, as longTails above, capped at the slice size.
+  const topicFirst = (list, text, cap) => topic
+    ? [...list.filter(x => matchesTopic(text(x))), ...list.filter(x => !matchesTopic(text(x)))].slice(0, cap)
+    : list.slice(0, cap);
+  const gscQuickWins = topicFirst(insights.gsc_quick_wins || [], qw => `${qw.query || ''} ${qw.page_url || ''}`, 15);
+  const gscLongTails = topicFirst(insights.gsc_long_tails || [], lt => lt.query, 20);
+
   return {
     insights,
     citabilityGaps,
@@ -83,6 +96,8 @@ export function gatherBlogDraftContext(db, project, topic = null) {
     longTails,
     keywordGaps,
     contentGaps,
+    gscQuickWins,
+    gscLongTails,
     topic,
   };
 }
@@ -90,7 +105,10 @@ export function gatherBlogDraftContext(db, project, topic = null) {
 // ── Prompt Builder ──────────────────────────────────────────────────────────
 
 export function buildBlogDraftPrompt(context, { config, lang = 'en', topic = null, contentType = 'blog' }) {
-  const { longTails, keywordGaps, citabilityGaps, entityRows, topCitablePages, kwInventor, contentGaps, insights } = context;
+  // gscQuickWins / gscLongTails default to empty: a context built by hand, or
+  // by an older gatherBlogDraftContext, still yields a prompt.
+  const { longTails, keywordGaps, citabilityGaps, entityRows, topCitablePages, kwInventor, contentGaps, insights,
+    gscQuickWins = [], gscLongTails = [] } = context;
   const isFi = lang === 'fi';
   const langName = isFi ? 'Finnish' : 'English';
 
@@ -150,9 +168,35 @@ ${typeInstructions[contentType] || typeInstructions.blog}
     prompt += `Primary focus: **${topic}**. All keyword and gap data below has been filtered to this topic. Build the entire post around this subject.\n`;
   } else {
     prompt += `Select the highest-opportunity topic from the gaps below. Choose the gap that: (a) has the most keyword_gap entries or (b) is flagged as a high priority long-tail. Explain your topic choice in the frontmatter \`topic_selection_rationale\` field.\n`;
+    if (gscQuickWins.length || gscLongTails.length) {
+      prompt += `Where the measured-demand block below names a query, prefer it over an inferred gap: it is a count of real searches, not a guess.\n`;
+    }
   }
 
   // ── Section 4: Intelligence data ──
+  // Measured demand first: Search Console counted these searches, the sections
+  // after it are a model's inference. The block says so, because a writer who
+  // treats the two alike will spend the post on the guess.
+  if (gscQuickWins.length || gscLongTails.length) {
+    const num = (v, digits = 1) => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(digits) : (v ?? '—');
+    prompt += `\n## Measured demand (Search Console)\n\n`;
+    prompt += `MEASURED, not inferred: these queries produced real impressions for this site in the most recent Search Console window. Treat them as confirmed demand and answer them before the inferred gaps below.\n`;
+    if (gscLongTails.length) {
+      prompt += `\n### Long-tail queries with impressions and no page-one landing (answer each directly, in its own words)\n\n`;
+      prompt += `| Query | Impressions | Position | Best existing page |\n|---|---|---|---|\n`;
+      for (const lt of gscLongTails) {
+        prompt += `| ${lt.query || '—'} | ${lt.impressions ?? '—'} | ${num(lt.position)} | ${lt.best_page || 'none'} |\n`;
+      }
+    }
+    if (gscQuickWins.length) {
+      prompt += `\n### Quick wins: queries a page already ranks 4-20 for (a stronger answer and snippet lifts clicks without new ranking)\n\n`;
+      prompt += `| Query | Page | Impressions | Position | CTR | Potential clicks |\n|---|---|---|---|---|---|\n`;
+      for (const qw of gscQuickWins) {
+        prompt += `| ${qw.query || '—'} | ${qw.page_url || '—'} | ${qw.impressions ?? '—'} | ${num(qw.position)} | ${num(qw.ctr)}% | ${qw.potential_clicks ?? '—'} |\n`;
+      }
+    }
+  }
+
   if (keywordGaps.length) {
     prompt += `\n## Keyword Gaps to Target (include these as primary/secondary keywords)\n\n`;
     prompt += `| Keyword | Priority | Notes |\n|---|---|---|\n`;

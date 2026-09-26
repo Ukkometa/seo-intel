@@ -266,6 +266,61 @@ const SOURCE_KINDS = new Set(['rule', 'model', 'agent']);
   assert.equal(insightSource(undefined, undefined).kind, 'rule');
 }
 
+// ── Measured demand: a quick win is a free opportunity, a decay is paid ──────
+// analyses/demand writes rule insights over gsc_daily. gsc_quick_win is
+// own-site and category keyword, so it reaches the review's opportunities
+// without Solo and never its safe_now (a rewrite is a bet, not hygiene).
+// gsc_decay is scope 'history' — the first scope that is neither own-site nor
+// competitor — and must still read as paid: absent without includePaid, tier
+// 'paid' with it.
+{
+  const db = fixture();
+  const QUICK_WIN = { page_url: 'https://acme.io/noschema', query: 'acme widgets pricing', impressions: 700, clicks: 3, position: 6.2,
+    ctr: 0.43, expected_ctr: 4, kind: 'ctr_gap', potential_clicks: 25,
+    recommendation: 'Rewrite the title and meta description of https://acme.io/noschema to answer "acme widgets pricing" directly.' };
+  const DECAY = { page_url: 'https://acme.io/', clicks: 40, previous_clicks: 100, delta_pct: -60, impressions: 900, previous_impressions: 1200,
+    position: 9.1, previous_position: 5.4, window: '2026-08-27..2026-09-23', previous_window: '2026-07-30..2026-08-26',
+    recommendation: 'Refresh https://acme.io/: clicks fell 60% against the previous window.' };
+  const prov = { source_kind: 'rule', rule_version: '1', confidence: 1 };
+  addInsight(db, 'gsc_quick_win', 'ctr_gap::acme widgets pricing::https://acme.io/noschema', QUICK_WIN, prov, { source: 'demand' });
+  addInsight(db, 'gsc_decay', 'https://acme.io/', DECAY, prov, { source: 'demand' });
+
+  assert.equal(insightMeta('gsc_quick_win').scope, 'own-site', 'the registry declares a quick win own-site');
+  assert.equal(insightMeta('gsc_decay').scope, 'history', 'and a decay history');
+
+  const free = getProblems(db, 'fx', {});
+  const qw = free.find(p => p.id.includes('gsc_quick_win'));
+  assert.ok(qw, 'a quick win surfaces without Solo');
+  assert.equal(qw.tier, 'free');
+  assert.equal(qw.category, 'keyword', 'category comes from the registry');
+  assert.equal(qw.severity, 'info');
+  assert.equal(qw.fix_difficulty, 2);
+  assert.deepEqual(qw.source, { kind: 'rule', model: null, prompt_version: null, rule_version: '1', confidence: 1 }, 'a rule found it');
+  assert.ok(qw.title.includes('acme widgets pricing') && qw.title.includes('https://acme.io/noschema'), `title names query and page: ${qw.title}`);
+  assert.deepEqual(qw.affected_urls, ['https://acme.io/noschema']);
+  assert.equal(qw.fix_template, QUICK_WIN.recommendation, 'the fix is the recommendation the rule wrote');
+  assert.ok(!free.some(p => p.id.includes('gsc_decay')), 'a decay is paid: absent without includePaid');
+
+  const paid = getProblems(db, 'fx', { includePaid: true });
+  const decay = paid.find(p => p.id.includes('gsc_decay'));
+  assert.ok(decay, 'with Solo the decay is listed');
+  assert.equal(decay.tier, 'paid');
+  assert.equal(decay.category, 'content');
+  assert.equal(decay.severity, 'warn');
+  assert.equal(decay.source.kind, 'rule');
+  assert.deepEqual(decay.affected_urls, ['https://acme.io/']);
+  assert.ok(paid.some(p => p.id === qw.id), 'the free quick win is still there');
+
+  const r = runReview(db, 'fx', {});
+  assert.ok(r.opportunities.some(i => i.id === qw.id), 'measured demand is a growth bet: opportunities');
+  assert.ok(!r.safe_now.some(i => i.id === qw.id), 'never safe_now — a title rewrite is a judgment, rule-sourced or not');
+  assert.ok(!r.needs_input.some(i => i.id === qw.id), 'and it does not inflate the decision bucket');
+  assert.ok(![...r.opportunities, ...r.safe_now, ...r.needs_input].some(i => i.id.includes('gsc_decay')), 'the review without Solo shows no decay');
+  const solo = runReview(db, 'fx', { includePaid: true });
+  assert.ok(solo.opportunities.some(i => i.id === decay.id), 'with Solo the decay is an opportunity too');
+  assert.equal(solo.counts.total, solo.safe_now.length + solo.opportunities.length + solo.needs_input.length);
+}
+
 // A model finding past its expiry is not a problem, even while its status
 // still reads active: the sweep that flips it to 'expired' may not have run.
 {

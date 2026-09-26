@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { getDb, getActiveInsights, getSchemasByProject } from './db/db.js';
 import { DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 import { DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
+import { DEFAULTS as DEMAND_DEFAULTS } from './analyses/demand/index.js';
 import { URL_INSPECTION_QUOTA } from './lib/gsc-api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -159,6 +160,28 @@ export const capabilities = [
     phase: 'collect',
     tier: 'free',
     dependsOn: [],
+  },
+  {
+    id: 'demand',
+    name: 'Search Demand',
+    description: `Quick wins and long tails from your own Search Console rows (${DEMAND_DEFAULTS.windowDays}-day window): striking-distance queries with CTR under a heuristic baseline or on page two, and phrases with no page on page one. Rule-sourced; the review lists them under opportunities.`,
+    requires: [],
+    inputs: { project: 'string', options: { windowDays: 'number', minImpressions: 'number' } },
+    outputs: { quick_wins: 'array<QuickWin>', long_tails: 'array<LongTail>', window: 'object', skipped_reason: 'string|null' },
+    phase: 'analyze',
+    tier: 'free',
+    dependsOn: ['gsc-fetch'],
+  },
+  {
+    id: 'trends',
+    name: 'Traffic Trends',
+    description: `Page-level click decay and growth: the current ${DEMAND_DEFAULTS.windowDays}-day page-grain window against the same-length window before it, from a ${DEMAND_DEFAULTS.minTrendClicks}-click floor. Decays are filed as gsc_decay (scope history); skipped, nothing written, when the previous window is shorter.`,
+    requires: [],
+    inputs: { project: 'string', options: { windowDays: 'number' } },
+    outputs: { decays: 'array<Trend>', growth: 'array<Trend>', previous_window: 'object|null', skipped_reason: 'string|null' },
+    phase: 'analyze',
+    tier: 'pro',
+    dependsOn: ['gsc-fetch'],
   },
   {
     id: 'extract',
@@ -387,6 +410,8 @@ export const pipeline = {
     crawl: [],
     'gsc-fetch': [],
     'gsc-inspect': [],
+    demand: ['gsc-fetch'],
+    trends: ['gsc-fetch'],
     extract: ['crawl'],
     aeo: ['crawl'],
     rescore: ['aeo'],
@@ -516,6 +541,33 @@ export async function run(command, project, opts = {}) {
           // the API) is the actionable half of a GscApiError.
           return fail(err.hint ? `${err.message} — ${err.hint}` : err.message);
         }
+      }
+
+      case 'demand': {
+        // Arithmetic over gsc_daily, no request: a project without rows comes
+        // back ok with skipped_reason 'no_gsc_data' and a hint, not a failure.
+        // Thresholds pass through opts; trends stay off — that is the paid half.
+        const { runDemand } = await import('./analyses/demand/index.js');
+        return wrap(runDemand(db, project, { ...opts, trends: false }));
+      }
+
+      case 'trends': {
+        // The paid half of the same module (gsc_decay, scope 'history'). Like
+        // brief and velocity, the harness itself does not gate: the manifest
+        // says tier 'pro' and the MCP demand_trends tool enforces it. Only the
+        // trends half is returned; quick wins and long tails are 'demand'.
+        const { runDemand } = await import('./analyses/demand/index.js');
+        const r = runDemand(db, project, { ...opts, trends: true });
+        const t = r.trends;
+        return wrap({
+          project: r.project, property: r.property, search_type: r.search_type,
+          window: r.window, previous_window: t?.previous_window ?? null,
+          coverage: r.coverage?.page ?? null,
+          decays: t?.decays ?? [], growth: t?.growth ?? [],
+          counts: { decays: r.counts.decays, growth: r.counts.growth },
+          skipped_reason: r.skipped_reason ?? t?.skipped_reason ?? null,
+          hint: r.hint ?? null,
+        });
       }
 
       case 'backlink-import': {

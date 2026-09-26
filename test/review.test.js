@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { runReview } from '../analyses/review/index.js';
-import { getProblems } from '../lib/problems.js';
+import { getProblems, normalizeSeverity } from '../lib/problems.js';
 
 const DAY = 86_400_000;
 
@@ -56,6 +56,37 @@ function fixture({ crawledAt = Date.now() } = {}) {
   const problems = getProblems(db, 'fx', { includePaid: true });
   assert.ok(problems.some(p => p.id.includes('backlink_gap')), 'the reclamation finding surfaces as a problem');
   assert.ok(problems.every(p => Array.isArray(p.affected_urls)), 'affected_urls keeps its documented array shape');
+}
+
+// ── A schema-specificity finding is critical, and never breaks the sort ─────
+// The registry used to declare it 'error', which has no rank: the comparator
+// returned NaN and the order of the entire list became unstable.
+{
+  const db = fixture();
+  const now = Date.now();
+  db.prepare(`INSERT INTO insights (project, type, fingerprint, first_seen, last_seen, data, source)
+              VALUES ('fx', 'schema_specificity', 'product_without_offers::https://acme.io', ?, ?, ?, 'schema-audit')`)
+    .run(now, now, JSON.stringify({ url: 'https://acme.io/', code: 'product_without_offers', severity: 'error',
+      schemaType: 'Product', message: 'Product markup carries no priced offers.', recommendation: 'Add offers with price and priceCurrency.' }));
+  const problems = getProblems(db, 'fx', { includePaid: true });
+  const schema = problems.find(p => p.id.includes('schema_specificity'));
+  assert.ok(schema, 'the schema-specificity finding surfaces as a problem');
+  assert.equal(schema.severity, 'critical', 'registry severity is on the public vocabulary');
+  assert.equal(schema.tier, 'free', 'own-site schema findings are free');
+  const RANK = { critical: 0, warn: 1, info: 2 };
+  assert.ok(problems.length >= 3, 'fixture yields several severities to order');
+  for (const p of problems) assert.ok(p.severity in RANK, `${p.id}: severity ${p.severity} is public vocabulary`);
+  for (let i = 1; i < problems.length; i++) {
+    assert.ok(RANK[problems[i - 1].severity] <= RANK[problems[i].severity],
+      `problems are severity-sorted: ${problems[i - 1].severity} before ${problems[i].severity}`);
+  }
+  assert.equal(problems[0].severity, 'critical', 'a critical finding sorts first');
+  // Rows and registries written by older versions still map onto the vocabulary.
+  assert.equal(normalizeSeverity('error'), 'critical');
+  assert.equal(normalizeSeverity('critical'), 'critical');
+  assert.equal(normalizeSeverity('info'), 'info');
+  assert.equal(normalizeSeverity('warning'), 'warn', 'an unknown severity is neither hidden nor promoted');
+  assert.equal(normalizeSeverity(undefined), 'warn');
 }
 
 // ── Fresh crawl: buckets route by category and template; passes are reported ─

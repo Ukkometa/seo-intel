@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { runEntityAudit } from '../analyses/entity/index.js';
 import { runTriangulationScan } from '../analyses/triangulation/index.js';
 import { runGeoAudit } from '../analyses/geo/index.js';
-import { analyzePlatformQueryGaps } from '../analyses/gsc-platform/index.js';
+import { analyzePlatformQueryGaps, runPlatformGapAnalysis } from '../analyses/gsc-platform/index.js';
 
 const db = new DatabaseSync(':memory:');
 db.exec(`
@@ -69,5 +69,83 @@ assert.equal(platform.summary.highIntentWebContentGaps, 1);
 assert.equal(platform.gaps[0].query, 'solana rpc tutorial');
 assert.equal(platform.gaps[0].platformSignals.length, 2);
 assert.equal(platform.summary.crossSurfaceSerpOpportunities, 1);
+
+// ── gsc-platform --api: token resolution and fetch injection ────────────────
+// The API path must never touch the network or the real .tokens store here, so
+// fetch and the OAuth module are injected. Each mock fetch records the URL and
+// Authorization header of every request and answers with Search Console rows
+// for the property being queried.
+const gscConfig = { gsc: { platformProperties: {
+  web: 'sc-domain:example.com',
+  youtube: 'https://www.youtube.com/channel/x',
+} } };
+function makeMockFetch() {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, authorization: init.headers.Authorization, body: JSON.parse(init.body) });
+    const rows = url.includes(encodeURIComponent('sc-domain:example.com'))
+      ? [{ keys: ['solana rpc'], clicks: 5, impressions: 100, position: 9 }]
+      : [
+        { keys: ['solana rpc'], clicks: 10, impressions: 200, position: 4 },
+        { keys: ['solana rpc tutorial'], clicks: 12, impressions: 500, position: 3 },
+      ];
+    return { ok: true, json: async () => ({ rows }) };
+  };
+  return { fetch, calls };
+}
+
+// (a) explicit accessToken wins and is sent as a Bearer header, once per property.
+{
+  const mock = makeMockFetch();
+  const result = await runPlatformGapAnalysis(gscConfig, { api: true, accessToken: 'tok', fetch: mock.fetch });
+  assert.equal(result.mode, 'api');
+  assert.equal(mock.calls.length, 2, 'one request per configured property');
+  assert.ok(mock.calls.every(c => c.authorization === 'Bearer tok'), 'explicit token is the Bearer header');
+  assert.ok(mock.calls.some(c => c.url.includes(encodeURIComponent('sc-domain:example.com'))));
+  assert.ok(mock.calls.some(c => c.url.includes(encodeURIComponent('https://www.youtube.com/channel/x'))));
+  assert.ok(mock.calls.every(c => c.body.dimensions[0] === 'query' && c.body.startDate && c.body.endDate));
+  assert.equal(result.summary.highIntentWebContentGaps, 1, 'api mode returns the same analysis shape as import mode');
+  assert.equal(result.gaps[0].query, 'solana rpc tutorial');
+  assert.deepEqual(result.summary.platformProperties, ['youtube']);
+}
+
+const savedGscToken = process.env.GSC_ACCESS_TOKEN;
+delete process.env.GSC_ACCESS_TOKEN;
+try {
+  // (b) nothing explicit, no env, Google not connected -> tell the user how to connect.
+  {
+    const mock = makeMockFetch();
+    const oauth = { isConnected: () => false, getAccessToken: async () => { throw new Error('unreachable'); } };
+    await assert.rejects(
+      runPlatformGapAnalysis(gscConfig, { api: true, fetch: mock.fetch, oauth }),
+      err => err.message.includes('seo-intel auth google') && err.message.includes('GSC_ACCESS_TOKEN'),
+    );
+    assert.equal(mock.calls.length, 0, 'no request is made without a token');
+  }
+
+  // (c) connected Google account -> its (auto-refreshed) token is the Bearer header.
+  {
+    const mock = makeMockFetch();
+    const oauth = { isConnected: () => true, getAccessToken: async () => 'from-oauth' };
+    const result = await runPlatformGapAnalysis(gscConfig, { api: true, fetch: mock.fetch, oauth });
+    assert.equal(result.mode, 'api');
+    assert.equal(mock.calls.length, 2);
+    assert.ok(mock.calls.every(c => c.authorization === 'Bearer from-oauth'), 'connected-account token is the Bearer header');
+  }
+
+  // (d) GSC_ACCESS_TOKEN overrides the connected account (CI / hand-issued tokens).
+  {
+    process.env.GSC_ACCESS_TOKEN = 'from-env';
+    const mock = makeMockFetch();
+    const oauth = { isConnected: () => true, getAccessToken: async () => { throw new Error('env must win over oauth'); } };
+    const result = await runPlatformGapAnalysis(gscConfig, { api: true, fetch: mock.fetch, oauth });
+    assert.equal(result.mode, 'api');
+    assert.ok(mock.calls.every(c => c.authorization === 'Bearer from-env'), 'env token is the Bearer header');
+    delete process.env.GSC_ACCESS_TOKEN;
+  }
+} finally {
+  if (savedGscToken === undefined) delete process.env.GSC_ACCESS_TOKEN;
+  else process.env.GSC_ACCESS_TOKEN = savedGscToken;
+}
 
 console.log('modern SEO module fixtures: PASS');

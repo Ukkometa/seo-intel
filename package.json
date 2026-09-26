@@ -107,7 +107,7 @@
     "test:ledger": "node test/ledger.test.js",
     "test:page-contract": "node test/page-contract.test.js",
     "test:backlinks": "node test/backlinks.test.js",
-    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js",
+    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

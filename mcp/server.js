@@ -9,8 +9,9 @@
  * Install for Claude Code:
  *   claude mcp add seo-intel "npx seo-intel-mcp"
  *
- * Tools: 22 total. 20 are free — only scan_site and get_competitor_positioning
- * require Solo outright. Two more are partially gated:
+ * Tool counts are derived at boot (TOOL_COUNT and PAID_TOOL_NAMES at the foot
+ * of this file) and printed in the ready banner; nothing here hand-counts
+ * them. Two tools are partially gated:
  *   get_intel     — free `raw|audit|blog|graph` slices / Solo `competitor` slice
  *   export_intel  — free on 10 tables / Solo for the `analyses` table
  * The free/paid line lives in lib/gate.js (CLI) and the isPro() checks below
@@ -48,6 +49,8 @@ import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js
 // no banner, no handshake. Keep the crawler subtree off the boot path.
 import { runContentLoop } from '../analyses/loop/orchestrator.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
+import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from '../analyses/gsc-fetch/index.js';
+import { GscApiError } from '../lib/gsc-api.js';
 import { run } from '../agent-harness.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -706,7 +709,7 @@ server.registerTool(
       '',
       'Each export is recorded with the scope its own Filters.csv declares. An export taken with a Page filter becomes page-level evidence; an unfiltered one is property-wide and is NOT evidence about any individual page. The result says which you have.',
       '',
-      'Run this before page_contract. Free tier — it is your own Search Console data.',
+      'This is the CSV route; prefer fetch_gsc when the Google account is connected — it covers every page with real dates and needs no export. Run one of the two before page_contract. Free tier — it is your own Search Console data.',
     ].join('\n'),
     inputSchema: {
       project: z.string().describe('Project slug. Use list_projects to discover.'),
@@ -731,6 +734,53 @@ server.registerTool(
   },
 );
 
+// ── Tool: fetch_gsc (FREE) ────────────────────────────────────────────────
+server.registerTool(
+  'fetch_gsc',
+  {
+    description: [
+      `Fetch Google Search Console data for a project straight from the Search Analytics API into the local database. Stores three grains with real dates: page×query daily (the last ${GSC_FETCH_DEFAULTS.days} days by default), page daily and query daily (${GSC_FETCH_DEFAULTS.months} months of history, the API's own horizon).`,
+      '',
+      'Incremental: each call extends what is stored and re-fetches only the last few days Google may still revise, so repeat calls are cheap. Only the project\'s own property is fetched — matched from target.domain, or pinned with gsc.property in the project config or the property argument; a miss lists the properties the account does have. Set dry_run to see the windows it would request without spending quota; with a configured property that needs no credentials at all.',
+      '',
+      'Needs the Google account connected (seo-intel auth google) or GSC_ACCESS_TOKEN in the environment.',
+      '',
+      'page_contract prefers this data over CSV exports (import_gsc_queries). With it, a page with no rows is measured absence — the page earned no reportable impressions in the window — not missing data. Free tier — it is your own Search Console data.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      days: z.number().int().positive().optional().describe(`page×query lookback in days. Default ${GSC_FETCH_DEFAULTS.days}.`),
+      months: z.number().int().positive().optional().describe(`page and query lookback in months, capped at the API's ${GSC_FETCH_DEFAULTS.maxMonths}. Default ${GSC_FETCH_DEFAULTS.months}.`),
+      dry_run: z.boolean().optional().describe('Plan the date windows without making any Search Analytics request.'),
+      property: z.string().optional().describe('Search Console siteUrl to fetch (sc-domain:example.com or https://www.example.com/). Overrides auto-detection and config.gsc.property.'),
+    },
+  },
+  async ({ project, days, months, dry_run, property }) => {
+    const config = loadProjectConfig(project);
+    if (!config) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const result = await runGscFetch(getDb(), project, config, { days, months, dryRun: !!dry_run, property });
+      const rows = result.grains.reduce((n, g) => n + (g.rows || 0), 0);
+      const windows = result.grains.reduce((n, g) => n + g.windows.length, 0);
+      return { content: [{ type: 'text', text: JSON.stringify({
+        ...result,
+        hint: result.dry_run
+          ? `Plan only: ${windows} window(s) would be requested. Call again without dry_run to fetch them.`
+          : windows
+            ? `${rows} rows stored. page_contract now decides from this data; call it on the URLs you care about.`
+            : 'Already current — nothing to fetch. page_contract reads the stored data.',
+      }, null, 2) }] };
+    } catch (err) {
+      // GscApiError carries the fix (401 → reconnect, 403 → property or API
+      // access, 429 → wait). The agent needs it verbatim, not paraphrased.
+      const text = err instanceof GscApiError && err.hint ? `${err.message}\n${err.hint}` : `seo-intel error: ${err.message}`;
+      return { content: [{ type: 'text', text }], isError: true };
+    }
+  },
+);
+
 // ── Tool: page_contract (FREE) ────────────────────────────────────────────
 server.registerTool(
   'page_contract',
@@ -750,7 +800,7 @@ server.registerTool(
       '',
       'Demand evidence gates content INVESTMENT, not correctness. Items under allowed_now — invalid structured data, indexability faults — should still be fixed and reported even when every content action is blocked.',
       '',
-      'Requires import_gsc_queries to have run. Free tier — it is your own site and your own Search Console data.',
+      'Requires fetch_gsc or import_gsc_queries to have run. Free tier — it is your own site and your own Search Console data.',
     ].join('\n'),
     inputSchema: {
       project: z.string().describe('Project slug. Use list_projects to discover.'),

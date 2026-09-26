@@ -86,6 +86,50 @@ export function getDb(dbPath = resolveDbPath()) {
     -- expression index below closes that hole; the migration that collapses any
     -- rows already duplicated runs once, just after this block.
 
+    -- Search Analytics API rows (lib/gsc-api.js). One row per (property, grain,
+    -- day, page, query). Kept apart from gsc_queries on purpose: that table
+    -- holds UI exports with ctr in PERCENT and a prose date_range, this one
+    -- holds API rows with ctr as a 0-1 FRACTION and a real date. Mixing them
+    -- would double one or halve the other in every aggregate.
+    CREATE TABLE IF NOT EXISTS gsc_daily (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      project      TEXT NOT NULL,
+      property     TEXT NOT NULL,      -- Search Console siteUrl the rows came from
+      grain        TEXT NOT NULL,      -- page_query | page | query
+      search_type  TEXT NOT NULL DEFAULT 'web',
+      date         TEXT NOT NULL,      -- YYYY-MM-DD as the API returns it
+      page_url     TEXT,               -- NULL for the query grain
+      query        TEXT,               -- NULL for the page grain
+      clicks       INTEGER NOT NULL DEFAULT 0,
+      impressions  INTEGER NOT NULL DEFAULT 0,
+      ctr          REAL,               -- fraction 0-1 as the API returns it (gsc_queries stores PERCENT — do not mix)
+      position     REAL,
+      fetched_at   INTEGER NOT NULL
+    );
+    -- Identity over COALESCE so the NULL page_url of the query grain and the
+    -- NULL query of the page grain still collide on re-fetch (see the
+    -- gsc_queries note above for why a plain UNIQUE would not).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_gsc_daily_identity
+      ON gsc_daily(project, property, grain, search_type, date, COALESCE(page_url,''), COALESCE(query,''));
+    CREATE INDEX IF NOT EXISTS idx_gsc_daily_page ON gsc_daily(project, grain, page_url, date);
+    CREATE INDEX IF NOT EXISTS idx_gsc_daily_date ON gsc_daily(project, grain, date);
+
+    -- One row per API walk, so "what did we fetch, when, and was it cut short?"
+    -- is answerable without re-deriving it from gsc_daily.
+    CREATE TABLE IF NOT EXISTS gsc_fetches (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      project     TEXT NOT NULL,
+      property    TEXT NOT NULL,
+      grain       TEXT NOT NULL,
+      search_type TEXT NOT NULL DEFAULT 'web',
+      start_date  TEXT NOT NULL,
+      end_date    TEXT NOT NULL,
+      rows        INTEGER NOT NULL,
+      requests    INTEGER NOT NULL,
+      truncated   INTEGER NOT NULL DEFAULT 0,
+      fetched_at  INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS backlinks (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       project        TEXT NOT NULL,
@@ -985,4 +1029,105 @@ export function getWatchHistory(db, project, limit = 10) {
   return db.prepare(
     'SELECT * FROM watch_snapshots WHERE project = ? ORDER BY created_at DESC LIMIT ?'
   ).all(project, limit);
+}
+
+// ── Search Console API (gsc_daily / gsc_fetches) ─────────────────────────
+
+/**
+ * Write API rows (the shape lib/gsc-api.js rowsToDaily() produces) in one
+ * transaction. A re-fetch of the same window replaces in place — Google
+ * revises the last few days, so the newest fetch must win, never add.
+ * Any failure rolls the whole batch back: a half-written day would read as
+ * a real traffic dip.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {object[]} rows
+ * @returns {number} rows written
+ */
+export function upsertGscDaily(db, rows) {
+  if (!Array.isArray(rows) || !rows.length) return 0;
+  const stmt = db.prepare(`
+    INSERT INTO gsc_daily (project, property, grain, search_type, date, page_url, query, clicks, impressions, ctr, position, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project, property, grain, search_type, date, COALESCE(page_url,''), COALESCE(query,'')) DO UPDATE SET
+      clicks = excluded.clicks, impressions = excluded.impressions,
+      ctr = excluded.ctr, position = excluded.position, fetched_at = excluded.fetched_at
+  `);
+  const now = Date.now();
+  let count = 0;
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) {
+      stmt.run(
+        r.project, r.property, r.grain, r.search_type || 'web', r.date,
+        r.page_url ?? null, r.query ?? null,
+        r.clicks | 0, r.impressions | 0, r.ctr ?? null, r.position ?? null,
+        r.fetched_at ?? now,
+      );
+      count++;
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return count;
+}
+
+/**
+ * Record one API walk. `truncated` marks a walk that hit its row cap, so a
+ * later reader can tell "this is all the data" from "this is what fit".
+ * @returns {number} the new gsc_fetches id
+ */
+export function recordGscFetch(db, { project, property, grain, searchType = 'web', startDate, endDate, rows, requests, truncated = false, fetchedAt }) {
+  const res = db.prepare(`
+    INSERT INTO gsc_fetches (project, property, grain, search_type, start_date, end_date, rows, requests, truncated, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(project, property, grain, searchType || 'web', startDate, endDate, rows | 0, requests | 0, truncated ? 1 : 0, fetchedAt ?? Date.now());
+  return Number(res.lastInsertRowid);
+}
+
+/**
+ * What gsc_daily holds for a project: which property, which dates, how many
+ * distinct days. Null when nothing has been fetched (or the table predates
+ * this schema), so callers can say "no API data yet" instead of "zero
+ * traffic". When several properties have rows and none is asked for, the
+ * most recently fetched one is described — that is the one a fresh fetch
+ * would extend.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} project
+ * @param {{ grain?: string, property?: string }} [filter]
+ * @returns {{ property: string, grain: string|null, min_date: string, max_date: string, days: number, rows: number, last_fetched_at: number } | null}
+ */
+export function getGscCoverage(db, project, { grain, property } = {}) {
+  try {
+    const grainSql = grain ? ' AND grain = ?' : '';
+    const grainArgs = grain ? [grain] : [];
+    let prop = property || null;
+    if (!prop) {
+      const newest = db.prepare(
+        `SELECT property FROM gsc_daily WHERE project = ?${grainSql} ORDER BY fetched_at DESC, id DESC LIMIT 1`
+      ).get(project, ...grainArgs);
+      if (!newest) return null;
+      prop = newest.property;
+    }
+    const row = db.prepare(`
+      SELECT MIN(date) AS min_date, MAX(date) AS max_date, COUNT(DISTINCT date) AS days,
+             COUNT(*) AS rows, MAX(fetched_at) AS last_fetched_at
+      FROM gsc_daily WHERE project = ? AND property = ?${grainSql}
+    `).get(project, prop, ...grainArgs);
+    if (!row || !row.rows) return null;
+    return {
+      property: prop,
+      grain: grain || null,
+      min_date: row.min_date,
+      max_date: row.max_date,
+      days: row.days,
+      rows: row.rows,
+      last_fetched_at: row.last_fetched_at,
+    };
+  } catch {
+    return null;
+  }
 }

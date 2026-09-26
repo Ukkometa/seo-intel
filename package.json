@@ -36,6 +36,8 @@
     "./schema-audit": "./analyses/schema-audit/index.js",
     "./page-contract": "./analyses/page-contract/index.js",
     "./gsc-import": "./lib/gsc-import.js",
+    "./gsc-api": "./lib/gsc-api.js",
+    "./gsc-fetch": "./analyses/gsc-fetch/index.js",
     "./brand": "./lib/brand.js",
     "./backlinks": "./analyses/backlinks/index.js",
     "./backlink-import": "./lib/backlink-import.js",
@@ -107,7 +109,7 @@
     "test:ledger": "node test/ledger.test.js",
     "test:page-contract": "node test/page-contract.test.js",
     "test:backlinks": "node test/backlinks.test.js",
-    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js",
+    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js && node test/gsc-api.test.js && node test/gsc-fetch.test.js",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

@@ -25,7 +25,39 @@ function fixture({ crawledAt = Date.now() } = {}) {
       source_analysis_id INTEGER, data TEXT NOT NULL, source TEXT, UNIQUE(project, type, fingerprint));
     CREATE TABLE gsc_queries (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, page_url TEXT, query TEXT,
       clicks INTEGER, impressions INTEGER, ctr REAL, position REAL, date_range TEXT, source TEXT, imported_at INTEGER,
-      UNIQUE(project, page_url, query, date_range));`);
+      UNIQUE(project, page_url, query, date_range));
+    CREATE TABLE IF NOT EXISTS gsc_daily (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      project      TEXT NOT NULL,
+      property     TEXT NOT NULL,      -- Search Console siteUrl the rows came from
+      grain        TEXT NOT NULL,      -- page_query | page | query
+      search_type  TEXT NOT NULL DEFAULT 'web',
+      date         TEXT NOT NULL,      -- YYYY-MM-DD as the API returns it
+      page_url     TEXT,               -- NULL for the query grain
+      query        TEXT,               -- NULL for the page grain
+      clicks       INTEGER NOT NULL DEFAULT 0,
+      impressions  INTEGER NOT NULL DEFAULT 0,
+      ctr          REAL,               -- fraction 0-1 as the API returns it (gsc_queries stores PERCENT — do not mix)
+      position     REAL,
+      fetched_at   INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_gsc_daily_identity
+      ON gsc_daily(project, property, grain, search_type, date, COALESCE(page_url,''), COALESCE(query,''));
+    CREATE INDEX IF NOT EXISTS idx_gsc_daily_page ON gsc_daily(project, grain, page_url, date);
+    CREATE INDEX IF NOT EXISTS idx_gsc_daily_date ON gsc_daily(project, grain, date);
+    CREATE TABLE IF NOT EXISTS gsc_fetches (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      project     TEXT NOT NULL,
+      property    TEXT NOT NULL,
+      grain       TEXT NOT NULL,
+      search_type TEXT NOT NULL DEFAULT 'web',
+      start_date  TEXT NOT NULL,
+      end_date    TEXT NOT NULL,
+      rows        INTEGER NOT NULL,
+      requests    INTEGER NOT NULL,
+      truncated   INTEGER NOT NULL DEFAULT 0,
+      fetched_at  INTEGER NOT NULL
+    );`);
   db.prepare('INSERT INTO domains VALUES (?,?,?,?)').run(1, 'acme.io', 'fx', 'target');
   const page = (id, url, opts) => db.prepare(`INSERT INTO pages (id, domain_id, url, title, body_text, word_count, status_code, is_indexable, click_depth, crawled_at, first_seen_at)
     VALUES (?,1,?,?,?,?,?,?,?,?,?)`).run(id, url, opts.title || url, 'text', opts.words ?? 400, opts.status ?? 200, opts.indexable ?? 1, opts.depth ?? 1, crawledAt, crawledAt);
@@ -151,6 +183,91 @@ function fixture({ crawledAt = Date.now() } = {}) {
   assert.equal(empty.freshness.state, 'missing');
   assert.equal(empty.working.length, 0);
   assert.equal(empty.counts.total, 0);
+}
+
+const addDaily = (db, date, page, query, clicks, impressions, position) =>
+  db.prepare(`INSERT INTO gsc_daily (project,property,grain,search_type,date,page_url,query,clicks,impressions,ctr,position,fetched_at)
+              VALUES ('fx','sc-domain:acme.io','page_query','web',?,?,?,?,?,0,?,1)`).run(date, page, query, clicks, impressions, position);
+const addFetch = (db, start, end, truncated = false) =>
+  db.prepare(`INSERT INTO gsc_fetches (project,property,grain,search_type,start_date,end_date,rows,requests,truncated,fetched_at)
+              VALUES ('fx','sc-domain:acme.io','page_query','web',?,?,1,1,?,1)`).run(start, end, truncated ? 1 : 0);
+
+// ── API coverage: a URL with no rows is reported as measured, not missing ────
+// A page_query fetch covers every page the property reported, so the contract's
+// silence on this URL is a Search Console fact, and the item must say so
+// rather than ask for an export nobody needs. The fetch record vouches for
+// the days that came back empty.
+{
+  const db = fixture();
+  addDaily(db, '2026-09-23', 'https://acme.io/noschema', 'widgets', 0, 700, 30);
+  addFetch(db, '2026-06-26', '2026-09-23');
+  const r = runReview(db, 'fx', { includePaid: false, urls: ['https://acme.io/'] });
+  const evidence = r.needs_input.filter(i => i.category === 'evidence');
+  assert.ok(evidence.length >= 4, 'measured absence still blocks every content bet');
+  for (const it of evidence) {
+    assert.equal(it.decision, 'no_action_yet');
+    assert.equal(it.evidence[0].observed,
+      'Search Console reports no impressions for this URL in the 2026-08-27..2026-09-23 window.');
+    assert.ok(it.blocked_by.includes('gsc-fetch'), `${it.id}: a later fetch is the unblocking step`);
+    assert.ok(!/windowDays/.test(it.blocked_by), `${it.id}: names no input the review's callers cannot pass`);
+    assert.ok(!/export/i.test(it.blocked_by), `${it.id}: no export is requested under complete coverage`);
+  }
+}
+
+// ── A capped walk is a gap, and the review says so instead of "no impressions"
+// Reproduces the false measurement: one stored row, a truncated fetch record,
+// and a URL that may simply have fallen below the row cap.
+{
+  const db = fixture();
+  addDaily(db, '2026-09-23', 'https://acme.io/noschema', 'widgets', 900, 9000, 1);
+  addFetch(db, '2026-09-01', '2026-09-23', true);
+  const r = runReview(db, 'fx', { includePaid: false, urls: ['https://acme.io/'] });
+  const evidence = r.needs_input.filter(i => i.category === 'evidence');
+  assert.ok(evidence.length >= 4, 'a gap blocks every content bet too');
+  for (const it of evidence) {
+    assert.equal(it.decision, 'no_action_yet');
+    assert.ok(!/reports no impressions/.test(it.evidence[0].observed), `${it.id}: never repeats a zero the walk could not measure`);
+    assert.ok(/row cap/.test(it.evidence[0].observed) && /not a measurement/.test(it.evidence[0].observed), `${it.id}: says why it is a gap`);
+    assert.ok(it.evidence[0].observed.includes('2026-09-01..2026-09-23'), `${it.id}: names only the fetched days`);
+    assert.ok(/Page filter/.test(it.blocked_by), `${it.id}: the page-filtered export is the reachable unblock`);
+    assert.ok(!it.decision_basis.some(b => /measured, not missing/.test(b)));
+  }
+}
+
+// ── The observed window is the fetched one, with the shortfall stated ────────
+// After `gsc-fetch --days 7` the review must not say "in the 2026-08-27..
+// 2026-09-23 window" about 21 days that were never fetched.
+{
+  const db = fixture();
+  for (let d = 17; d <= 23; d++) addDaily(db, `2026-09-${d}`, 'https://acme.io/noschema', 'widgets', 0, 100, 30);
+  addFetch(db, '2026-09-17', '2026-09-23');
+  const r = runReview(db, 'fx', { includePaid: false, urls: ['https://acme.io/'] });
+  const evidence = r.needs_input.filter(i => i.category === 'evidence');
+  assert.ok(evidence.length >= 4);
+  for (const it of evidence) {
+    assert.equal(it.evidence[0].observed,
+      'Search Console reports no impressions for this URL in the 2026-09-17..2026-09-23 window (7 of 28 days fetched).');
+  }
+  // Page-level rows under a capped walk are labelled a floor in the review too.
+  addFetch(db, '2026-09-17', '2026-09-23', true);
+  for (let d = 17; d <= 23; d++) addDaily(db, `2026-09-${d}`, 'https://acme.io/', 'acme widgets', 1, 100, 8);
+  const r2 = runReview(db, 'fx', { includePaid: false, urls: ['https://acme.io/'] });
+  const items = [...r2.needs_input, ...r2.safe_now].filter(i => i.id.startsWith('contract::') && i.evidence.some(e => e.source === 'gsc'));
+  assert.ok(items.length, 'a thin page still has a blocked expand to carry the observation');
+  for (const it of items) {
+    assert.ok(/floor/.test(it.evidence[0].observed) && /row cap/.test(it.evidence[0].observed), `${it.id}: ${it.evidence[0].observed}`);
+  }
+}
+
+// The CSV wording is unchanged when no API data exists.
+{
+  const db = fixture();
+  const r = runReview(db, 'fx', { includePaid: false, urls: ['https://acme.io/'] });
+  const evidence = r.needs_input.filter(i => i.category === 'evidence');
+  assert.ok(evidence.length >= 4);
+  for (const it of evidence) {
+    assert.equal(it.evidence[0].observed, 'No page-filtered Search Console export covers this URL.');
+  }
 }
 
 console.log('review fixtures: PASS');

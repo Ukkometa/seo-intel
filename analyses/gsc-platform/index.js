@@ -6,19 +6,16 @@
  * portable JSON export by default and can query the Search Console API when
  * configured property IDs and an OAuth access token are available.
  *
- * Token resolution for --api, in order:
- *   1. opts.accessToken      explicit, for programmatic callers and tests
- *   2. GSC_ACCESS_TOKEN      env override for CI and hand-issued short-lived tokens
- *   3. lib/oauth.js          the account connected with "seo-intel auth google",
- *                            auto-refreshed by getAccessToken()
- * The OAuth module and fetch are injectable (opts.oauth, opts.fetch) so tests
- * can simulate "not connected" and API responses without touching the real
- * token store or the network.
+ * Transport (endpoints, token resolution, error shaping) lives in
+ * lib/gsc-api.js so every API consumer sends the same request and reports
+ * the same failure. Token precedence for --api is documented there:
+ * opts.accessToken, then GSC_ACCESS_TOKEN, then the account connected with
+ * "seo-intel auth google". The OAuth module and fetch are injectable
+ * (opts.oauth, opts.fetch) so tests can simulate "not connected" and API
+ * responses without touching the real token store or the network.
  */
 
-import { getAccessToken, isConnected } from '../../lib/oauth.js';
-
-const defaultOauth = { getAccessToken, isConnected };
+import { resolveAccessToken, searchAnalytics } from '../../lib/gsc-api.js';
 
 function asNumber(value) {
   const n = Number(value);
@@ -67,14 +64,13 @@ function gapPriority(surfaces) {
 }
 
 async function fetchPropertyQueries(property, accessToken, { startDate, endDate, rowLimit = 5_000, fetch: fetchImpl = globalThis.fetch } = {}) {
-  const endpoint = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(property)}/searchAnalytics/query`;
-  const res = await fetchImpl(endpoint, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ startDate, endDate, dimensions: ['query'], rowLimit }),
-  });
-  if (!res.ok) throw new Error(`${property}: Search Console API ${res.status} ${await res.text()}`);
-  return res.json();
+  try {
+    return await searchAnalytics({ siteUrl: property, accessToken, fetch: fetchImpl, startDate, endDate, dimensions: ['query'], rowLimit });
+  } catch (err) {
+    // Several properties are fetched in one run; the failure must name which.
+    if (err && typeof err.message === 'string' && !err.message.includes(property)) err.message = `${property}: ${err.message}`;
+    throw err;
+  }
 }
 
 /**
@@ -122,22 +118,6 @@ export function analyzePlatformQueryGaps(source) {
       crossSurfaceSerpOpportunities: sortedShared.length,
     },
   };
-}
-
-/**
- * Resolve the Bearer token for the Search Console API. See the module header
- * for the precedence; the connected-account path is only consulted when the
- * explicit and env overrides are absent so a CI token never triggers a refresh.
- */
-async function resolveAccessToken(opts) {
-  if (opts.accessToken) return opts.accessToken;
-  if (process.env.GSC_ACCESS_TOKEN) return process.env.GSC_ACCESS_TOKEN;
-  const oauth = opts.oauth || defaultOauth;
-  if (oauth.isConnected('google')) return oauth.getAccessToken('google');
-  throw new Error(
-    'No Google Search Console credentials. Run "seo-intel auth google" to connect your Google account, '
-    + 'or set GSC_ACCESS_TOKEN with a short-lived OAuth token, before using --api.',
-  );
 }
 
 export async function runPlatformGapAnalysis(config, opts = {}) {

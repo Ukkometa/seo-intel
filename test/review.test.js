@@ -5,12 +5,18 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { runReview, indexedByGoogle } from '../analyses/review/index.js';
-import { getProblems, normalizeSeverity, coverageFamily, getInspectedPages } from '../lib/problems.js';
+import { getProblems, normalizeSeverity, coverageFamily, getInspectedPages, insightSource, RULE_SOURCE } from '../lib/problems.js';
+import { insightMeta } from '../lib/insight-types.js';
 
 const DAY = 86_400_000;
 
-function fixture({ crawledAt = Date.now() } = {}) {
+// `provenance: false` builds the insights table as it was before the six
+// provenance columns, for the older-database path.
+function fixture({ crawledAt = Date.now(), provenance = true } = {}) {
   const db = new DatabaseSync(':memory:');
+  const provenanceColumns = provenance
+    ? `source_kind TEXT, model TEXT, prompt_version TEXT, rule_version TEXT, confidence REAL, expires_at INTEGER,`
+    : '';
   db.exec(`
     CREATE TABLE domains (id INTEGER PRIMARY KEY, domain TEXT, project TEXT, role TEXT);
     CREATE TABLE pages (id INTEGER PRIMARY KEY, domain_id INTEGER, url TEXT, title TEXT, body_text TEXT, word_count INTEGER,
@@ -22,7 +28,9 @@ function fixture({ crawledAt = Date.now() } = {}) {
     CREATE TABLE problem_status (problem_id TEXT PRIMARY KEY, project TEXT, status TEXT, marked_at INTEGER, marked_by TEXT, note TEXT, expires_at INTEGER);
     CREATE TABLE insights (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, type TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active', fingerprint TEXT NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
-      source_analysis_id INTEGER, data TEXT NOT NULL, source TEXT, UNIQUE(project, type, fingerprint));
+      source_analysis_id INTEGER, data TEXT NOT NULL, source TEXT,
+      ${provenanceColumns}
+      UNIQUE(project, type, fingerprint));
     CREATE TABLE gsc_queries (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, page_url TEXT, query TEXT,
       clicks INTEGER, impressions INTEGER, ctr REAL, position REAL, date_range TEXT, source TEXT, imported_at INTEGER,
       UNIQUE(project, page_url, query, date_range));
@@ -141,6 +149,153 @@ function fixture({ crawledAt = Date.now() } = {}) {
   assert.equal(normalizeSeverity('info'), 'info');
   assert.equal(normalizeSeverity('warning'), 'warn', 'an unknown severity is neither hidden nor promoted');
   assert.equal(normalizeSeverity(undefined), 'warn');
+}
+
+// ── Provenance: safe_now is rule-only ───────────────────────────────────────
+// One insert per case; `prov` is the six provenance columns, all optional so a
+// legacy row (every one NULL) is the same call with nothing passed.
+const addInsight = (db, type, fingerprint, data, prov = {}, { status = 'active', source = 'cli', at = Date.now() } = {}) =>
+  db.prepare(`INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, data, source,
+                source_kind, model, prompt_version, rule_version, confidence, expires_at)
+              VALUES ('fx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(type, status, fingerprint, at, at, JSON.stringify(data), source,
+      prov.source_kind ?? null, prov.model ?? null, prov.prompt_version ?? null,
+      prov.rule_version ?? null, prov.confidence ?? null, prov.expires_at ?? null);
+const TECH_GAP = { gap: 'No hreflang on localized pages', url: 'https://acme.io/', recommendation: 'Add hreflang link elements for each locale.' };
+const SCHEMA_GAP = { url: 'https://acme.io/', code: 'product_without_offers', severity: 'error', schemaType: 'Product',
+  message: 'Product markup carries no priced offers.', recommendation: 'Add offers with price and priceCurrency.' };
+const SOURCE_KINDS = new Set(['rule', 'model', 'agent']);
+
+// A model's technical_gap has an autonomous category (tech) and a fix template,
+// the two conditions that used to put it in safe_now. It now waits for a
+// person, and the item says which model to check against.
+{
+  const db = fixture();
+  addInsight(db, 'technical_gap', 'hreflang::acme.io', TECH_GAP, { source_kind: 'model', model: 'claude-fable-5-1', prompt_version: '3', confidence: 0.7 });
+  const problem = getProblems(db, 'fx', { includePaid: true }).find(p => p.id.includes('technical_gap'));
+  assert.ok(problem, 'the model finding surfaces as a problem');
+  assert.equal(problem.category, 'tech', 'in an autonomous category');
+  assert.ok(problem.fix_template, 'with a fix template');
+  assert.deepEqual(problem.source, { kind: 'model', model: 'claude-fable-5-1', prompt_version: '3', rule_version: null, confidence: 0.7 },
+    'the row\'s provenance is copied as stored; a model finding claims no rule version');
+  const r = runReview(db, 'fx', { includePaid: true });
+  assert.ok(!r.safe_now.some(i => i.id === problem.id), 'a model finding never reaches safe_now');
+  const item = r.needs_input.find(i => i.id === problem.id);
+  assert.ok(item, 'it waits for a person instead');
+  assert.ok(item.decision_basis.includes('Model-sourced finding (claude-fable-5-1): verify before acting.'), item.decision_basis.join(' | '));
+  assert.deepEqual(item.source, problem.source, 'the review item carries the provenance through');
+  assert.equal(r.counts.total, r.safe_now.length + r.opportunities.length + r.needs_input.length, 'counts still agree with the buckets');
+}
+
+// An agent finding with no recorded model is named by its kind.
+{
+  const db = fixture();
+  addInsight(db, 'technical_gap', 'agent::acme.io', TECH_GAP, { source_kind: 'agent' }, { source: 'agent-harness' });
+  const r = runReview(db, 'fx', { includePaid: true });
+  const item = r.needs_input.find(i => i.id.includes('technical_gap'));
+  assert.ok(item, 'an agent finding waits for a person');
+  assert.ok(item.decision_basis.includes('Model-sourced finding (agent): verify before acting.'));
+  assert.deepEqual(item.source, { kind: 'agent', model: null, prompt_version: null, rule_version: null, confidence: null },
+    'an agent with no recorded confidence is null, never 1');
+  assert.ok(!r.safe_now.some(i => i.id === item.id));
+}
+
+// A detector's finding in the ledger is still hygiene an agent may fix.
+{
+  const db = fixture();
+  addInsight(db, 'schema_specificity', 'product_without_offers::https://acme.io', SCHEMA_GAP, { source_kind: 'rule', rule_version: '1', confidence: 1 }, { source: 'schema-audit' });
+  const r = runReview(db, 'fx', { includePaid: true });
+  const item = r.safe_now.find(i => i.id.includes('schema_specificity'));
+  assert.ok(item, 'a rule-sourced ledger finding lands in safe_now');
+  assert.deepEqual(item.source, { kind: 'rule', model: null, prompt_version: null, rule_version: '1', confidence: 1 });
+  assert.ok(!item.decision_basis.some(b => /Model-sourced/.test(b)), 'no model note on a rule finding');
+  assert.ok(!r.needs_input.some(i => i.id === item.id));
+}
+
+// Every problem carries a source, whatever collector produced it; the crawl
+// collectors all write the one RULE_SOURCE.
+{
+  const db = fixture();
+  addInsight(db, 'technical_gap', 'hreflang::acme.io', TECH_GAP, { source_kind: 'model', model: 'm' });
+  const problems = getProblems(db, 'fx', { includePaid: true });
+  assert.ok(problems.length >= 4, 'crawl and ledger problems both present');
+  for (const p of problems) {
+    assert.ok(p.source && typeof p.source === 'object', `${p.id}: has a source object`);
+    assert.ok(SOURCE_KINDS.has(p.source.kind), `${p.id}: kind ${p.source.kind} is rule | model | agent`);
+    assert.deepEqual(Object.keys(p.source).sort(), ['confidence', 'kind', 'model', 'prompt_version', 'rule_version'], `${p.id}: full source shape`);
+  }
+  for (const p of problems.filter(p => ['tech', 'links', 'schema'].includes(p.category) && !p.id.includes('technical_gap'))) {
+    assert.equal(p.source, RULE_SOURCE, `${p.id}: a crawl finding is the shared rule source`);
+  }
+  assert.deepEqual(RULE_SOURCE, { kind: 'rule', rule_version: '1', confidence: 1, model: null, prompt_version: null });
+  assert.ok(Object.isFrozen(RULE_SOURCE), 'shared across every problem, so nobody may mutate it');
+  const r = runReview(db, 'fx', { includePaid: true, urls: ['https://acme.io/'] });
+  for (const it of [...r.needs_input, ...r.safe_now, ...r.opportunities]) {
+    assert.ok(it.source && SOURCE_KINDS.has(it.source.kind), `${it.id}: every review item, contract items included, carries a source`);
+  }
+  for (const it of r.safe_now) assert.equal(it.source.kind, 'rule', `${it.id}: safe_now is rule-only`);
+}
+
+// Rows written before the columns existed have NULL provenance; the type
+// registry says who found them. A technical_gap was always a model's and now
+// waits for a person; an entity_gap was always a detector's.
+{
+  const db = fixture();
+  addInsight(db, 'technical_gap', 'legacy::tech', TECH_GAP);
+  addInsight(db, 'entity_gap', 'legacy::entity', { url: 'https://acme.io/', code: 'no_sameas', message: 'Organization has no sameAs.', recommendation: 'Add sameAs links.' }, {}, { source: 'entity-audit' });
+  const problems = getProblems(db, 'fx', { includePaid: true });
+  const tech = problems.find(p => p.id.includes('technical_gap'));
+  const entity = problems.find(p => p.id.includes('entity_gap'));
+  assert.deepEqual(tech.source, { kind: 'model', model: null, prompt_version: null, rule_version: null, confidence: null },
+    'a legacy model finding: kind from the registry, nothing invented for the rest');
+  assert.deepEqual(entity.source, { kind: 'rule', model: null, prompt_version: null, rule_version: '1', confidence: 1 },
+    'a legacy rule finding: the registry\'s version and a rule\'s certainty');
+  const r = runReview(db, 'fx', { includePaid: true });
+  assert.ok(r.needs_input.some(i => i.id === tech.id), 'legacy technical_gap -> model -> needs_input');
+  assert.ok(!r.safe_now.some(i => i.id === tech.id));
+  assert.ok(r.needs_input.find(i => i.id === tech.id).decision_basis.includes('Model-sourced finding (model): verify before acting.'));
+  assert.ok(r.safe_now.some(i => i.id === entity.id), 'legacy entity_gap -> rule -> safe_now');
+  // The resolution itself, on the registry's own answers.
+  assert.equal(insightSource({}, insightMeta('technical_gap')).kind, 'model');
+  assert.equal(insightSource({}, insightMeta('entity_gap')).kind, 'rule');
+  assert.deepEqual(insightSource({ source_kind: 'model', confidence: 0.4 }, insightMeta('entity_gap')),
+    { kind: 'model', model: null, prompt_version: null, rule_version: null, confidence: 0.4 }, 'the row outranks the registry');
+  assert.deepEqual(insightSource({}, { sourceKind: undefined, ruleVersion: undefined }),
+    { kind: 'rule', model: null, prompt_version: null, rule_version: '1', confidence: 1 }, 'a registry without the fields falls back to rule / 1');
+  assert.deepEqual(insightSource({ rule_version: '2' }, insightMeta('entity_gap')).rule_version, '2');
+  assert.equal(insightSource(undefined, undefined).kind, 'rule');
+}
+
+// A model finding past its expiry is not a problem, even while its status
+// still reads active: the sweep that flips it to 'expired' may not have run.
+{
+  const db = fixture();
+  const now = Date.now();
+  addInsight(db, 'technical_gap', 'expired::acme.io', TECH_GAP, { source_kind: 'model', model: 'm', expires_at: now - DAY });
+  addInsight(db, 'technical_gap', 'live::acme.io', { ...TECH_GAP, gap: 'Live gap' }, { source_kind: 'model', model: 'm', expires_at: now + 30 * DAY });
+  const problems = getProblems(db, 'fx', { includePaid: true }).filter(p => p.id.includes('technical_gap'));
+  assert.equal(problems.length, 1, 'the expired finding is gone, the live one stays');
+  assert.equal(problems[0].evidence.gap, 'Live gap');
+  const r = runReview(db, 'fx', { includePaid: true });
+  assert.equal(r.needs_input.filter(i => i.id.includes('technical_gap')).length, 1);
+  assert.equal(r.counts.total, r.safe_now.length + r.opportunities.length + r.needs_input.length);
+}
+
+// An older database without the six columns still lists its insights; their
+// provenance comes from the registry, as for a legacy row.
+{
+  const db = fixture({ provenance: false });
+  db.prepare(`INSERT INTO insights (project, type, fingerprint, first_seen, last_seen, data, source)
+              VALUES ('fx', 'technical_gap', 'old-table::tech', ?, ?, ?, 'cli')`).run(Date.now(), Date.now(), JSON.stringify(TECH_GAP));
+  db.prepare(`INSERT INTO insights (project, type, fingerprint, first_seen, last_seen, data, source)
+              VALUES ('fx', 'schema_specificity', 'old-table::schema', ?, ?, ?, 'schema-audit')`).run(Date.now(), Date.now(), JSON.stringify(SCHEMA_GAP));
+  const problems = getProblems(db, 'fx', { includePaid: true });
+  assert.ok(problems.some(p => p.id.includes('backlink_gap')), 'the fixture\'s own insight still surfaces');
+  assert.equal(problems.find(p => p.id.includes('technical_gap')).source.kind, 'model');
+  assert.deepEqual(problems.find(p => p.id.includes('schema_specificity')).source, { kind: 'rule', model: null, prompt_version: null, rule_version: '1', confidence: 1 });
+  const r = runReview(db, 'fx', { includePaid: true });
+  assert.ok(r.needs_input.some(i => i.id.includes('technical_gap')));
+  assert.ok(r.safe_now.some(i => i.id.includes('schema_specificity')));
 }
 
 // ── Fresh crawl: buckets route by category and template; passes are reported ─

@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { homedir } from 'os';
-import { INSIGHT_TYPES, INSIGHT_TYPE_KEYS, insightMeta } from '../lib/insight-types.js';
+import { INSIGHT_TYPES, INSIGHT_TYPE_KEYS, MODEL_INSIGHT_TYPES, insightMeta } from '../lib/insight-types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -60,6 +60,11 @@ export function getDb(dbPath = resolveDbPath()) {
   try { _db.exec('ALTER TABLE analyses ADD COLUMN technical_gaps TEXT'); } catch { /* already exists */ }
   try { _db.exec('ALTER TABLE extractions ADD COLUMN intent_scores TEXT'); } catch { /* already exists */ }
   try { _db.exec("ALTER TABLE insights ADD COLUMN source TEXT DEFAULT 'cli'"); } catch { /* already exists */ }
+  // Finding provenance (six columns plus the backfill of older rows), then the
+  // boot-time expiry sweep. In this order: the sweep reads expires_at, which
+  // the migration adds.
+  migrateInsightProvenance(_db);
+  expireInsights(_db);
 
   // Problem status tracking (v1.5.35) — agents/users mark items as fixed/wont_fix/snoozed
   _db.exec(`
@@ -281,6 +286,164 @@ function _insightFingerprint(type, item) {
   return raw.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// ── Finding provenance ──────────────────────────────────────────────────────
+//
+// Every Ledger row says where it came from, because two consumers need to
+// know. The review (analyses/review) lets an agent act unattended only on a
+// finding a deterministic rule produced; a model's finding is a hypothesis and
+// goes to a person. And a model's guess must not live forever: a rule finding
+// clears on its own when a complete run stops emitting it ('resolved'), but
+// nothing re-checks a model's claim, so those expire 90 days after they were
+// last emitted ('expired'). Both statuses are set by the data and undone by
+// the data — a re-emitted fingerprint flips them back to active. done and
+// dismissed are never flipped: a person decided those.
+
+const DAY_MS = 86_400_000;
+const DEFAULT_TTL_DAYS = 90;
+const SOURCE_KINDS = new Set(['rule', 'model', 'agent']);
+
+/** Every status a Ledger row can hold. The last two are the data's; the middle three a person's. */
+export const INSIGHT_STATUSES = ['active', 'done', 'dismissed', 'in_progress', 'resolved', 'expired'];
+
+// The six provenance columns, in the order every writer below binds them.
+const PROVENANCE_COLS = 'source_kind, model, prompt_version, rule_version, confidence, expires_at';
+
+// The re-emission rule, shared by every writer so it cannot drift between
+// them. A finding the data says is back returns to active; one a person closed
+// (done, dismissed) or is working on (in_progress) keeps that status.
+const REEMIT_UPDATE = `
+      last_seen = excluded.last_seen,
+      data = excluded.data,
+      source_kind = excluded.source_kind,
+      model = excluded.model,
+      prompt_version = excluded.prompt_version,
+      rule_version = excluded.rule_version,
+      confidence = excluded.confidence,
+      expires_at = excluded.expires_at,
+      status = CASE WHEN insights.status IN ('resolved', 'expired') THEN 'active' ELSE insights.status END`;
+
+/**
+ * A confidence is a number in 0..1 or nothing. Anything else — a percentage,
+ * a word, a boolean — is stored as NULL ("unknown") rather than clamped into a
+ * value that would read as a real measurement.
+ */
+function normalizeConfidence(v) {
+  if (typeof v !== 'number' && typeof v !== 'string') return null;
+  if (v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+}
+
+/**
+ * Turn a writer's meta into the six column values. The registry supplies the
+ * defaults (a type's usual source kind and rule version); explicit meta wins.
+ * Fields that do not apply to a kind are forced NULL — a rule has no model, a
+ * model has no rule version — so a reader can trust the columns to mean what
+ * their names say regardless of which writer stamped them.
+ *
+ * `bind(confidence)` returns the values in PROVENANCE_COLS order, with the
+ * per-item confidence taking precedence over the meta-level one.
+ */
+function resolveProvenance(type, meta = {}, ts = Date.now()) {
+  const kind = SOURCE_KINDS.has(meta.sourceKind) ? meta.sourceKind : insightMeta(type).sourceKind;
+  const isRule = kind === 'rule';
+  const ttlDays = Number(meta.ttlDays) > 0 ? Number(meta.ttlDays) : DEFAULT_TTL_DAYS;
+  const prov = {
+    kind,
+    model: isRule ? null : (meta.model ? String(meta.model) : null),
+    promptVersion: kind === 'model' && meta.promptVersion != null ? String(meta.promptVersion) : null,
+    ruleVersion: isRule ? String(meta.ruleVersion ?? insightMeta(type).ruleVersion ?? '1') : null,
+    // A rule is certain by construction; a model or agent says how sure it is,
+    // or nothing.
+    defaultConfidence: isRule ? (normalizeConfidence(meta.confidence) ?? 1) : normalizeConfidence(meta.confidence),
+    expiresAt: isRule ? null : ts + ttlDays * DAY_MS,
+  };
+  prov.bind = (confidence) => [
+    prov.kind, prov.model, prov.promptVersion, prov.ruleVersion,
+    normalizeConfidence(confidence) ?? prov.defaultConfidence, prov.expiresAt,
+  ];
+  return prov;
+}
+
+/**
+ * Add the provenance columns to an insights table that predates them, and
+ * classify the rows already there. Idempotent and cheap, so getDb() runs it on
+ * every open: a database created by an older version is upgraded the first
+ * time and untouched afterwards (the WHERE source_kind IS NULL guards see
+ * nothing). Safe on a database without the table at all — every statement is
+ * best-effort, because a fixture or a read-only handle is not a fault here.
+ *
+ * Classification of legacy rows, most specific signal first:
+ *   source 'agent…'             → agent, model = the agent's name
+ *   type in MODEL_INSIGHT_TYPES → model, model = the analyses row's model when
+ *                                 the row still points at one
+ *   everything else             → rule, rule_version '1', confidence 1.0
+ * Agent rows are checked before type because an agent writes the model types
+ * (AGENT_INSIGHT_TYPES); the source column is the only thing that tells them
+ * apart, and losing it would say a model produced what an agent typed.
+ * No expires_at is written for legacy model rows: they keep the "lives until
+ * re-emitted" semantics they were stored under, and gain an expiry the first
+ * time a run re-emits them.
+ */
+export function migrateInsightProvenance(db) {
+  const columns = [
+    ['source_kind', 'TEXT'], ['model', 'TEXT'], ['prompt_version', 'TEXT'],
+    ['rule_version', 'TEXT'], ['confidence', 'REAL'], ['expires_at', 'INTEGER'],
+  ];
+  for (const [name, sqlType] of columns) {
+    try { db.exec(`ALTER TABLE insights ADD COLUMN ${name} ${sqlType}`); } catch { /* already exists, or no table */ }
+  }
+
+  try {
+    db.prepare(`
+      UPDATE insights SET source_kind = 'agent',
+        model = CASE WHEN source LIKE 'agent:%' THEN NULLIF(substr(source, 7), '') ELSE NULL END
+      WHERE source_kind IS NULL AND source LIKE 'agent%'
+    `).run();
+  } catch { /* no source column: nothing here was written by an agent */ }
+
+  const typeList = MODEL_INSIGHT_TYPES.map(() => '?').join(', ');
+  try {
+    db.prepare(`
+      UPDATE insights SET source_kind = 'model',
+        model = (SELECT a.model FROM analyses a WHERE a.id = insights.source_analysis_id)
+      WHERE source_kind IS NULL AND type IN (${typeList})
+    `).run(...MODEL_INSIGHT_TYPES);
+  } catch {
+    // No analyses table to take the model id from (a fixture): classify without it.
+    try {
+      db.prepare(`UPDATE insights SET source_kind = 'model' WHERE source_kind IS NULL AND type IN (${typeList})`)
+        .run(...MODEL_INSIGHT_TYPES);
+    } catch { /* no insights table */ }
+  }
+
+  try {
+    db.prepare(`
+      UPDATE insights SET source_kind = 'rule', rule_version = '1', confidence = 1.0
+      WHERE source_kind IS NULL
+    `).run();
+  } catch { /* no insights table */ }
+}
+
+/**
+ * Retire model and agent findings past their expiry. Only active rows are
+ * touched: a person's done or dismissed stands, and a resolved row is already
+ * closed. Runs at boot from getDb(); a scheduler may call it too.
+ *
+ * @returns {number} rows flipped to 'expired'; 0 when the table lacks the column
+ */
+export function expireInsights(db, now = Date.now()) {
+  try {
+    const res = db.prepare(`
+      UPDATE insights SET status = 'expired'
+      WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= ?
+    `).run(now);
+    return Number(res.changes) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ── Migrate all historical analyses into insights ───────────────────────────
 
 function _migrateAnalysesToInsights(db) {
@@ -292,18 +455,23 @@ function _migrateAnalysesToInsights(db) {
 
   const safeJsonParse = (s) => { try { return JSON.parse(s); } catch { return null; } };
 
+  // Every analyses row is a model's output, and the row names the model. No
+  // expiry is stamped: these are historical rows keeping the semantics they
+  // were stored under; they gain one the first time a run re-emits them.
   const upsertStmt = db.prepare(`
-    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
-    VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, source_kind, model)
+    VALUES (?, ?, 'active', ?, ?, ?, ?, ?, 'model', ?)
     ON CONFLICT(project, type, fingerprint) DO UPDATE SET
       last_seen = excluded.last_seen,
-      data = excluded.data
+      data = excluded.data,
+      model = excluded.model
   `);
 
   db.exec('BEGIN');
   try {
     for (const row of rows) {
       const ts = row.generated_at;
+      const model = row.model || null;
       const fields = [
         ['keyword_gap',   safeJsonParse(row.keyword_gaps)],
         ['long_tail',     safeJsonParse(row.long_tails)],
@@ -317,14 +485,14 @@ function _migrateAnalysesToInsights(db) {
         for (const item of items) {
           const fp = _insightFingerprint(type, item);
           if (!fp) continue;
-          upsertStmt.run(row.project, type, fp, ts, ts, row.id, JSON.stringify(item));
+          upsertStmt.run(row.project, type, fp, ts, ts, row.id, JSON.stringify(item), model);
         }
       }
       // positioning is a singleton object, not an array
       const pos = safeJsonParse(row.positioning);
       if (pos && typeof pos === 'object' && Object.keys(pos).length) {
         const fp = _insightFingerprint('positioning', pos);
-        upsertStmt.run(row.project, 'positioning', fp, ts, ts, row.id, JSON.stringify(pos));
+        upsertStmt.run(row.project, 'positioning', fp, ts, ts, row.id, JSON.stringify(pos), model);
       }
     }
     db.exec('COMMIT');
@@ -336,16 +504,29 @@ function _migrateAnalysesToInsights(db) {
 
 // ── Insight upsert (called after each analyze/keywords run) ─────────────────
 
-export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, timestamp) {
+/**
+ * Write one analyze run's findings. Every row is the model's: source_kind
+ * 'model', the model id (from `meta.model`, else from the analyses row the
+ * findings came from, so provenance never depends on which caller ran the
+ * analysis), the prompt version when the caller knows it, and an expiry
+ * `ttlDays` out — a keyword gap the model never repeats retires on its own.
+ * Items carry no confidence today, so that column is NULL unless an item says.
+ *
+ * @param {{ model?: string, promptVersion?: string, ttlDays?: number }} [meta]
+ */
+export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, timestamp, meta = {}) {
+  const ts = timestamp || Date.now();
+  let model = meta.model || null;
+  if (!model && analysisId != null) {
+    try { model = db.prepare('SELECT model FROM analyses WHERE id = ?').get(analysisId)?.model || null; } catch { /* no analyses table */ }
+  }
+  const prov = resolveProvenance(null, { ...meta, sourceKind: 'model', model }, ts);
   const upsertStmt = db.prepare(`
-    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
-    VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
-    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
-      last_seen = excluded.last_seen,
-      data = excluded.data
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, ${PROVENANCE_COLS})
+    VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET ${REEMIT_UPDATE}
   `);
 
-  const ts = timestamp || Date.now();
   db.exec('BEGIN');
   try {
     const fields = [
@@ -361,12 +542,13 @@ export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, ti
       for (const item of items) {
         const fp = _insightFingerprint(type, item);
         if (!fp) continue;
-        upsertStmt.run(project, type, fp, ts, ts, analysisId, JSON.stringify(item));
+        upsertStmt.run(project, type, fp, ts, ts, analysisId, JSON.stringify(item), ...prov.bind(item?.confidence));
       }
     }
     if (analysis.positioning && typeof analysis.positioning === 'object') {
       const fp = _insightFingerprint('positioning', analysis.positioning);
-      upsertStmt.run(project, 'positioning', fp, ts, ts, analysisId, JSON.stringify(analysis.positioning));
+      upsertStmt.run(project, 'positioning', fp, ts, ts, analysisId, JSON.stringify(analysis.positioning),
+        ...prov.bind(analysis.positioning.confidence));
     }
     db.exec('COMMIT');
   } catch (e) {
@@ -375,16 +557,22 @@ export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, ti
   }
 }
 
-export function upsertInsightsFromKeywords(db, project, keywordsReport) {
+/**
+ * Write one keywords run's invented keywords. Model rows, like the analyze
+ * ones above; `meta.model` names the model, since there is no analyses row to
+ * take it from.
+ *
+ * @param {{ model?: string, promptVersion?: string, ttlDays?: number }} [meta]
+ */
+export function upsertInsightsFromKeywords(db, project, keywordsReport, meta = {}) {
+  const ts = Date.now();
+  const prov = resolveProvenance('keyword_inventor', { ...meta, sourceKind: 'model' }, ts);
   const upsertStmt = db.prepare(`
-    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
-    VALUES (?, 'keyword_inventor', 'active', ?, ?, ?, NULL, ?)
-    ON CONFLICT(project, type, fingerprint) DO UPDATE SET
-      last_seen = excluded.last_seen,
-      data = excluded.data
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, ${PROVENANCE_COLS})
+    VALUES (?, 'keyword_inventor', 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project, type, fingerprint) DO UPDATE SET ${REEMIT_UPDATE}
   `);
 
-  const ts = Date.now();
   const allClusters = keywordsReport.keyword_clusters || [];
   const allKws = allClusters.flatMap(c => (c.keywords || []).map(k => ({ ...k, cluster: c.topic })));
 
@@ -393,7 +581,7 @@ export function upsertInsightsFromKeywords(db, project, keywordsReport) {
     for (const kw of allKws) {
       const fp = _insightFingerprint('keyword_inventor', kw);
       if (!fp) continue;
-      upsertStmt.run(project, fp, ts, ts, JSON.stringify(kw));
+      upsertStmt.run(project, fp, ts, ts, JSON.stringify(kw), ...prov.bind(kw.confidence));
     }
     db.exec('COMMIT');
   } catch (e) {
@@ -412,10 +600,16 @@ export const AGENT_INSIGHT_TYPES = ['keyword_gap', 'long_tail', 'quick_win', 'ne
  * project + type + fingerprint), so an agent repeating the same finding
  * across sessions updates `last_seen` instead of duplicating rows.
  *
+ * Provenance: source_kind 'agent', model = the agent's name, the confidence
+ * the agent gave (NULL when it gave none — never invented), and an expiry
+ * `ttlDays` out. An agent's finding is a claim, not a measurement: the review
+ * will not let another agent act on it unattended, and it retires unless the
+ * agent repeats it.
+ *
  * Returns { ok, id, fingerprint, deduped } — `deduped: true` when the row
  * already existed and we only refreshed last_seen.
  */
-export function insertAgentInsight(db, { project, type, data, agentName }) {
+export function insertAgentInsight(db, { project, type, data, agentName, confidence, ttlDays = DEFAULT_TTL_DAYS }) {
   if (!AGENT_INSIGHT_TYPES.includes(type)) {
     return { ok: false, error: `Unsupported type "${type}". Allowed: ${AGENT_INSIGHT_TYPES.join(', ')}` };
   }
@@ -429,6 +623,7 @@ export function insertAgentInsight(db, { project, type, data, agentName }) {
 
   const source = agentName ? `agent:${agentName}` : 'agent';
   const ts = Date.now();
+  const prov = resolveProvenance(type, { sourceKind: 'agent', model: agentName || null, confidence, ttlDays }, ts);
 
   // Stash provenance inside the data blob too — survives if/when the source
   // column is ever queried separately, but also keeps it visible to consumers
@@ -440,27 +635,47 @@ export function insertAgentInsight(db, { project, type, data, agentName }) {
   ).get(project, type, fingerprint);
 
   db.prepare(`
-    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, source)
-    VALUES (?, ?, 'active', ?, ?, ?, NULL, ?, ?)
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, source, ${PROVENANCE_COLS})
+    VALUES (?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project, type, fingerprint) DO UPDATE SET
-      last_seen = excluded.last_seen,
-      data = excluded.data,
-      source = excluded.source
-  `).run(project, type, fingerprint, ts, ts, JSON.stringify(enriched), source);
+      source = excluded.source, ${REEMIT_UPDATE}
+  `).run(project, type, fingerprint, ts, ts, JSON.stringify(enriched), source, ...prov.bind(confidence));
 
   const row = db.prepare(
     'SELECT id FROM insights WHERE project = ? AND type = ? AND fingerprint = ?'
   ).get(project, type, fingerprint);
 
-  return { ok: true, id: row.id, fingerprint, deduped: !!existing, source, last_seen: ts };
+  return {
+    ok: true, id: row.id, fingerprint, deduped: !!existing, source, last_seen: ts,
+    source_kind: prov.kind, model: prov.model, confidence: prov.defaultConfidence, expires_at: prov.expiresAt,
+  };
 }
 
 // ── Read active insights (accumulated across all runs) ──────────────────────
 
-export function getActiveInsights(db, project) {
-  const rows = db.prepare(
-    `SELECT * FROM insights WHERE project = ? AND status = 'active' ORDER BY type, last_seen DESC`
-  ).all(project);
+/**
+ * Active findings for a project, grouped by type. A model or agent finding
+ * past its expiry is left out even before the sweep has flipped it: what a
+ * reader sees as active must be what would survive the sweep. Each item
+ * carries its provenance under the same underscore convention as _insight_id,
+ * NULL where the row predates the column.
+ */
+export function getActiveInsights(db, project, now = Date.now()) {
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT * FROM insights
+      WHERE project = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY type, last_seen DESC
+    `).all(project, now);
+  } catch {
+    // A table from before provenance (a fixture, or a handle opened without
+    // running the migration) has no expires_at. Nothing in it can have
+    // expired, so the old query is the right answer, not an error.
+    rows = db.prepare(
+      `SELECT * FROM insights WHERE project = ? AND status = 'active' ORDER BY type, last_seen DESC`
+    ).all(project);
+  }
 
   const byType = {};
   for (const row of rows) {
@@ -472,6 +687,10 @@ export function getActiveInsights(db, project) {
     parsed._insight_id = row.id;
     parsed._first_seen = row.first_seen;
     parsed._last_seen = row.last_seen;
+    parsed._source_kind = row.source_kind ?? null;
+    parsed._model = row.model ?? null;
+    parsed._confidence = row.confidence ?? null;
+    parsed._expires_at = row.expires_at ?? null;
     byType[row.type].push(parsed);
   }
 
@@ -505,38 +724,72 @@ export function getActiveInsights(db, project) {
  * row `done` or `dismissed` keeps that status — re-running an audit must not
  * silently resurrect something they already dealt with.
  *
+ * A row the data itself had closed (`resolved`, `expired`) does come back:
+ * the finding is there again, and nobody decided otherwise.
+ *
+ * Provenance comes from the registry unless `meta` says otherwise. The
+ * own-site audits that call this are rules, so their rows get source_kind
+ * 'rule', the type's rule_version, confidence 1 and no expiry. A model or
+ * agent caller passes sourceKind/model/promptVersion/confidence and gets an
+ * expiry `ttlDays` (default 90) out instead. An item's own `confidence`
+ * overrides the meta-level one.
+ *
+ * `complete: true` says this run saw the whole site, so an active finding of
+ * this type it did not emit is no longer detected and is marked 'resolved' in
+ * the same transaction. That is the only way a rule finding clears — nothing
+ * else re-checks it. An empty complete run resolves everything of the type,
+ * which is the point: fixing the last issue must close it. A caller whose run
+ * may be partial (a URL subset, an aborted crawl) must not pass it.
+ *
  * Best-effort by design: an audit is still useful if the write fails, so this
  * reports and returns 0 rather than throwing into the caller.
  *
  * @param {import('node:sqlite').DatabaseSync} db
  * @param {string} project
  * @param {string} type      A key from lib/insight-types.js
- * @param {{fingerprint: string, data: object}[]} items
- * @returns {number} rows written
+ * @param {{fingerprint: string, data: object, confidence?: number}[]} items
+ * @param {{ sourceKind?: 'rule'|'model'|'agent', model?: string, promptVersion?: string, ruleVersion?: string,
+ *           confidence?: number, ttlDays?: number, complete?: boolean }} [meta]
+ * @returns {number} rows written (rows resolved by a complete run are not counted)
  */
-export function upsertInsights(db, project, type, items) {
-  if (!Array.isArray(items) || !items.length) return 0;
-  let stmt;
+export function upsertInsights(db, project, type, items, meta = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length && !meta.complete) return 0;
+  let stmt, activeStmt, resolveStmt;
   // Prepared inside the guard: a caller working against a database without the
   // insights table (a fixture, or a read-only handle) must get 0 back, not an
   // exception thrown through the middle of an audit.
   try {
     stmt = db.prepare(`
-      INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
-      VALUES (?, ?, 'active', ?, ?, ?, NULL, ?)
-      ON CONFLICT(project, type, fingerprint) DO UPDATE SET
-        last_seen = excluded.last_seen,
-        data = excluded.data
+      INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, ${PROVENANCE_COLS})
+      VALUES (?, ?, 'active', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project, type, fingerprint) DO UPDATE SET ${REEMIT_UPDATE}
     `);
+    if (meta.complete) {
+      activeStmt = db.prepare(`SELECT id, fingerprint FROM insights WHERE project = ? AND type = ? AND status = 'active'`);
+      resolveStmt = db.prepare(`UPDATE insights SET status = 'resolved' WHERE id = ?`);
+    }
   } catch { return 0; }
   const ts = Date.now();
+  const prov = resolveProvenance(type, meta, ts);
   try {
     db.exec('BEGIN');
     let n = 0;
-    for (const item of items) {
+    const seen = new Set();
+    for (const item of list) {
       if (!item?.fingerprint) continue;
-      stmt.run(project, type, String(item.fingerprint).slice(0, 300), ts, ts, JSON.stringify(item.data ?? {}));
+      const fp = String(item.fingerprint).slice(0, 300);
+      stmt.run(project, type, fp, ts, ts, JSON.stringify(item.data ?? {}), ...prov.bind(item.confidence));
+      seen.add(fp);
       n++;
+    }
+    if (meta.complete) {
+      // The set difference is taken here rather than in a NOT IN (...) so a
+      // site with thousands of findings cannot run into SQLite's bound-
+      // variable limit. Rows written this run are active and in `seen`.
+      for (const row of activeStmt.all(project, type)) {
+        if (!seen.has(row.fingerprint)) resolveStmt.run(row.id);
+      }
     }
     db.exec('COMMIT');
     return n;
@@ -574,9 +827,11 @@ export function recordDraftCreated(db, project, { topic, score = null, tier = nu
     topic: topic || '(auto)', score, tier, word_count: wordCount,
     lang, content_type: contentType, saved_path: savedPath, created_at: ts,
   });
+  // A record of something that happened, not a finding: stamped as a rule
+  // (certain, never expiring) so the boot-time backfill has nothing to guess.
   db.prepare(`
-    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data)
-    VALUES (?, 'draft_created', 'active', ?, ?, ?, NULL, ?)
+    INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, ${PROVENANCE_COLS})
+    VALUES (?, 'draft_created', 'active', ?, ?, ?, NULL, ?, 'rule', NULL, NULL, '1', 1.0, NULL)
     ON CONFLICT(project, type, fingerprint) DO UPDATE SET
       last_seen = excluded.last_seen,
       data = excluded.data

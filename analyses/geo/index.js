@@ -9,6 +9,10 @@
 import { mapLimit, LIVE_CONCURRENCY } from '../../lib/concurrency.js';
 import { upsertInsights } from '../../db/db.js';
 
+// Most retrieval_gap rows one run writes to the Ledger. See the upsert below
+// for why this also decides whether the run may resolve anything.
+const RETRIEVAL_GAP_CAP = 25;
+
 function firstWords(text, count = 220) {
   return (text || '').split(/\s+/).slice(0, count).join(' ');
 }
@@ -110,10 +114,18 @@ export async function runGeoAudit(db, project, opts = {}) {
 
   // Capped at the 25 worst: a large docs site would otherwise write hundreds of
   // rows from one run and bury every other insight type in the dashboard.
-  upsertInsights(db, project, 'retrieval_gap', pages
+  //
+  // complete only when the cap did not bite. Every page was audited, so when
+  // all the gaps fit under the cap a retrieval_gap absent from this run is a
+  // page that now scores well and the Ledger resolves it. When there are more
+  // gaps than the cap, the 26th-worst page is still a gap — it simply was not
+  // written — and resolving it would be a lie, so a truncated run resolves
+  // nothing and the site's findings clear once it is down to 25.
+  const gaps = pages
     .filter(p => p.score < 60 && p.actions.length)
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 25)
+    .sort((a, b) => a.score - b.score);
+  upsertInsights(db, project, 'retrieval_gap', gaps
+    .slice(0, RETRIEVAL_GAP_CAP)
     .map(p => ({
       fingerprint: p.url.toLowerCase().replace(/\/+$/, ''),
       data: {
@@ -122,7 +134,7 @@ export async function runGeoAudit(db, project, opts = {}) {
         untypedCodeBlocks: p.code.withoutLanguage,
         recommendation: p.actions.join(' '),
       },
-    })));
+    })), { complete: gaps.length <= RETRIEVAL_GAP_CAP });
 
   return {
     project, live: !!opts.live, pages, notAnalyzable,

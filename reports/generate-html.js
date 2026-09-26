@@ -5980,7 +5980,7 @@ function buildReviewCard(review, escapeHtml, project) {
       </div>
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--surface-border);">
         ${column('Needs your input', review.needs_input, 'A person decides. Agents must not guess these.', it => it.blocked_by ? `Unblocked by: ${it.blocked_by}` : (it.decision_basis || [])[0] || '')}
-        ${column('Safe to fix now', review.safe_now, 'Hygiene with a fix template. An agent may act unattended.', it => (it.decision_basis || [])[0] || '')}
+        ${column('Safe to fix now', review.safe_now, 'Hygiene with a fix template, found by a rule. An agent may act unattended.', it => (it.decision_basis || [])[0] || '')}
         ${column('Opportunities', review.opportunities, 'Growth bets to weigh, not tasks.', it => (it.decision_basis || [])[0] || '')}
       </div>
       <div style="padding-top: 14px; display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 24px;">

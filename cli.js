@@ -21,14 +21,24 @@ import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 
 // Paid modules — loaded lazily inside gated commands only.
-let _extractPage, _buildAnalysisPrompt;
+let _extractPage, _promptBuilder;
 async function getExtractPage() {
   if (!_extractPage) _extractPage = (await import('./extractor/qwen.js')).extractPage;
   return _extractPage;
 }
+async function getPromptBuilder() {
+  if (!_promptBuilder) _promptBuilder = await import('./analysis/prompt-builder.js');
+  return _promptBuilder;
+}
 async function getBuildAnalysisPrompt() {
-  if (!_buildAnalysisPrompt) _buildAnalysisPrompt = (await import('./analysis/prompt-builder.js')).buildAnalysisPrompt;
-  return _buildAnalysisPrompt;
+  return (await getPromptBuilder()).buildAnalysisPrompt;
+}
+// The tag every model-sourced Ledger row carries as insights.prompt_version.
+// One tag covers the analyze prompts and the keywords prompt in this file:
+// both are the instructions a finding came from, and a reader traces it back
+// through this. Bumped in analysis/prompt-builder.js when either text changes.
+async function getPromptVersion() {
+  return (await getPromptBuilder()).PROMPT_VERSION;
 }
 import { getNextCrawlTarget, needsAnalysis, getCrawlStatus, loadAllConfigs } from './scheduler.js';
 import {
@@ -833,7 +843,7 @@ program
     // Save prompt for debugging (markdown for Obsidian/agent compatibility)
     const promptTs = new Date().toISOString().slice(0, 10);
     const promptPath = join(__dirname, `reports/${project}-prompt-${promptTs}.md`);
-    const promptFrontmatter = `---\nproject: ${project}\ngenerated: ${new Date().toISOString()}\ntype: analysis-prompt\nmodel: gemini\n---\n\n`;
+    const promptFrontmatter = `---\nproject: ${project}\ngenerated: ${new Date().toISOString()}\ntype: analysis-prompt\nmodel: ${opts.model}\n---\n\n`;
     writeFileSync(promptPath, promptFrontmatter + prompt, 'utf8');
     console.log(chalk.gray(`Prompt saved: ${promptPath}`));
 
@@ -862,13 +872,17 @@ program
     const outPath = join(__dirname, `reports/${project}-analysis-${new Date().toISOString().slice(0, 10)}.json`);
     writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
 
-    // Save to DB (so HTML dashboard picks it up)
+    // Save to DB (so HTML dashboard picks it up). analyses.model records the
+    // backend that answered, not the one asked for: the request can fall back
+    // from the Agent Harness to Gemini CLI or the other way, and provenance
+    // has to name what produced the findings.
     const analysisTs = Date.now();
+    const modelUsed = lastAnalysisModel() || opts.model;
     db.prepare(`
       INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      project, analysisTs, 'gemini',
+      project, analysisTs, modelUsed,
       JSON.stringify(analysis.keyword_gaps || []),
       JSON.stringify(analysis.long_tails || []),
       JSON.stringify(analysis.quick_wins || []),
@@ -881,7 +895,8 @@ program
 
     // Upsert individual insights (Intelligence Ledger — accumulates across runs)
     const analysisRowId = db.prepare('SELECT last_insert_rowid() as id').get().id;
-    upsertInsightsFromAnalysis(db, project, analysisRowId, analysis, analysisTs);
+    upsertInsightsFromAnalysis(db, project, analysisRowId, analysis, analysisTs,
+      { model: modelUsed, promptVersion: await getPromptVersion() });
 
     // Print summary
     printAnalysisSummary(analysis, project);
@@ -958,6 +973,9 @@ program
       : `Focus primarily on ${intentFilter} intent keywords.`;
 
     const industry = config.context || `the industry of ${target.domain}`;
+    // This prompt is versioned by PROMPT_VERSION in analysis/prompt-builder.js:
+    // the keyword_inventor rows it produces carry that tag. Bump it there
+    // whenever this text changes.
     const prompt = `You are an expert SEO strategist. Analyze the competitive landscape and generate keyword opportunities.
 
 Project: ${project.toUpperCase()}
@@ -1084,9 +1102,13 @@ Respond ONLY with a single valid JSON object matching this exact schema. No expl
       writeFileSync(outPath, JSON.stringify(data, null, 2), 'utf8');
       console.log(chalk.bold.green(`✅ Report saved: ${outPath}\n`));
 
-      // Persist keyword inventor insights to Intelligence Ledger
+      // Persist keyword inventor insights to Intelligence Ledger. Model rows:
+      // name the backend that answered (there is no analyses row to take it
+      // from) and the prompt version, so the Ledger can say where each invented
+      // keyword came from and retire it if the model never repeats it.
       const db = getDb();
-      upsertInsightsFromKeywords(db, project, data);
+      upsertInsightsFromKeywords(db, project, data,
+        { model: lastAnalysisModel() || 'gemini', promptVersion: await getPromptVersion() });
     }
   });
 
@@ -1164,6 +1186,17 @@ function loadConfig(project) {
   }
 }
 
+// Which backend answered the most recent callAnalysisModel(): 'gemini-cli', or
+// 'agent-harness:<model id>'; null while no call has answered. The request
+// names a model, but the answer may come from the fallback path, and
+// provenance (analyses.model, insights.model) must record what actually
+// produced the findings — so the Ledger writers read this right after the
+// call. Module-level rather than a changed return type because
+// callAnalysisModel has a dozen callers that expect text and only the writers
+// need this.
+let _lastModelUsed = null;
+function lastAnalysisModel() { return _lastModelUsed; }
+
 async function callGemini(prompt) {
   return callAnalysisModel(prompt, 'gemini');
 }
@@ -1212,7 +1245,9 @@ async function callOpenClaw(prompt, model = 'openclaw') {
     if (!res.ok) throw new Error(`Agent Harness API error: ${res.status} ${await res.text()}`);
 
     const data = await res.json();
-    return data.choices?.[0]?.message?.content || null;
+    const text = data.choices?.[0]?.message?.content || null;
+    if (text) _lastModelUsed = `agent-harness:${clawModel}`;
+    return text;
   } finally {
     clearTimeout(timeout);
   }
@@ -1221,6 +1256,7 @@ async function callOpenClaw(prompt, model = 'openclaw') {
 async function callAnalysisModel(prompt, model = 'gemini') {
   const requestedModel = String(model || 'gemini').trim();
   const normalizedModel = requestedModel.toLowerCase();
+  _lastModelUsed = null; // set by whichever path below answers
 
   // Non-Gemini model: try the Agent Harness first, then fall back to Gemini CLI
   if (normalizedModel !== 'gemini') {
@@ -1248,6 +1284,7 @@ async function callAnalysisModel(prompt, model = 'gemini') {
       throw new Error(result.stderr?.trim() || `gemini exited with status ${result.status}`);
     }
 
+    _lastModelUsed = 'gemini-cli';
     return result.stdout;
   } catch (err) {
     // Gemini CLI failed — try the Agent Harness as last resort (if we haven't already)
@@ -2139,13 +2176,15 @@ async function runAnalysis(project, db) {
     const outPath = join(__dirname, `reports/${project}-analysis-${new Date().toISOString().slice(0, 10)}.json`);
     writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
 
-    // Save to DB
+    // Save to DB. analyses.model is the backend that answered (callGemini asks
+    // for Gemini CLI, but the Agent Harness may have been the fallback).
     const analysisTs2 = Date.now();
+    const modelUsed2 = lastAnalysisModel() || 'gemini';
     db.prepare(`
       INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      project, analysisTs2, 'gemini',
+      project, analysisTs2, modelUsed2,
       JSON.stringify(analysis.keyword_gaps || []),
       JSON.stringify(analysis.long_tails || []),
       JSON.stringify(analysis.quick_wins || []),
@@ -2158,7 +2197,8 @@ async function runAnalysis(project, db) {
 
     // Upsert individual insights (Intelligence Ledger)
     const analysisRowId2 = db.prepare('SELECT last_insert_rowid() as id').get().id;
-    upsertInsightsFromAnalysis(db, project, analysisRowId2, analysis, analysisTs2);
+    upsertInsightsFromAnalysis(db, project, analysisRowId2, analysis, analysisTs2,
+      { model: modelUsed2, promptVersion: await getPromptVersion() });
 
     printAnalysisSummary(analysis, project);
     console.log(chalk.green(`\n✅ Analysis saved: ${outPath}`));
@@ -4751,7 +4791,12 @@ program
 
     // Persist scores (project → also appended to citability_history for trends)
     persistAeoScores(db, results, project);
-    upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess);
+    // aiAccessChecked: only a run that actually read robots.txt for every
+    // target domain may resolve the domain-level "crawlers are blocked" rows it
+    // did not re-emit. The summary decides that, not `aiAccessByDomain != null`:
+    // fetchAiAccessForDomains never throws, so a failed fetch still hands back
+    // a Map — of "assume open" verdicts.
+    upsertCitabilityInsights(db, project, results.target, results.summary.aiAccess, { aiAccessChecked: results.summary.aiAccessChecked });
 
     const { summary } = results;
     const { tierCounts } = summary;
@@ -4854,10 +4899,13 @@ program
         console.log(chalk.bold('  🤖 AI Crawler Access (robots.txt)'));
         console.log('');
         for (const a of summary.aiAccess) {
-          const icon = a.verdict === 'blocked' ? chalk.red('✗') : a.verdict === 'partial' ? chalk.yellow('⚠') : chalk.green('✓');
-          const label = a.verdict === 'blocked' ? chalk.red('BLOCKED') : a.verdict === 'partial' ? chalk.yellow('PARTIAL') : chalk.green('OPEN');
+          // A robots.txt that could not be fetched is "assume open", not open:
+          // a green tick would say the site was checked when nobody looked.
+          const unread = a.fetched === false;
+          const icon = unread ? chalk.gray('?') : a.verdict === 'blocked' ? chalk.red('✗') : a.verdict === 'partial' ? chalk.yellow('⚠') : chalk.green('✓');
+          const label = unread ? chalk.gray('NOT CHECKED') : a.verdict === 'blocked' ? chalk.red('BLOCKED') : a.verdict === 'partial' ? chalk.yellow('PARTIAL') : chalk.green('OPEN');
           console.log(`    ${icon} ${chalk.bold(a.domain)}  ${label}  ${chalk.gray(a.score + '/100')}`);
-          if (a.verdict !== 'open') console.log(chalk.gray(`         ${a.detail}`));
+          if (unread || a.verdict !== 'open') console.log(chalk.gray(`         ${a.detail}`));
         }
         if (summary.gatedPages > 0) {
           console.log(chalk.red(`    ⛔ ${summary.gatedPages} page(s) capped at 30/100 — AI assistants can't read them, so on-page quality can't help.`));
@@ -5734,13 +5782,15 @@ program
           const jsonMatch = result.match(/\{[\s\S]*\}/);
           const analysis = JSON.parse(jsonMatch[0]);
 
-          // Save to DB
+          // Save to DB. analyses.model is the backend that answered, which
+          // may be the fallback rather than the --model that was asked for.
           const analysisTs = Date.now();
+          const modelUsed = lastAnalysisModel() || opts.model;
           db.prepare(`
             INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
-            projectSlug, analysisTs, opts.model,
+            projectSlug, analysisTs, modelUsed,
             JSON.stringify(analysis.keyword_gaps || []),
             JSON.stringify(analysis.long_tails || []),
             JSON.stringify(analysis.quick_wins || []),
@@ -5751,7 +5801,8 @@ program
             result,
           );
           const analysisRowId = db.prepare('SELECT last_insert_rowid() as id').get().id;
-          upsertInsightsFromAnalysis(db, projectSlug, analysisRowId, analysis, analysisTs);
+          upsertInsightsFromAnalysis(db, projectSlug, analysisRowId, analysis, analysisTs,
+            { model: modelUsed, promptVersion: await getPromptVersion() });
 
           printAnalysisSummary(analysis, projectSlug);
         } catch (parseErr) {
@@ -6008,6 +6059,10 @@ program
     }
     // The top gaps accumulate in the Ledger so blog-draft and the dashboard can
     // act on them; the long tail of low-signal queries is left out on purpose.
+    // complete: false — this is a top-30 list, not the whole detection. A query
+    // that drops out of the top 30 is still a gap that ranks lower, so its
+    // absence from a run must not resolve it. platform_gap rows clear when a
+    // person marks them, or when the Ledger learns a complete run for them.
     try {
       const { upsertInsights } = await import('./db/db.js');
       upsertInsights(getDb(), project, 'platform_gap', result.gaps.slice(0, 30).map(g => ({
@@ -6016,7 +6071,7 @@ program
           query: g.query, priority: g.priority, platformSignals: g.platformSignals,
           recommendation: `Platform surfaces rank for "${g.query}" but the site has no page for it. Create one and link it from the ranking surface.`,
         },
-      })));
+      })), { complete: false });
     } catch { /* Ledger write is best-effort */ }
     if (opts.format === 'json') { console.log(JSON.stringify({ command: 'gsc-platform', project, ...result }, null, 2)); return; }
     console.log(`\n  ${chalk.bold('GSC Platform Property & Gap Analysis')}  ${chalk.gray(project)}`);
@@ -6399,7 +6454,7 @@ program
       if (items.length > SHOW) console.log(chalk.gray(`      … and ${items.length - SHOW} more (--format json for all)`));
     };
     section('Needs your input', r.needs_input, chalk.yellow, 'a person decides; agents must not guess');
-    section('Safe to fix now', r.safe_now, chalk.green, 'hygiene with a fix template; an agent may act unattended');
+    section('Safe to fix now', r.safe_now, chalk.green, 'hygiene with a fix template, found by a rule; an agent may act unattended');
     section('Opportunities', r.opportunities, chalk.cyan, 'growth bets to weigh, not tasks');
     console.log(`\n  ${chalk.bold('Working')} ${chalk.gray(`(${r.working.length})`)}`);
     if (!r.working.length) console.log(chalk.gray(fresh.state === 'fresh' ? '      nothing verified yet' : '      passes withheld — the crawl is stale or missing'));

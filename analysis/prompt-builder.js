@@ -14,6 +14,19 @@
  */
 
 /**
+ * Version tag stamped on every Ledger row a model produced from these prompts
+ * (insights.prompt_version). BUMP IT WHENEVER THE PROMPT TEXT CHANGES — any
+ * prompt in this file, and the keywords prompt in cli.js, which shares this
+ * tag because it has no module of its own.
+ *
+ * It exists so a finding can be traced to the instructions that produced it.
+ * Two runs of the same prompt disagreeing is the model; two runs of different
+ * prompts disagreeing is us. Without the tag those are indistinguishable in
+ * the table. Format: <date>.<n>, where n restarts at 1 each day.
+ */
+export const PROMPT_VERSION = '2026-09-26.1';
+
+/**
  * Build the full analysis prompt for Gemini.
  *
  * @param {object} params

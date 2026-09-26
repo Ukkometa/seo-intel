@@ -222,6 +222,7 @@ The multi-project dashboard includes a dropdown at the top to switch between pro
 |---------|-------------|---------|
 | `keywords <project>` | Generate keyword cluster matrix | `node cli.js keywords mysite --count 120 --save` |
 | `gsc-fetch <project>` | Pull your Search Console data from the API into the database (page×query 90 days; page and query daily 16 months); needs `seo-intel auth google` | `node cli.js gsc-fetch mysite --dry-run` |
+| `gsc-inspect <project>` | Ask Google whether it has indexed your pages (URL Inspection API) and store each verdict, coverage state and chosen canonical; demand-first, 2,000 per property per day; `review` and `list_problems` read it | `node cli.js gsc-inspect mysite --url https://example.com/page` |
 | `report <project>` | Print latest analysis to terminal | `node cli.js report mysite` |
 | `status` | Show crawl freshness + extraction progress | `node cli.js status` |
 | `run` | Smart cron: crawl next stale domain | `node cli.js run` |

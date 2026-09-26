@@ -22,6 +22,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getDb, getActiveInsights, getSchemasByProject } from './db/db.js';
 import { DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
+import { DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
+import { URL_INSPECTION_QUOTA } from './lib/gsc-api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -143,6 +145,17 @@ export const capabilities = [
     requires: ['google-oauth'],
     inputs: { project: 'string', options: { days: 'number', months: 'number', dryRun: 'boolean' } },
     outputs: { property: 'string', grains: 'array<{grain, windows, rows, requests}>', coverage: 'object' },
+    phase: 'collect',
+    tier: 'free',
+    dependsOn: [],
+  },
+  {
+    id: 'gsc-inspect',
+    name: 'URL Inspection',
+    description: `Ask Google whether it has indexed your pages (URL Inspection API) and store each verdict — PASS/PARTIAL/FAIL/NEUTRAL, coverage state, chosen canonical. Demand-first within the ${URL_INSPECTION_QUOTA.perDay}/day quota: ${GSC_INSPECT_DEFAULTS.limit} URLs a run, skipping any inspected in the last ${GSC_INSPECT_DEFAULTS.maxAgeDays} days. NEUTRAL is often an intended noindex. Feeds list_problems (indexability) and the search review.`,
+    requires: ['google-oauth'],
+    inputs: { project: 'string', options: { urls: 'array<string>|string', limit: 'number', maxAgeDays: 'number', property: 'string', dryRun: 'boolean' } },
+    outputs: { property: 'string', inspected: 'number', verdicts: 'object', results: 'array<{url, verdict, coverage_state, google_canonical}>', quota: 'object', stopped_reason: 'string|null' },
     phase: 'collect',
     tier: 'free',
     dependsOn: [],
@@ -373,6 +386,7 @@ export const pipeline = {
   graph: {
     crawl: [],
     'gsc-fetch': [],
+    'gsc-inspect': [],
     extract: ['crawl'],
     aeo: ['crawl'],
     rescore: ['aeo'],
@@ -483,6 +497,23 @@ export async function run(command, project, opts = {}) {
         } catch (err) {
           // The transport's hint (reconnect, wait, enable the API) is the
           // actionable half of a GscApiError; keep it in the failure text.
+          return fail(err.hint ? `${err.message} — ${err.hint}` : err.message);
+        }
+      }
+
+      case 'gsc-inspect': {
+        const { runGscInspect } = await import('./analyses/gsc-inspect/index.js');
+        const urls = Array.isArray(opts.urls)
+          ? opts.urls
+          : (opts.urls ? String(opts.urls).split(',').map(s => s.trim()).filter(Boolean) : undefined);
+        try {
+          return wrap(await runGscInspect(db, project, config, {
+            urls, limit: opts.limit, maxAgeDays: opts.maxAgeDays,
+            property: opts.property, dryRun: !!opts.dryRun,
+          }));
+        } catch (err) {
+          // Same as gsc-fetch: the transport's hint (reconnect, quota, enable
+          // the API) is the actionable half of a GscApiError.
           return fail(err.hint ? `${err.message} — ${err.hint}` : err.message);
         }
       }

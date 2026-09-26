@@ -50,7 +50,8 @@ import { prescore, extractDraftTopic } from '../analyses/blog-draft/prescorer.js
 import { runContentLoop } from '../analyses/loop/orchestrator.js';
 import { gatherBlogDraftContext, buildBlogDraftPrompt } from '../analyses/blog-draft/index.js';
 import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from '../analyses/gsc-fetch/index.js';
-import { GscApiError } from '../lib/gsc-api.js';
+import { runGscInspect, DEFAULTS as GSC_INSPECT_DEFAULTS } from '../analyses/gsc-inspect/index.js';
+import { GscApiError, URL_INSPECTION_QUOTA } from '../lib/gsc-api.js';
 import { run } from '../agent-harness.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -781,6 +782,62 @@ server.registerTool(
   },
 );
 
+// ── Tool: inspect_urls (FREE) ─────────────────────────────────────────────
+server.registerTool(
+  'inspect_urls',
+  {
+    description: [
+      "Ask Google whether it has indexed a project's pages, via the URL Inspection API, and store each answer locally. Per URL: Google's own verdict (PASS indexed · PARTIAL indexed with issues · FAIL an error prevents indexing · NEUTRAL excluded), the coverage state in Google's words, and the canonical Google chose. This is the fact the crawl's is_indexable flag only infers: a noindex added by a CDN, a canonical Google picked for itself, a page crawled and judged not worth keeping are all invisible to a crawl and visible here.",
+      '',
+      `Quota: ${URL_INSPECTION_QUOTA.perDay} inspections per property per day, so the tool is demand-first — candidates are the crawled target pages ordered by 28-day impressions (fetch_gsc data), then sitemap presence, then crawl indexability — the default limit is ${GSC_INSPECT_DEFAULTS.limit}, and URLs inspected within the last ${GSC_INSPECT_DEFAULTS.maxAgeDays} days are skipped (max_age_days 0 re-asks). Pass urls to inspect exactly those instead; URLs outside the property are reported as skipped rather than sent. A 429 stops the run cleanly with every verdict so far kept. dry_run lists the selection without spending quota.`,
+      '',
+      'NEUTRAL is often intended: a noindex page or a URL canonicalised elsewhere. Read it against the page before calling it a problem. The stored verdicts feed list_problems (indexability: FAIL, unintended NEUTRAL, canonical mismatch) and search_review.working ("Google has indexed your pages"), so call those after this.',
+      '',
+      'Needs the Google account connected (seo-intel auth google) or GSC_ACCESS_TOKEN in the environment. Free tier — it is your own site and your own Search Console.',
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      urls: z.array(z.string()).optional().describe('Inspect exactly these URLs, ignoring limit and the recency skip. Omit to let demand choose.'),
+      limit: z.number().int().positive().optional().describe(`URLs to inspect this call. Default ${GSC_INSPECT_DEFAULTS.limit}.`),
+      max_age_days: z.number().int().min(0).optional().describe(`Skip URLs inspected within this many days; 0 re-inspects everything selected. Default ${GSC_INSPECT_DEFAULTS.maxAgeDays}.`),
+      dry_run: z.boolean().optional().describe('Select and return the planned URLs without making any URL Inspection request.'),
+      property: z.string().optional().describe('Search Console siteUrl to inspect against (sc-domain:example.com or https://www.example.com/). Overrides auto-detection and config.gsc.property.'),
+    },
+  },
+  async ({ project, urls, limit, max_age_days, dry_run, property }) => {
+    const config = loadProjectConfig(project);
+    if (!config) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const result = await runGscInspect(getDb(), project, config, { urls, limit, maxAgeDays: max_age_days, dryRun: !!dry_run, property });
+      const v = result.verdicts;
+      const maxAge = max_age_days ?? GSC_INSPECT_DEFAULTS.maxAgeDays;
+      let hint;
+      if (result.dry_run) {
+        hint = `Plan only: ${result.planned.length} URL(s) would be inspected. Call again without dry_run to inspect them.`;
+      } else if (result.inspected) {
+        hint = `${result.inspected} verdict(s) stored (${v.PASS} PASS, ${v.PARTIAL} PARTIAL, ${v.FAIL} FAIL, ${v.NEUTRAL} NEUTRAL). NEUTRAL is often an intended noindex or canonical — read it against the page. list_problems(project, category='indexability') and search_review now include these verdicts.`
+          + (result.stopped_reason === 'quota' ? ` Google's daily inspection quota is spent; ${result.quota_capped + (result.planned.length - result.inspected - result.errors.length)} planned URL(s) remain for tomorrow.` : '');
+      } else if (result.planned.length) {
+        hint = 'Nothing stored: every request failed. See errors[] for what Google said about each URL.';
+      } else if (result.skipped_recent) {
+        hint = `Nothing to inspect: every candidate was inspected within the last ${maxAge} day(s). Pass max_age_days 0 to re-ask, or urls to name specific pages.`;
+      } else if (result.quota_capped) {
+        hint = "Nothing to inspect today: Google's daily inspection quota for this property is already spent. Try again tomorrow.";
+      } else {
+        hint = 'Nothing to inspect: no crawled target pages answered 200, or every named URL lies outside the property (see skipped_out_of_property). run_crawl(project) first.';
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ ...result, hint }, null, 2) }] };
+    } catch (err) {
+      // GscApiError carries the fix (401 → reconnect, 403 → property or API
+      // access, 429 → the day's quota). The agent needs it verbatim.
+      const text = err instanceof GscApiError && err.hint ? `${err.message}\n${err.hint}` : `seo-intel error: ${err.message}`;
+      return { content: [{ type: 'text', text }], isError: true };
+    }
+  },
+);
+
 // ── Tool: page_contract (FREE) ────────────────────────────────────────────
 server.registerTool(
   'page_contract',
@@ -834,6 +891,8 @@ server.registerTool(
       '  working        checks that passed. Withheld entirely when the crawl is stale or missing, because a wrong green tick stops someone looking.',
       '',
       'Composes list_problems with page_contract. Pass urls to fold per-page decisions in: their blocked recommendations land in needs_input with the exact input that unblocks them, and their allowed work lands in safe_now.',
+      '',
+      "When inspect_urls has run, Google's own index verdicts are included: pages Google did not index surface as problems, and working reports \"Google has indexed your pages\" from the stored verdicts rather than from the crawl's inference.",
       '',
       'CALL THIS FIRST in a session, before list_problems or any content advice. Read freshness.state before acting on anything: "stale" or "missing" means the findings may describe a page that no longer exists — run_crawl(project) first. Free tier — it reads only your own site.',
     ].join('\n'),
@@ -1567,6 +1626,7 @@ server.registerTool(
       "List concrete, fixable SEO problems for a project — severity-sorted, with everything an AI coding agent needs to remediate (affected_urls, fix_template, verification). This is the primary 'what should I work on?' tool: call list_projects first to see the nag/counts, then call list_problems here.",
       "",
       "Free tier categories: tech (HTTP errors), indexability (robots conflicts), links (orphan pages), schema (missing structured data).",
+      "Index verdicts from inspect_urls are included under indexability when present: a FAIL, a NEUTRAL on a page the crawl says is indexable, or a canonical Google chose that differs from the page's own.",
       "Paid tier adds: citability (low AEO scores), content/keyword/positioning gaps from the Intelligence Ledger.",
       "",
       "Each problem returns {id, severity, category, tier, title, description, affected_urls, evidence, fix_template, verification, first_seen, last_seen, fix_difficulty}. fix_difficulty: 1=trivial → 5=deep work.",

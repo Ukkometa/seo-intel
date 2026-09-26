@@ -21,12 +21,30 @@
  * via dashboard/plugin_api.py).
  */
 
-import { getProblems, getProblemCounts, FREE_CATEGORIES } from '../../lib/problems.js';
+import { getProblems, getProblemCounts, getInspectedPages, crawlSaysIndexable, evidenceSourceOf, FREE_CATEGORIES } from '../../lib/problems.js';
 import { runPageContract } from '../page-contract/index.js';
 
 // A crawl older than this is reported as stale: findings may describe a
 // version of the page that no longer exists. Matches page-contract's caution.
 const STALE_CRAWL_DAYS = 30;
+
+// A URL Inspection older than this no longer vouches for the page. Google keeps
+// re-evaluating pages, and an old PASS is exactly the wrong green tick a pass
+// must never be. Same horizon as the crawl, for the same reason. It applies to
+// each verdict on its own: one fresh inspection does not renew its neighbours.
+const STALE_INSPECTION_DAYS = 30;
+
+const DAY_MS = 86_400_000;
+
+/** Whole days between an epoch-ms timestamp and `now`; NaN for a missing timestamp. */
+const ageInDays = (at, now) => Math.floor((now - at) / DAY_MS);
+
+// The indexed_by_google pass generalises from a sample: too small a sample says
+// nothing about the site, and a pass rate below this leaves too many misses for
+// "your pages are indexed" to be an honest sentence. The misses themselves are
+// named one by one on the problems list.
+const MIN_INSPECTED_PAGES = 5;
+const INDEXED_PASS_RATE = 0.9;
 
 // Categories whose fixes are mechanical — no human decision required.
 const AUTONOMOUS_CATEGORIES = new Set(FREE_CATEGORIES);
@@ -149,26 +167,51 @@ function toReviewItem(p, freshness) {
     fix_difficulty: p.fix_difficulty,
     status: p.status,
     evidence: (Array.isArray(p.affected_urls) ? p.affected_urls : []).map(url => ({
-      source: p.category === 'citability' ? 'aeo' : 'crawl',
+      source: evidenceSourceOf(p),
       url,
       observed: typeof p.evidence === 'object' ? JSON.stringify(p.evidence) : String(p.evidence ?? ''),
     })),
   };
 }
 
+/**
+ * How current the inputs are. `state` and the crawl fields describe the crawl,
+ * which gates everything; `inspections` describes the URL Inspection rows, so
+ * the dashboard and agents can see when Google was last asked — null when
+ * nothing was inspected, or on a database that predates the table. It is
+ * description only: nothing is gated on it. The newest row in the table says
+ * nothing about the age of the others, and the pass that reads the verdicts
+ * judges each one by its own inspected_at (indexedByGoogle).
+ */
 function getFreshness(db, project) {
+  const inspections = getInspectionFreshness(db, project);
   const row = db.prepare(`
     SELECT MAX(p.crawled_at) AS crawled_at
     FROM pages p JOIN domains d ON d.id = p.domain_id
     WHERE d.project = ? AND d.role IN ('target','owned')
   `).get(project);
-  if (!row?.crawled_at) return { state: 'missing', crawled_at: null, age_days: null };
-  const age_days = Math.floor((Date.now() - row.crawled_at) / 86_400_000);
+  if (!row?.crawled_at) return { state: 'missing', crawled_at: null, age_days: null, inspections };
+  const age_days = ageInDays(row.crawled_at, Date.now());
   return {
     state: age_days > STALE_CRAWL_DAYS ? 'stale' : 'fresh',
     crawled_at: row.crawled_at,
     age_days,
+    inspections,
   };
+}
+
+function getInspectionFreshness(db, project) {
+  try {
+    const row = db.prepare(
+      'SELECT MAX(inspected_at) AS newest_at, COUNT(*) AS count FROM gsc_inspections WHERE project = ?'
+    ).get(project);
+    if (!row?.count) return null;
+    return {
+      newest_at: row.newest_at,
+      age_days: ageInDays(row.newest_at, Date.now()),
+      count: row.count,
+    };
+  } catch { return null; }
 }
 
 /**
@@ -217,7 +260,50 @@ function getPassingChecks(db, project, freshness) {
       `${excluded.n} pages carry a noindex directive.`));
   }
 
+  // The one pass that is Google's word rather than the crawl's. getInspectedPages
+  // answers [] on a database without the table, so the check simply stays silent.
+  const indexed = indexedByGoogle(getInspectedPages(db, project));
+  if (indexed) {
+    checks.push(pass('indexed_by_google', 'Google has indexed your pages', indexed.observed));
+  }
+
   return checks;
+}
+
+/**
+ * Whether URL Inspection supports "Google has indexed your pages". PURE.
+ *
+ * Counts only the pages the crawl calls indexable (crawlSaysIndexable:
+ * is_indexable = 1, status 200) whose own inspection is within
+ * STALE_INSPECTION_DAYS. A noindex page with verdict NEUTRAL is intent, a 404
+ * with FAIL is the crawl's finding, and a verdict past the horizon no longer
+ * vouches for its page, so none of them belongs in this denominator. The age
+ * is judged row by row, never by the newest row in the table: a single
+ * inspection run today — of one page, or of a URL the crawl never reached —
+ * must not renew ten verdicts from six weeks ago. A stale row is out of the
+ * sample the way an uninspected page is; if it was a miss, the problems list
+ * still names it. Silent unless the fresh sample is large enough and its pass
+ * rate high enough; a NEUTRAL or FAIL among indexable pages is a problem the
+ * list names, so the threshold leaves room for those without lying.
+ *
+ * @param {ReturnType<typeof getInspectedPages>} inspected
+ * @param {number} [now]  epoch ms the ages are measured from; tests pass a clock
+ * @returns {{ passed: number, total: number, oldest_age_days: number, observed: string } | null}
+ */
+export function indexedByGoogle(inspected, now = Date.now()) {
+  // A row without an inspected_at has NaN age, which no comparison admits.
+  const counted = (inspected || []).filter(r =>
+    crawlSaysIndexable(r.page) && ageInDays(r.inspected_at, now) <= STALE_INSPECTION_DAYS);
+  if (counted.length < MIN_INSPECTED_PAGES) return null;
+  const passed = counted.filter(r => r.verdict === 'PASS').length;
+  if (passed / counted.length < INDEXED_PASS_RATE) return null;
+  const oldest = Math.max(...counted.map(r => ageInDays(r.inspected_at, now)));
+  return {
+    passed,
+    total: counted.length,
+    oldest_age_days: oldest,
+    observed: `${passed} of ${counted.length} indexable pages inspected within the last ${STALE_INSPECTION_DAYS} days return PASS in URL Inspection (oldest counted inspection ${oldest} days ago).`,
+  };
 }
 
 function pass(id, title, detail) {

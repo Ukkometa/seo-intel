@@ -243,6 +243,19 @@ export const capabilities = [
     dependsOn: ['crawl', 'extract'],
   },
   {
+    id: 'analyze',
+    name: 'Competitor Analysis',
+    description: 'Competitor gap analysis with a receipt per section. Keyword gaps and content-gap clusters are computed from the crawl, quick wins and long tails come from Search Console, technical gaps from the audit; a model is asked only narrow judgments (intent and priority of each gap, cluster naming, new pages, positioning), each validated against a closed schema. Writes the analyses row and the Ledger insights; provenance says which section came from a rule, Search Console, or the model.',
+    requires: ['analysis-model'],
+    inputs: { project: 'string', options: { provider: 'string', model: 'string', noModel: 'boolean' } },
+    outputs: { analysis: 'object', provenance: 'object', analysisId: 'number', savedPath: 'string', judgmentsPath: 'string' },
+    modelHint: 'cloud-medium',
+    modelNote: 'Any provider with a key in .env — Anthropic, OpenAI, Gemini, DeepSeek — or local Ollama, or the Agent Harness gateway. ANALYSIS_PROVIDER / ANALYSIS_MODEL choose; options.provider / options.model override. Judgments are small (40 items at most, closed schema), so a capable local model works. noModel: true computes the sections and asks nothing.',
+    phase: 'analyze',
+    tier: 'pro',
+    dependsOn: ['crawl'],
+  },
+  {
     id: 'shallow',
     name: 'Shallow Champion Attack',
     description: 'Find competitor pages that are important but thin — easy to outwrite',
@@ -417,6 +430,7 @@ export const pipeline = {
     rescore: ['aeo'],
     watch: ['crawl'],
     'gap-intel': ['crawl', 'extract'],
+    analyze: ['crawl'],
     shallow: ['crawl'],
     decay: ['crawl'],
     'headings-audit': ['crawl'],
@@ -602,6 +616,20 @@ export async function run(command, project, opts = {}) {
         const { runWatch } = await import('./analyses/watch/index.js');
         const result = runWatch(db, project, { log: opts.log || (() => {}) });
         return wrap(result);
+      }
+
+      case 'analyze': {
+        // analysis/run-analysis.js: computed sections plus schema-checked
+        // judgments through lib/providers.js. Nothing here touches a model
+        // directly, and a ProviderError's hint rides along in the failure.
+        const { runProjectAnalysis } = await import('./analysis/run-analysis.js');
+        const { analysis, analysisId, provenance, savedPath, judgmentsPath } = await runProjectAnalysis(db, project, config, {
+          provider: opts.provider,
+          model: opts.model,
+          noModel: !!opts.noModel,
+          log: opts.log || (() => {}),
+        });
+        return wrap({ analysis, analysisId, provenance, savedPath, judgmentsPath });
       }
 
       case 'gap-intel': {
@@ -1014,6 +1042,8 @@ export async function run(command, project, opts = {}) {
         return fail(`Unknown command: "${command}". Available: ${capabilities.map(c => c.id).join(', ')}`);
     }
   } catch (e) {
-    return fail(e.message);
+    // A ProviderError carries the fix (the env var to set, the gateway to
+    // start); an agent relaying the failure should be able to say it.
+    return fail(e.hint ? `${e.message} (${e.hint})` : e.message);
   }
 }

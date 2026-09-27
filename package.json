@@ -52,7 +52,9 @@
     "./exports/suggestive": "./exports/suggestive.js",
     "./exports/queries": "./exports/queries.js",
     "./templates": "./analyses/templates/index.js",
-    "./dashboard": "./reports/generate-html.js"
+    "./dashboard": "./reports/generate-html.js",
+    "./providers": "./lib/providers.js",
+    "./schema-check": "./lib/schema-check.js"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -111,7 +113,7 @@
     "test:ledger": "node test/ledger.test.js",
     "test:page-contract": "node test/page-contract.test.js",
     "test:backlinks": "node test/backlinks.test.js",
-    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js && node test/gsc-api.test.js && node test/gsc-fetch.test.js && node test/gsc-inspect.test.js && node test/demand.test.js",
+    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js && node test/gsc-api.test.js && node test/gsc-fetch.test.js && node test/gsc-inspect.test.js && node test/demand.test.js && node test/analysis-parts.test.js && node test/schema-check.test.js && node test/providers.test.js && node test/run-analysis.test.js",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

@@ -21,36 +21,36 @@ import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 
 // Paid modules — loaded lazily inside gated commands only.
-let _extractPage, _promptBuilder;
+let _extractPage, _runAnalysisModule, _judgmentsModule;
 async function getExtractPage() {
   if (!_extractPage) _extractPage = (await import('./extractor/qwen.js')).extractPage;
   return _extractPage;
 }
-async function getPromptBuilder() {
-  if (!_promptBuilder) _promptBuilder = await import('./analysis/prompt-builder.js');
-  return _promptBuilder;
+// The competitive analysis (analyze, the run scheduler, the scan step) and
+// the keywords judgment. Each judgment carries its own prompt version, which
+// is what the Ledger rows record as insights.prompt_version; the single tag
+// this file used to fetch from analysis/prompt-builder.js is gone with the
+// mega-prompt it versioned.
+async function getRunAnalysis() {
+  if (!_runAnalysisModule) _runAnalysisModule = await import('./analysis/run-analysis.js');
+  return _runAnalysisModule;
 }
-async function getBuildAnalysisPrompt() {
-  return (await getPromptBuilder()).buildAnalysisPrompt;
-}
-// The tag every model-sourced Ledger row carries as insights.prompt_version.
-// One tag covers the analyze prompts and the keywords prompt in this file:
-// both are the instructions a finding came from, and a reader traces it back
-// through this. Bumped in analysis/prompt-builder.js when either text changes.
-async function getPromptVersion() {
-  return (await getPromptBuilder()).PROMPT_VERSION;
+async function getJudgments() {
+  if (!_judgmentsModule) _judgmentsModule = await import('./analysis/judgments.js');
+  return _judgmentsModule;
 }
 import { getNextCrawlTarget, needsAnalysis, getCrawlStatus, loadAllConfigs } from './scheduler.js';
 import {
   getDb, upsertDomain, upsertPage, insertExtraction,
   insertKeywords, insertHeadings, insertLinks, insertPageSchemas,
   upsertTechnical, pruneStaleDomains,
-  getCompetitorSummary, getKeywordMatrix, getHeadingStructure,
+  getCompetitorSummary, getKeywordMatrix,
   getPageHash, getSchemasByProject,
-  upsertInsightsFromAnalysis, upsertInsightsFromKeywords,
+  upsertInsightsFromKeywords,
   upsertSitemapUrls,
   recordDraftCreated,
 } from './db/db.js';
+import { callTextWithFallback, ProviderError } from './lib/providers.js';
 import { generateMultiDashboard } from './reports/generate-html.js';
 import { buildTechnicalActions } from './exports/technical.js';
 import { buildCompetitiveActions } from './exports/competitive.js';
@@ -796,111 +796,47 @@ program
   });
 
 // ── ANALYZE ────────────────────────────────────────────────────────────────
+//
+// One call into analysis/run-analysis.js, which computes what the rows can
+// prove (keyword gaps, content-gap clusters, Search Console quick wins and
+// long tails, technical gaps) and asks a model only the narrow judgments,
+// each checked against its schema. The provider is resolved once: --provider;
+// then a --model whose name routes to a provider (an alias like `claude`, or
+// an id like `gpt-4o-mini`, `deepseek-r1:14b`); then ANALYSIS_PROVIDER from
+// the setup wizard; then ANALYSIS_MODEL's shape; then the first key in .env,
+// the Agent Harness, the Gemini CLI (lib/providers.js resolveProvider). No
+// default model here, so that precedence is the whole story.
 program
   .command('analyze <project>')
-  .description('Run cloud analysis (Gemini) on crawled data')
-  .option('--model <model>', 'Model to use', 'gemini')
+  .description('Competitor analysis of crawled data: gaps, quick wins and technical gaps computed from the rows, narrow judgments from a model')
+  .option('--provider <name>', 'Model provider: anthropic | openai | gemini | deepseek | ollama | harness | gemini-cli (default: ANALYSIS_PROVIDER, else inferred from the model or the keys in .env)')
+  .option('--model <model>', 'Model id (claude-*, gpt-*, gemini-*, deepseek-*, an Ollama tag) or alias (claude, gpt, gemini, deepseek, ollama, harness); default: ANALYSIS_MODEL, else the provider default')
+  .option('--no-model', 'Computed sections only — no model is asked anything; analyses.model is "rules-only"')
   .action(async (project, opts) => {
     if (!requirePro('analyze')) return;
     const config = loadConfig(project);
     const db = getDb();
+    // commander folds --no-model into opts.model === false.
+    const noModel = opts.model === false;
 
     console.log(chalk.bold.cyan(`\n🧠 Analyzing ${project} data...\n`));
 
-    const summary      = getCompetitorSummary(db, project);
-    const keywordMatrix = getKeywordMatrix(db, project);
-    const headings     = getHeadingStructure(db, project);
-
-    if (!summary.length) {
-      console.error(chalk.red('No crawl data found. Run `crawl` first.'));
-      process.exit(1);
-    }
-
-    const target      = summary.find(s => s.role === 'target');
-    const competitors = summary.filter(s => s.role === 'competitor');
-
-    if (!target) {
-      console.error(chalk.red('No target site data found.'));
-      process.exit(1);
-    }
-
-    // Augment with domain for formatting
-    target.domain      = config.target.domain;
-    competitors.forEach((c, i) => c.domain = config.competitors[i]?.domain || c.domain);
-
-    const buildPromptFn = await getBuildAnalysisPrompt();
-    const prompt = buildPromptFn({
-      project,
-      target,
-      competitors,
-      keywordMatrix,
-      headingStructure: headings,
-      context: config.context,
-    });
-
-    console.log(chalk.yellow(`Prompt length: ~${Math.round(prompt.length / 4)} tokens`));
-    console.log(chalk.yellow('Sending to Gemini...\n'));
-
-    // Save prompt for debugging (markdown for Obsidian/agent compatibility)
-    const promptTs = new Date().toISOString().slice(0, 10);
-    const promptPath = join(__dirname, `reports/${project}-prompt-${promptTs}.md`);
-    const promptFrontmatter = `---\nproject: ${project}\ngenerated: ${new Date().toISOString()}\ntype: analysis-prompt\nmodel: ${opts.model}\n---\n\n`;
-    writeFileSync(promptPath, promptFrontmatter + prompt, 'utf8');
-    console.log(chalk.gray(`Prompt saved: ${promptPath}`));
-
-    // Call Gemini via gemini CLI (reuse existing auth)
-    process.env._SEO_INTEL_PROJECT = project;
-    const result = await callAnalysisModel(prompt, opts.model);
-
-    if (!result) {
-      console.error(chalk.red('No response from model.'));
-      process.exit(1);
-    }
-
-    // Parse JSON from response
-    let analysis;
+    const { runProjectAnalysis } = await getRunAnalysis();
+    let run;
     try {
-      const jsonMatch = result.match(/\{[\s\S]*\}/);
-      analysis = JSON.parse(jsonMatch[0]);
-    } catch {
-      console.error(chalk.red('Could not parse JSON from response. Saving raw output.'));
-      const rawPath = join(__dirname, `reports/${project}-raw-${new Date().toISOString().slice(0, 10)}.md`);
-      writeFileSync(rawPath, result, 'utf8');
-      process.exit(1);
+      run = await runProjectAnalysis(db, project, config, {
+        provider: opts.provider,
+        model: noModel ? undefined : opts.model,
+        noModel,
+        log: analysisLog,
+      });
+    } catch (err) {
+      exitOnAnalysisError(err);
     }
+    const { analysis, savedPath, judgmentsPath, provenance } = run;
 
-    // Save structured analysis to file
-    const outPath = join(__dirname, `reports/${project}-analysis-${new Date().toISOString().slice(0, 10)}.json`);
-    writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
-
-    // Save to DB (so HTML dashboard picks it up). analyses.model records the
-    // backend that answered, not the one asked for: the request can fall back
-    // from the Agent Harness to Gemini CLI or the other way, and provenance
-    // has to name what produced the findings.
-    const analysisTs = Date.now();
-    const modelUsed = lastAnalysisModel() || opts.model;
-    db.prepare(`
-      INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      project, analysisTs, modelUsed,
-      JSON.stringify(analysis.keyword_gaps || []),
-      JSON.stringify(analysis.long_tails || []),
-      JSON.stringify(analysis.quick_wins || []),
-      JSON.stringify(analysis.new_pages || []),
-      JSON.stringify(analysis.content_gaps || []),
-      JSON.stringify(analysis.positioning || {}),
-      JSON.stringify(analysis.technical_gaps || []),
-      result,
-    );
-
-    // Upsert individual insights (Intelligence Ledger — accumulates across runs)
-    const analysisRowId = db.prepare('SELECT last_insert_rowid() as id').get().id;
-    upsertInsightsFromAnalysis(db, project, analysisRowId, analysis, analysisTs,
-      { model: modelUsed, promptVersion: await getPromptVersion() });
-
-    // Print summary
     printAnalysisSummary(analysis, project);
+    printAnalysisProvenance(provenance);
 
     // Auto-regenerate dashboard (always multi-project so all projects stay current)
     try {
@@ -911,15 +847,18 @@ program
       console.log(chalk.dim(`  ⚠  Dashboard refresh skipped: ${dashErr.message}`));
     }
 
-    console.log(chalk.bold.green(`\n✅ Analysis saved: ${outPath}\n`));
+    console.log(chalk.bold.green(`\n✅ Analysis saved: ${savedPath}`));
+    console.log(chalk.dim(`   Judgments (prompts, answers, failures): ${judgmentsPath}\n`));
   });
 
 // ── KEYWORDS ───────────────────────────────────────────────────────────────
 program
   .command('keywords <project>')
-  .description('Generate a keyword cluster matrix (traditional + perplexity + agent) via Gemini')
+  .description('Generate a keyword cluster matrix (traditional + perplexity + agent) with the configured analysis model')
   .option('--count <n>', 'Number of keyword phrases to generate', '120')
   .option('--intent <type>', 'Filter by intent: commercial|informational|all', 'all')
+  .option('--provider <name>', 'Model provider: anthropic | openai | gemini | deepseek | ollama | harness | gemini-cli (default: ANALYSIS_PROVIDER, else inferred)')
+  .option('--model <model>', 'Model id or alias (claude, gpt, gemini, deepseek, ollama); default: ANALYSIS_MODEL, else the provider default')
   .option('--save', 'Save output to reports/<project>-keywords-<timestamp>.json')
   .action(async (project, opts) => {
     if (!requirePro('keywords')) return;
@@ -963,86 +902,43 @@ program
     const topKeywords = [...competitorCountByKeyword.entries()]
       .map(([keyword, domains]) => ({ keyword, competitor_count: domains.size }))
       .sort((a, b) => b.competitor_count - a.competitor_count)
-      .slice(0, 60)
-      .map(k => `${k.keyword} (${k.competitor_count} competitors)`)
-      .join('\n');
-
-    const competitorDomains = competitors.map(c => c.domain).join(', ');
+      .slice(0, 60);
 
     const intentInstruction = intentFilter === 'all'
       ? 'Include a mix of informational, commercial, transactional, and navigational intents.'
       : `Focus primarily on ${intentFilter} intent keywords.`;
 
-    const industry = config.context || `the industry of ${target.domain}`;
-    // This prompt is versioned by PROMPT_VERSION in analysis/prompt-builder.js:
-    // the keyword_inventor rows it produces carry that tag. Bump it there
-    // whenever this text changes.
-    const prompt = `You are an expert SEO strategist. Analyze the competitive landscape and generate keyword opportunities.
+    // config.context is the wizard's object (siteName, industry, audience,
+    // goal); a project set up by hand may still hold a plain string.
+    const context = config.context && typeof config.context === 'object' ? config.context : undefined;
+    const industry = context?.industry
+      || (typeof config.context === 'string' ? config.context : '')
+      || `the industry of ${target.domain}`;
 
-Project: ${project.toUpperCase()}
-Target site: ${target.domain}
-Competitors: ${competitorDomains}
-Industry context: ${industry}
-
-Competitor keyword signals (crawled data):
-${topKeywords || '(no crawl data yet — use your knowledge of the space)'}
-
-Generate exactly ${count} keyword phrases organized into clusters. ${intentInstruction}
-
-Three keyword types to generate:
-1. **traditional** — how humans search Google (3-5 words, keyword-style)
-2. **perplexity** — how users ask Perplexity/ChatGPT (more complete, question-style)
-3. **agent** — how an AI agent researches on behalf of a user (technical, complete, spec-like queries that include requirements and constraints). Agent queries are a new SEO vector — LLMs cite structured, factual content, so optimizing for agent queries means getting cited by AI assistants.
-
-Distribute the ${count} phrases roughly as: 40% traditional, 35% perplexity, 25% agent.
-
-Respond ONLY with a single valid JSON object matching this exact schema. No explanation, no markdown, no backticks:
-
-{
-  "keyword_clusters": [
-    {
-      "topic": "cluster topic name",
-      "funnel_stage": "awareness|consideration|decision",
-      "competition": "low|medium|high",
-      "keywords": [
-        {
-          "phrase": "3-6 word keyword phrase or full question",
-          "type": "traditional|perplexity|agent",
-          "intent": "informational|commercial|navigational|transactional",
-          "priority": "high|medium|low",
-          "notes": "why this is a good target for ${target.domain}"
-        }
-      ]
-    }
-  ],
-  "quick_targets": ["phrase1", "phrase2", "phrase3", "phrase4", "phrase5"],
-  "agent_queries": [
-    "full question an AI agent would ask to find this product"
-  ],
-  "summary": "2-3 sentence executive summary of the keyword opportunity for ${target.domain}"
-}`;
-
-    console.log(chalk.yellow(`Prompt length: ~${Math.round(prompt.length / 4)} tokens`));
-    console.log(chalk.yellow('Sending to Gemini...\n'));
-
-    const result = await callGemini(prompt);
-
-    if (!result) {
-      console.error(chalk.red('No response from Gemini.'));
-      process.exit(1);
-    }
+    // The prompt is analysis/judgments.js keyword_inventor: a closed schema
+    // the provider is held to, and a prompt version stamped on every row the
+    // answer becomes. The schema loop in lib/providers.js parses and repairs,
+    // so nothing here hunts for braces in the text.
+    const { JUDGMENTS, runJudgment } = await getJudgments();
+    const judgment = JUDGMENTS.keyword_inventor;
+    console.log(chalk.yellow(`Asking for ${count} phrases (${judgment.name} ${judgment.version})...\n`));
 
     let data;
+    let provenance;
     try {
-      const jsonMatch = result.match(/\{[\s\S]*\}/);
-      data = JSON.parse(jsonMatch[0]);
-    } catch {
-      console.error(chalk.red('Could not parse JSON from Gemini response.'));
-      const rawPath = join(__dirname, `reports/${project}-keywords-raw-${new Date().toISOString().slice(0, 10)}.md`);
-      writeFileSync(rawPath, result, 'utf8');
-      console.error(chalk.gray(`Raw output saved: ${rawPath}`));
-      process.exit(1);
+      ({ output: data, provenance } = await runJudgment(judgment, {
+        target_domain: target.domain,
+        competitor_domains: competitors.map(c => c.domain),
+        top_keywords: topKeywords,
+        count,
+        intent_instruction: intentInstruction,
+        industry,
+        context,
+      }, { provider: opts.provider, model: opts.model, log: analysisLog }));
+    } catch (err) {
+      exitOnAnalysisError(err);
     }
+    console.log(chalk.dim(`  Answered by ${modelLabel(provenance)} in ${provenance.attempts} attempt${provenance.attempts === 1 ? '' : 's'}\n`));
 
     // Apply intent filter if needed
     if (intentFilter !== 'all') {
@@ -1103,13 +999,13 @@ Respond ONLY with a single valid JSON object matching this exact schema. No expl
       writeFileSync(outPath, JSON.stringify(data, null, 2), 'utf8');
       console.log(chalk.bold.green(`✅ Report saved: ${outPath}\n`));
 
-      // Persist keyword inventor insights to Intelligence Ledger. Model rows:
-      // name the backend that answered (there is no analyses row to take it
-      // from) and the prompt version, so the Ledger can say where each invented
-      // keyword came from and retire it if the model never repeats it.
-      const db = getDb();
+      // Persist keyword inventor insights to Intelligence Ledger. Model rows
+      // name the provider and model that answered (there is no analyses row to
+      // take it from) and the judgment's prompt version, so the Ledger can say
+      // where each invented keyword came from and retire it if the model never
+      // repeats it.
       upsertInsightsFromKeywords(db, project, data,
-        { model: lastAnalysisModel() || 'gemini', promptVersion: await getPromptVersion() });
+        { model: modelLabel(provenance), promptVersion: provenance.prompt_version });
     }
   });
 
@@ -1187,156 +1083,121 @@ function loadConfig(project) {
   }
 }
 
-// Which backend answered the most recent callAnalysisModel(): 'gemini-cli', or
-// 'agent-harness:<model id>'; null while no call has answered. The request
-// names a model, but the answer may come from the fallback path, and
-// provenance (analyses.model, insights.model) must record what actually
-// produced the findings — so the Ledger writers read this right after the
-// call. Module-level rather than a changed return type because
-// callAnalysisModel has a dozen callers that expect text and only the writers
-// need this.
+// ── Model calls ────────────────────────────────────────────────────────────
+//
+// Every model call in this file goes through lib/providers.js. The analysis
+// flows (analyze, the run scheduler, the scan step) hand the whole job to
+// analysis/run-analysis.js, which resolves one provider and runs the schema-
+// checked judgments; the keywords command runs one judgment the same way; the
+// text-only callers (blog-draft, the scan export enrichment, loop) go through
+// callAnalysisModel below. This file used to hold its own transport — a
+// Gemini CLI spawn and an Agent Harness fetch, with a hand-rolled fallback
+// between them and red error blocks nobody else could reuse. That is
+// callTextWithFallback now, and it knows the API providers too, so a key the
+// setup wizard wrote is finally used for what it was validated for.
+
+/** Plain provider log lines (fallbacks, retries, repairs), dimmed for the terminal. */
+const analysisLog = line => console.log(chalk.dim('  ' + line));
+
+/** Output cap for the text path: a blog draft or an enriched report, not a judgment. Every provider accepts this ceiling. */
+const TEXT_MAX_TOKENS = 8192;
+
+/**
+ * The provenance string analyses.model and insights.model carry:
+ * 'provider:model' as lib/providers.js names them, e.g. 'anthropic:claude-opus-5',
+ * 'ollama:gemma4:26b', 'harness:openclaw', 'gemini-cli:gemini-cli'. The same
+ * shape run-analysis stamps, so a Ledger reader sees one vocabulary.
+ */
+function modelLabel({ provider, model } = {}) {
+  return [provider, model].filter(Boolean).join(':') || 'model';
+}
+
+// Which backend answered the most recent callAnalysisModel(), as modelLabel
+// spells it, or null while no call has answered. The request names a model,
+// but the answer may come from a fallback, and provenance must record what
+// actually produced the text. Module-level rather than a changed return type
+// because callAnalysisModel's callers expect a string.
 let _lastModelUsed = null;
 function lastAnalysisModel() { return _lastModelUsed; }
 
-async function callGemini(prompt) {
-  return callAnalysisModel(prompt, 'gemini');
-}
-
-function getOpenClawToken() {
-  const envToken = process.env.OPENCLAW_TOKEN?.trim();
-  if (envToken) return envToken;
-
+/**
+ * Text in, text out, through whichever provider the model name selects —
+ * or, with no model, the one ANALYSIS_PROVIDER / ANALYSIS_MODEL, the first
+ * key in .env, the Agent Harness or the Gemini CLI resolve to — with the
+ * harness and the CLI as fallbacks, in the order this file always used.
+ *
+ * Returns null after printing the error when nothing answered: the callers
+ * were written against that contract and each says what it then skips. A
+ * refusal is not retried and not hidden either; it prints like any other
+ * ProviderError.
+ *
+ * @param {string} prompt
+ * @param {string} [model]  a model id or alias; undefined lets the resolver decide
+ * @param {{ provider?: string, maxTokens?: number, timeoutMs?: number }} [opts]
+ * @returns {Promise<string|null>}
+ */
+async function callAnalysisModel(prompt, model, opts = {}) {
+  _lastModelUsed = null;
+  // No timeout here unless the caller gives one: lib/providers.js
+  // resolveTimeoutMs reads ANALYSIS_TIMEOUT_MS for every provider, and the
+  // legacy GEMINI_TIMEOUT_MS / OPENCLAW_TIMEOUT_MS for the two transports
+  // they always governed, per call — so a fallback from the harness to the
+  // CLI gets the CLI's own allowance rather than the harness's.
   try {
-    const configPath = join(process.env.HOME || process.env.USERPROFILE || '', '.openclaw', 'openclaw.json');
-    const raw = readFileSync(configPath, 'utf8');
-    const matches = [...raw.matchAll(/"token":\s*"([a-f0-9]{40,})"/g)];
-    if (matches.length > 0) return matches[matches.length - 1][1];
-  } catch {}
-
-  return null;
-}
-
-async function callOpenClaw(prompt, model = 'openclaw') {
-  const token = getOpenClawToken();
-  if (!token) throw new Error('Agent Harness token not found');
-
-  const timeoutMs = parseInt(process.env.OPENCLAW_TIMEOUT_MS || process.env.GEMINI_TIMEOUT_MS || '120000', 10);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  // The Agent Harness gateway expects the model id 'openclaw' or 'openclaw/<agentId>'
-  const clawModel = (!model || model === 'default') ? 'openclaw' : model;
-
-  try {
-    const res = await fetch('http://127.0.0.1:18789/v1/chat/completions', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: clawModel,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: 4000,
-      }),
+    const answer = await callTextWithFallback({
+      model: model || undefined,
+      prompt,
+      maxTokens: TEXT_MAX_TOKENS,
+      ...opts,
+      log: analysisLog,
     });
-
-    if (!res.ok) throw new Error(`Agent Harness API error: ${res.status} ${await res.text()}`);
-
-    const data = await res.json();
-    const text = data.choices?.[0]?.message?.content || null;
-    if (text) _lastModelUsed = `agent-harness:${clawModel}`;
-    return text;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function callAnalysisModel(prompt, model = 'gemini') {
-  const requestedModel = String(model || 'gemini').trim();
-  const normalizedModel = requestedModel.toLowerCase();
-  _lastModelUsed = null; // set by whichever path below answers
-
-  // Non-Gemini model: try the Agent Harness first, then fall back to Gemini CLI
-  if (normalizedModel !== 'gemini') {
-    try {
-      return await callOpenClaw(prompt, requestedModel);
-    } catch (err) {
-      console.warn(chalk.dim(`  [agent-harness] ${err.message}`));
-      console.log(chalk.yellow(`  Falling back to Gemini CLI...\n`));
-      // Fall through to Gemini CLI below
-    }
-  }
-
-  // Try Gemini CLI
-  const timeoutMs = parseInt(process.env.GEMINI_TIMEOUT_MS || '120000', 10);
-  try {
-    const result = spawnSync('gemini', ['-p', '-'], {
-      input: prompt,
-      encoding: 'utf8',
-      timeout: timeoutMs,
-      maxBuffer: 10 * 1024 * 1024
-    });
-
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      throw new Error(result.stderr?.trim() || `gemini exited with status ${result.status}`);
-    }
-
-    _lastModelUsed = 'gemini-cli';
-    return result.stdout;
+    _lastModelUsed = modelLabel(answer);
+    return answer.text;
   } catch (err) {
-    // Gemini CLI failed — try the Agent Harness as last resort (if we haven't already)
-    const fallbackModel = process.env.OPENCLAW_ANALYSIS_MODEL || 'openclaw';
-    if (normalizedModel !== 'gemini') {
-      // Already tried the Agent Harness above, show combined error
-      const geminiMsg = err.message || '';
-      console.error(chalk.red('\n  ✗ Analysis failed — no model available\n'));
-      console.error(chalk.dim(`  Gemini: ${geminiMsg}`));
-      console.error(chalk.dim(`  Agent Harness: already tried (${requestedModel})`));
-      console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));
-      return null;
-    }
-    try {
-      console.warn(`[gemini] ${err.message}`);
-      console.log(chalk.yellow(`Gemini CLI unavailable, retrying via the Agent Harness (${fallbackModel})...\n`));
-      return await callOpenClaw(prompt, fallbackModel);
-    } catch (fallbackErr) {
-      // Produce clear, actionable error messages
-      const geminiMsg = err.message || '';
-      const ocMsg = fallbackErr.message || '';
-
-      const isTimeout = geminiMsg.includes('ETIMEDOUT') || geminiMsg.includes('timeout') || err.name === 'AbortError';
-      const isGatewayDown = ocMsg.includes('ECONNREFUSED') || ocMsg.includes('token not found') || ocMsg.includes('gateway');
-
-      console.error(chalk.red('\n  ✗ Analysis failed — no model available\n'));
-
-      if (isTimeout) {
-        console.error(chalk.yellow('  Gemini timed out.') + chalk.dim(' Try: GEMINI_TIMEOUT_MS=180000 seo-intel analyze ' + (process.env._SEO_INTEL_PROJECT || '<project>')));
-      } else {
-        console.error(chalk.dim(`  Gemini: ${geminiMsg}`));
-      }
-
-      if (isGatewayDown) {
-        console.error(chalk.yellow('  Agent Harness gateway is not running.'));
-        console.error(chalk.dim('  Start it:   ') + chalk.cyan('openclaw gateway'));
-        console.error(chalk.dim('  Or set key: ') + chalk.cyan('echo "GEMINI_API_KEY=your-key" >> .env'));
-      } else {
-        console.error(chalk.dim(`  Agent Harness: ${ocMsg}`));
-      }
-
-      console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));
-      return null;
-    }
+    if (!(err instanceof ProviderError)) throw err;
+    printProviderError(err);
+    return null;
   }
 }
 
+/** A ProviderError as the person should see it: what failed, then what to do about it. */
+function printProviderError(err) {
+  console.error(chalk.red(`\n  ✗ ${err.message}`));
+  if (err.hint) console.error(chalk.dim(`  ${err.hint}`));
+  console.error(chalk.dim('\n  Docs: https://ukkometa.fi/en/seo-intel/setup/\n'));
+}
+
+/**
+ * How an analysis or judgment that threw ends the command. A ProviderError
+ * (nothing configured, a rejected key, every judgment failed) prints its
+ * message and hint; a plain Error is one of ours with a message meant to be
+ * read as-is (no crawl data, no target — each names the command to run).
+ * Both exit 1. Anything else is a bug and keeps its stack.
+ */
+function exitOnAnalysisError(err) {
+  if (err instanceof ProviderError) {
+    printProviderError(err);
+    process.exit(1);
+  }
+  if (err instanceof Error && err.constructor === Error) {
+    console.error(chalk.red(`\n  ✗ ${err.message}\n`));
+    process.exit(1);
+  }
+  throw err;
+}
+
+/**
+ * The terminal summary of an analysis, old shape or new. A model-labelled
+ * keyword gap has priority, difficulty and intent; a rules-only row (or one
+ * the model skipped) has only the measured competitor_count, so it is ranked
+ * and tagged by that rather than printed as "[undefined]". Long tails from
+ * Search Console have no page_type; new pages from the judgments carry a
+ * placement list where the mega-prompt had a slug.
+ */
 function printAnalysisSummary(a, project) {
   console.log(chalk.bold.cyan(`\n📊 SEO Analysis — ${project.toUpperCase()}\n`));
 
-  if (a.positioning) {
+  if (a.positioning?.open_angle || a.positioning?.target_differentiator) {
     console.log(chalk.bold('🎯 Positioning'));
     console.log(`  Open angle: ${a.positioning.open_angle}`);
     console.log(`  Your differentiator: ${a.positioning.target_differentiator}\n`);
@@ -1344,8 +1205,14 @@ function printAnalysisSummary(a, project) {
 
   if (a.keyword_gaps?.length) {
     console.log(chalk.bold(`🔑 Top Keyword Gaps (${a.keyword_gaps.length} total)`));
-    a.keyword_gaps.filter(k => k.priority === 'high').slice(0, 10).forEach(k => {
-      console.log(`  ${chalk.green('+')} [${k.difficulty}] ${k.keyword} (${k.intent})`);
+    const high = a.keyword_gaps.filter(k => k.priority === 'high');
+    const top = high.length
+      ? high
+      : [...a.keyword_gaps].sort((x, y) => (Number(y.competitor_count) || 0) - (Number(x.competitor_count) || 0));
+    top.slice(0, 10).forEach(k => {
+      const n = Number(k.competitor_count);
+      const tag = k.difficulty || (Number.isFinite(n) ? `${n} competitor${n === 1 ? '' : 's'}` : 'gap');
+      console.log(`  ${chalk.green('+')} [${tag}] ${k.keyword}${k.intent ? ` (${k.intent})` : ''}`);
     });
     console.log();
   }
@@ -1353,7 +1220,8 @@ function printAnalysisSummary(a, project) {
   if (a.long_tails?.length) {
     console.log(chalk.bold(`🔭 Long-tail Opportunities (${a.long_tails.length} total)`));
     a.long_tails.filter(l => l.priority === 'high').slice(0, 10).forEach(l => {
-      console.log(`  ${chalk.blue('→')} "${l.phrase}" [${l.page_type}]`);
+      const tag = l.page_type || (l.source === 'gsc' ? 'search console' : 'model-invented');
+      console.log(`  ${chalk.blue('→')} "${l.phrase}" [${tag}]`);
     });
     console.log();
   }
@@ -1366,13 +1234,46 @@ function printAnalysisSummary(a, project) {
     console.log();
   }
 
-  if (a.new_pages?.length) {
-    console.log(chalk.bold(`📄 New Pages to Create (${a.new_pages.length} total)`));
-    a.new_pages.filter(p => p.priority === 'high').slice(0, 5).forEach(p => {
-      console.log(`  ${chalk.magenta('*')} /${p.slug} — "${p.title}"`);
+  if (a.technical_gaps?.length) {
+    console.log(chalk.bold(`🔧 Technical Gaps (${a.technical_gaps.length} total)`));
+    a.technical_gaps.slice(0, 5).forEach(t => {
+      console.log(`  ${chalk.red('-')} ${t.gap}`);
     });
     console.log();
   }
+
+  if (a.new_pages?.length) {
+    console.log(chalk.bold(`📄 New Pages to Create (${a.new_pages.length} total)`));
+    a.new_pages.filter(p => p.priority === 'high').slice(0, 5).forEach(p => {
+      const where = p.placement?.[0]?.url || (p.slug ? `/${String(p.slug).replace(/^\//, '')}` : p.target_keyword);
+      console.log(`  ${chalk.magenta('*')} ${where} — "${p.title}"`);
+    });
+    console.log();
+  }
+}
+
+/**
+ * The receipt under a summary: which provider and model answered, where each
+ * section came from (rule, gsc, model, or none), how many attempts each
+ * judgment took, and what failed with the hint that says why. A reader who
+ * sees an empty section finds the reason here instead of assuming the data
+ * was thin — and a rules-only run says so rather than naming a model.
+ */
+function printAnalysisProvenance(p) {
+  if (!p) return;
+  console.log(chalk.bold('🧾 Provenance'));
+  console.log(`  Model: ${p.provider ? modelLabel(p) : 'rules-only (no model asked)'}`);
+  const sections = Object.entries(p.sections || {}).map(([name, source]) => `${name}=${source}`).join('  ');
+  if (sections) console.log(chalk.dim(`  Sections: ${sections}`));
+  for (const j of p.judgments || []) {
+    const batch = j.batch ? ` ${j.batch}/${j.of}` : '';
+    console.log(chalk.dim(`  ✓ ${j.name}${batch} · ${j.attempts} attempt${j.attempts === 1 ? '' : 's'} · ${j.ms} ms`));
+  }
+  for (const f of p.failures || []) {
+    const batch = f.batch ? ` ${f.batch}/${f.of}` : '';
+    console.log(chalk.yellow(`  ✗ ${f.name}${batch}: ${f.error}`) + (f.hint ? chalk.dim(` — ${f.hint}`) : ''));
+  }
+  console.log();
 }
 
 // ── RUN (cron-friendly) ────────────────────────────────────────────────────
@@ -2163,70 +2064,33 @@ program
   });
 
 // ── Shared analysis runner ─────────────────────────────────────────────────
+//
+// The scheduler's analysis: runProjectAnalysis with whatever the environment
+// configures (ANALYSIS_PROVIDER / ANALYSIS_MODEL, else the first key in .env,
+// the Agent Harness, the Gemini CLI), brief output. A provider failure ends
+// the run non-zero as it always did, so cron mail carries the reason. There
+// is deliberately no rules-only fallback here: an analyses row written
+// without a model would satisfy needsAnalysis and the scheduler would never
+// ask again once the provider came back.
 async function runAnalysis(project, db) {
   const configs = loadAllConfigs();
   const config = configs.find(c => c.project === project);
   if (!config) return;
 
-  const summary       = getCompetitorSummary(db, project);
-  const keywordMatrix = getKeywordMatrix(db, project);
-  const headings      = getHeadingStructure(db, project);
-
-  const target      = summary.find(s => s.role === 'target');
-  const competitors = summary.filter(s => s.role === 'competitor');
-  if (!target) return;
-
-  target.domain = config.target.domain;
-  competitors.forEach((c, i) => { c.domain = config.competitors[i]?.domain || c.domain; });
-
-  const buildPromptFn = await getBuildAnalysisPrompt();
-  const prompt = buildPromptFn({
-    project, target, competitors, keywordMatrix,
-    headingStructure: headings, context: config.context,
-  });
-
-  const promptTs2 = Date.now();
-  const promptFm2 = `---\nproject: ${project}\ngenerated: ${new Date(promptTs2).toISOString()}\ntype: analysis-prompt\nmodel: gemini\n---\n\n`;
-  writeFileSync(join(__dirname, `reports/${project}-prompt-${promptTs2}.md`), promptFm2 + prompt, 'utf8');
-
-  const result = await callGemini(prompt);
-  if (!result) { console.error(chalk.red('Gemini returned no response.')); process.exit(1); }
-
+  const { runProjectAnalysis } = await getRunAnalysis();
   try {
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    const analysis = JSON.parse(jsonMatch[0]);
-    const outPath = join(__dirname, `reports/${project}-analysis-${new Date().toISOString().slice(0, 10)}.json`);
-    writeFileSync(outPath, JSON.stringify(analysis, null, 2), 'utf8');
-
-    // Save to DB. analyses.model is the backend that answered (callGemini asks
-    // for Gemini CLI, but the Agent Harness may have been the fallback).
-    const analysisTs2 = Date.now();
-    const modelUsed2 = lastAnalysisModel() || 'gemini';
-    db.prepare(`
-      INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      project, analysisTs2, modelUsed2,
-      JSON.stringify(analysis.keyword_gaps || []),
-      JSON.stringify(analysis.long_tails || []),
-      JSON.stringify(analysis.quick_wins || []),
-      JSON.stringify(analysis.new_pages || []),
-      JSON.stringify(analysis.content_gaps || []),
-      JSON.stringify(analysis.positioning || {}),
-      JSON.stringify(analysis.technical_gaps || []),
-      result,
-    );
-
-    // Upsert individual insights (Intelligence Ledger)
-    const analysisRowId2 = db.prepare('SELECT last_insert_rowid() as id').get().id;
-    upsertInsightsFromAnalysis(db, project, analysisRowId2, analysis, analysisTs2,
-      { model: modelUsed2, promptVersion: await getPromptVersion() });
-
+    const { analysis, savedPath, provenance } = await runProjectAnalysis(db, project, config, { log: analysisLog });
     printAnalysisSummary(analysis, project);
-    console.log(chalk.green(`\n✅ Analysis saved: ${outPath}`));
+    printAnalysisProvenance(provenance);
+    console.log(chalk.green(`\n✅ Analysis saved: ${savedPath}`));
   } catch (err) {
-    console.error(chalk.red(`Could not parse analysis JSON: ${err.message}`));
-    process.exit(1);
+    // No target crawled yet for this project: the legacy runner returned
+    // quietly here too, and the next cron run will have the rows.
+    if (err instanceof Error && err.constructor === Error) {
+      console.log(chalk.dim(`  Analysis skipped: ${err.message}`));
+      return;
+    }
+    exitOnAnalysisError(err);
   }
 }
 
@@ -5312,7 +5176,7 @@ program
   .option('--topic <keyword>', 'Focus the post on a specific topic')
   .option('--lang <code>', 'Language: en or fi', 'en')
   .option('--type <type>', 'Content type: blog, docs, or social', 'blog')
-  .option('--model <name>', 'Model to use for generation (gemini, claude, gpt, deepseek)', 'gemini')
+  .option('--model <name>', 'Model id or alias (claude, gpt, gemini, deepseek, ollama); default: the configured analysis model')
   .option('--save', 'Save the generated draft to reports/')
   .action(async (project, opts) => {
     if (!requirePro('blog-draft')) return;
@@ -5362,13 +5226,14 @@ program
     console.log(chalk.gray(`    Prompt size: ${(prompt.length / 1024).toFixed(1)}KB`));
 
     // ── Generate ──
-    console.log(chalk.cyan(`\n  🚀 Generating draft via ${opts.model}...\n`));
+    console.log(chalk.cyan(`\n  🚀 Generating draft via ${opts.model || 'the configured analysis model'}...\n`));
     const draft = await callAnalysisModel(prompt, opts.model);
 
     if (!draft) {
       console.log(chalk.red('\n  ✗ Generation failed — no output from model.\n'));
       return;
     }
+    console.log(chalk.dim(`  Answered by ${lastAnalysisModel()}`));
 
     // ── Pre-score ──
     console.log(chalk.gray('  Pre-scoring draft against AEO signals...'));
@@ -5697,7 +5562,7 @@ program
   .description('One-shot full audit: crawl → extract → analyze → export (no config needed)')
   .option('--pages <n>', 'Max pages to crawl', '100')
   .option('--no-ai', 'Skip AI-enriched export (deterministic only)')
-  .option('--model <name>', 'Model for analysis + AI export (gemini, claude, gpt)', 'gemini')
+  .option('--model <name>', 'Model for the analysis judgments + AI export: an id or alias (claude, gpt, gemini, deepseek, ollama); default: the configured analysis model')
   .option('--stealth', 'Enable stealth browser mode (Playwright) for JS-heavy sites')
   .action(async (domainInput, opts) => {
     if (!requirePro('scan')) return;
@@ -5750,7 +5615,7 @@ program
     console.log(chalk.white(`  Pages:     ${maxPages}`));
     console.log(chalk.white(`  Stealth:   ${useStealth ? chalk.green('yes') : chalk.gray('no')}`));
     console.log(chalk.white(`  AI Export: ${useAi ? chalk.green('yes') : chalk.gray('no')}`));
-    console.log(chalk.white(`  Model:     ${opts.model}`));
+    console.log(chalk.white(`  Model:     ${opts.model || 'configured analysis model'}`));
     console.log('');
 
     const scanStart = Date.now();
@@ -5860,62 +5725,38 @@ program
     console.log(chalk.bold.cyan('  ⏱  Step 2/3 — Analyze'));
     console.log('');
 
-    const summary = getCompetitorSummary(db, projectSlug);
-    const target = summary.find(s => s.role === 'target');
-
-    if (!target) {
-      console.log(chalk.yellow('  ⚠  No target data found — skipping analysis'));
-    } else {
-      target.domain = domain;
-      const keywordMatrix = getKeywordMatrix(db, projectSlug);
-      const headings = getHeadingStructure(db, projectSlug);
-
-      const buildPromptFn = await getBuildAnalysisPrompt();
-      const prompt = buildPromptFn({
-        project: projectSlug, target, competitors: [],
-        keywordMatrix, headingStructure: headings, context: config.context,
-      });
-
-      console.log(chalk.gray(`  Prompt: ~${Math.round(prompt.length / 4)} tokens → ${opts.model}...`));
-      process.env._SEO_INTEL_PROJECT = projectSlug;
-      const result = await callAnalysisModel(prompt, opts.model);
-
-      if (result) {
-        try {
-          const jsonMatch = result.match(/\{[\s\S]*\}/);
-          const analysis = JSON.parse(jsonMatch[0]);
-
-          // Save to DB. analyses.model is the backend that answered, which
-          // may be the fallback rather than the --model that was asked for.
-          const analysisTs = Date.now();
-          const modelUsed = lastAnalysisModel() || opts.model;
-          db.prepare(`
-            INSERT INTO analyses (project, generated_at, model, keyword_gaps, long_tails, quick_wins, new_pages, content_gaps, positioning, technical_gaps, raw)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            projectSlug, analysisTs, modelUsed,
-            JSON.stringify(analysis.keyword_gaps || []),
-            JSON.stringify(analysis.long_tails || []),
-            JSON.stringify(analysis.quick_wins || []),
-            JSON.stringify(analysis.new_pages || []),
-            JSON.stringify(analysis.content_gaps || []),
-            JSON.stringify(analysis.positioning || {}),
-            JSON.stringify(analysis.technical_gaps || []),
-            result,
-          );
-          const analysisRowId = db.prepare('SELECT last_insert_rowid() as id').get().id;
-          upsertInsightsFromAnalysis(db, projectSlug, analysisRowId, analysis, analysisTs,
-            { model: modelUsed, promptVersion: await getPromptVersion() });
-
-          printAnalysisSummary(analysis, projectSlug);
-        } catch (parseErr) {
-          console.log(chalk.yellow(`  ⚠  Could not parse analysis: ${parseErr.message}`));
-          const rawPath = join(__dirname, `reports/${projectSlug}-raw-${new Date().toISOString().slice(0, 10)}.md`);
-          writeFileSync(rawPath, result, 'utf8');
-          console.log(chalk.gray(`  Raw output saved: ${rawPath}`));
+    // Quick wins, long tails and technical gaps are computed from the rows;
+    // the model is asked only the narrow judgments. A scan is the first-touch
+    // command, often run before any model is configured, and the computed
+    // sections are worth having on their own — so a config error (nothing to
+    // call) falls back to a rules-only run instead of skipping the step. Any
+    // other failure (no target crawled, a rejected key, every judgment
+    // failing) is reported and the scan goes on to the export.
+    {
+      const { runProjectAnalysis } = await getRunAnalysis();
+      const analysisOpts = { model: opts.model, log: analysisLog };
+      let outcome = null;
+      try {
+        outcome = await runProjectAnalysis(db, projectSlug, config, analysisOpts);
+      } catch (err) {
+        if (!(err instanceof Error)) throw err;
+        const why = `${err.message}${err.hint ? chalk.dim(` — ${err.hint}`) : ''}`;
+        if (err instanceof ProviderError && err.kind === 'config') {
+          console.log(chalk.yellow(`  ⚠  ${why}`));
+          console.log(chalk.dim('  → Computed sections only (no model asked)'));
+          try {
+            outcome = await runProjectAnalysis(db, projectSlug, config, { ...analysisOpts, noModel: true });
+          } catch (rulesErr) {
+            if (!(rulesErr instanceof Error)) throw rulesErr;
+            console.log(chalk.yellow(`  ⚠  Analysis skipped: ${rulesErr.message}`));
+          }
+        } else {
+          console.log(chalk.yellow(`  ⚠  Analysis skipped: ${why}`));
         }
-      } else {
-        console.log(chalk.yellow('  ⚠  No response from model — skipping analysis'));
+      }
+      if (outcome) {
+        printAnalysisSummary(outcome.analysis, projectSlug);
+        printAnalysisProvenance(outcome.provenance);
       }
     }
 
@@ -6030,7 +5871,7 @@ program
   .option('--count <n>', 'Draft the top N gaps', '1')
   .option('--lang <code>', 'Language: en or fi', 'en')
   .option('--type <type>', 'Content type: blog, docs, or social', 'blog')
-  .option('--model <name>', 'Generation model (gemini, claude, gpt, deepseek)', 'gemini')
+  .option('--model <name>', 'Generation model: an id or alias (claude, gpt, gemini, deepseek, ollama); default: the configured analysis model')
   .option('--min-score <n>', 'Target citability before publishing', '60')
   .option('--revise <k>', 'Auto-revise up to k times if below min-score', '0')
   .option('--no-queue', 'Do not write drafts to reports/ready/')

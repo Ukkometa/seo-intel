@@ -1268,7 +1268,9 @@ server.registerTool(
     description: [
       'One-shot full SEO audit of any domain with no project setup — crawl → extract → analyze → export. Spawns a detached background job (like run_crawl) and returns immediately with the report path; poll get_crawl_status for progress.',
       '',
-      'Heavyweight: full browser crawl, local extraction, and cloud analysis. For a fast, ephemeral, offline read of a single URL use crawl_site instead. Paid tier (Solo).',
+      'The analysis step computes its sections deterministically where the data allows (quick wins and long tails from Search Console, technical gaps from the audit, keyword and content gaps from the crawl) and asks a model only narrow judgments, each validated against a schema; the provider is whichever key .env holds (Anthropic, OpenAI, Gemini, DeepSeek), local Ollama, or the Agent Harness.',
+      '',
+      'Heavyweight: full browser crawl, local extraction, and model judgments. For a fast, ephemeral, offline read of a single URL use crawl_site instead. Paid tier (Solo).',
     ].join('\n'),
     inputSchema: {
       domain: z.string().describe('Domain or URL to audit (e.g. "docs.carbium.sh").'),
@@ -1311,7 +1313,7 @@ server.registerTool(
 server.registerTool(
   'get_competitor_positioning',
   {
-    description: 'Return the latest positioning analysis for a project + per-competitor crawl stats. Combines the positioning insight from the ledger (from `analyze` or agent ingests) with raw competitor coverage (page counts, keyword counts, last crawl). Paid tier.',
+    description: 'Return the latest positioning analysis for a project + per-competitor crawl stats. Combines the positioning insight from the ledger (from `analyze` or agent ingests) with raw competitor coverage (page counts, keyword counts, last crawl). In `analyze`, sections are computed deterministically where the data allows (quick wins and long tails from Search Console, technical gaps from the audit, keyword and content gaps from the crawl) and only narrow judgments such as this positioning are asked of a model, each validated against a schema. Paid tier.',
     inputSchema: {
       project: z.string(),
     },

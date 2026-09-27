@@ -169,14 +169,19 @@ export const EXTRACTION_MODELS = [
   },
 ];
 
-// ── Analysis Models (local Ollama, runs during analysis) ─────────────────────
+// ── Analysis Models (local Ollama or cloud, runs during analysis) ─────────────
 //
-// The analysis task is heavy strategic reasoning:
-//   Input:  10K-100K tokens (full crawl dataset, keyword matrices, competitor data)
-//   Output: structured JSON with strategic recommendations, positioning, gap analysis
-//   Complexity: high — comparative reasoning across multiple domains
-//   Minimum viable: 14B+ parameters for reliable strategic output
-//   Cloud models (Claude, GPT-5.4, Gemini) available via Agent Harness agent setup
+// The analysis is a set of narrow judgments over computed facts (see
+// analysis/run-analysis.js): classify at most forty keyword gaps, name the
+// content-gap clusters, propose pages, write the positioning. Each call is
+// one task with a closed JSON schema the provider is held to.
+//   Input:  a few thousand tokens per judgment (the rows that task needs)
+//   Output: one JSON object per judgment, validated client-side
+//   Complexity: medium — labelling and short strategic prose, not counting
+//   Minimum viable: a 14B+ local model with schema-constrained output
+//   Cloud models (Claude, GPT, Gemini, DeepSeek) are called over their own
+//   APIs with the key in .env (lib/providers.js); the Agent Harness is one
+//   more provider, not the only route to them.
 
 export const ANALYSIS_MODELS = [
   {
@@ -257,8 +262,7 @@ export const ANALYSIS_MODELS = [
     recommended: false,
     description: 'MoE — 120B total but only 12B active params. Excellent reasoning at efficient compute. Needs 64GB+ unified memory or multi-GPU.',
   },
-  // ── Cloud frontier models (require API key in .env) ──
-  // ── Cloud frontier models (require API key in .env or via the Agent Harness) ──
+  // ── Cloud frontier models (require the provider's API key in .env; the Agent Harness gateway is an alternative route) ──
   {
     id: 'gemini-3.1-pro',
     name: 'Gemini 3.1 Pro',
@@ -431,7 +435,7 @@ export function recommendAnalysisModel(availableModels = [], vramMB = 0) {
     return {
       model: recModel,
       installed: false,
-      note: `Recommended for your hardware. Use the Agent Harness for cloud models.`,
+      note: `Recommended for your hardware. For a cloud model, set its API key in .env instead.`,
     };
   }
 

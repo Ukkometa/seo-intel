@@ -145,7 +145,7 @@ export_intel(project)                             # default cap 1000 rows/table
 ## Pipeline
 
 ```
-Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO → Export Actions → Implement
+Crawl → Extract (Ollama local) → Analyze (computed sections + schema-checked model judgments) → AEO → Export Actions → Implement
 ```
 
 | Stage | Command | Gate | Best engine |
@@ -153,18 +153,28 @@ Crawl → Extract (Ollama local) → Analyze (Agent Harness cloud model) → AEO
 | **Scan** | `seo-intel scan <domain>` | Free | Full pipeline (no config) |
 | Crawl | `seo-intel crawl <project>` | Free | Playwright |
 | Extract | `seo-intel extract <project>` | Free | Ollama / Gemma 4 or Qwen local |
-| Analyze | `seo-intel analyze <project>` | Solo (competitor) | Agent Harness (Opus/Sonnet) |
+| Analyze | `seo-intel analyze <project>` | Solo (competitor) | Counted from the rows (keyword gaps, clusters, Search Console quick wins and long tails, technical gaps) + narrow schema-validated judgments from the configured provider: Anthropic, OpenAI, Gemini or DeepSeek with your key, Ollama locally, the Agent Harness or Gemini CLI as fallbacks (`--provider` / `--model`; `--no-model` asks none) |
 | AEO | `seo-intel aeo <project>` | Free | Pure local (no AI needed) |
 | Watch | `seo-intel watch <project>` | Free | Pure local (diff engine) |
 | Demand | `seo-intel demand <project>` | Free | Pure local (SQL over Search Console rows, no AI needed) |
 | Trends | `seo-intel trends <project>` | Solo (history) | Pure local (two Search Console windows compared) |
-| Keywords | `seo-intel keywords <project>` | Free | Agent Harness (Opus/Sonnet) |
+| Keywords | `seo-intel keywords <project>` | Free | The `keyword_inventor` judgment through the same provider layer (closed schema, one repair; `--provider` / `--model`) |
 | Blog Draft | `seo-intel blog-draft <project>` | Solo (content production) | Cloud LLM (Gemini/Claude/GPT) |
 | Actions | `seo-intel export-actions <project>` | Free (technical) / Solo (competitive) | SQL heuristics |
 | Dashboard | `seo-intel serve` | Free (full own-site) / Solo (+ competitor sections) | HTML |
 | **Review** | `seo-intel review <project> [--url <page>]` | Free | Pure DB read — needs_input / safe_now / opportunities / working |
 | **Intel digest** | `seo-intel intel <project> [--for=raw\|audit\|blog\|competitor]` | Free (raw/audit/blog) / Solo (competitor) | Pure DB read |
 | MCP server | `npx seo-intel-mcp` (stdio) | Tier-aware per tool | 38 native MCP tools for AI agents (26 free) |
+
+### How analysis is assembled
+
+`analyze` is not one prompt. It is assembled from three kinds of section, and each row it writes says which kind it came from (`analysis.pipeline.sections`, and the same map on the Ledger rows):
+
+- **Computed** (`analysis/deterministic.js`) — facts re-derivable from the rows, written as rule findings that never expire and resolve when the rule stops firing. Keyword gaps are a set difference over the `keywords` table (a keyword two or more competitors use and the target never does, with `competitor_count` and `covered_by` measured). Content-gap clusters are competitor H1/H2 headings whose stems the target's headings never use. Quick wins and long tails are the `gsc_quick_win` / `gsc_long_tail` rows `demand` measured from Search Console (`source: 'gsc'`). Technical gaps are the schema types competitors publish and the target lacks, plus the technical audit's findings.
+- **Judged** (`analysis/judgments.js`) — one task per model call, a closed JSON schema per task, only the rows that task needs, never more than forty items. `keyword_gaps` labels each measured gap with intent, difficulty, suggested action and priority (batched forty at a time; labels are merged back by the exact keyword, an item the model invented is dropped, a gap it skipped is counted, not guessed). `content_gaps` names each cluster and says why it matters. `positioning` writes the market position from the crawl summaries. Every answer is validated against its schema client-side and sent back once with the errors for repair; still invalid, the judgment fails. Provenance is recorded per judgment: name, `JUDGMENT_VERSION`, provider, model, attempts, elapsed.
+- **Generated** (also `judgments.js`) — `new_pages`, proposed from the content gaps and long tails and skipped when there are neither; and `long_tails_fallback`, run only when Search Console has measured nothing for the project, every item marked `model-invented:` in its own notes.
+
+`--no-model` runs the computed part alone: keyword gaps with counts but no intent, clusters with the model's fields null, Search Console quick wins and long tails, technical gaps, no new pages, no positioning; `analyses.model` is `rules-only` and every row is a rule finding. A judgment that fails — a refusal, a timeout, a schema the model could not produce — leaves a hole, not a guess: its section is empty and marked `none`, the failure is recorded in `pipeline.failures` with its kind and hint, and the run goes on; only when every judgment failed does the run stop, because then the provider is down or misconfigured. `reports/<project>-judgments-<date>.json` holds every prompt, answer and failure for auditing. `analyses.model` and the model rows' `model` column record `provider:model` (`anthropic:claude-opus-5`, `ollama:gemma4:26b`, `harness:openclaw`) for the provider that actually answered.
 
 ### Agent interpretation rule
 
@@ -227,11 +237,11 @@ Zero-config audit pipeline. Just pass a domain — no project setup, no competit
 seo-intel scan carbium.io                # Full pipeline with AI-enriched export
 seo-intel scan carbium.io --no-ai        # Deterministic export only (no LLM enrichment)
 seo-intel scan carbium.io --pages 50     # Limit crawl to 50 pages
-seo-intel scan carbium.io --model claude # Use Claude instead of Gemini
+seo-intel scan carbium.io --model claude # Ask Claude for the judgments instead of the configured provider
 seo-intel scan carbium.io --no-stealth   # Disable stealth browser mode
 ```
 
-**Pipeline:** crawl (stealth) → extract (Ollama) → analyze (Gemini/Claude) → AI-enriched markdown export.
+**Pipeline:** crawl (stealth) → extract (Ollama) → analyze (computed sections + judgments from the configured provider; falls back to the computed sections alone when no model is configured) → AI-enriched markdown export.
 
 Output: `reports/scan-<domain>-<date>.md` — full report with filled tables, instruction blocks, and AI action plan.
 
@@ -509,9 +519,9 @@ Every row says where it came from, in six fields; `list_problems` and `search_re
 
 | Field | Meaning |
 |---|---|
-| `source_kind` | `rule` — a deterministic detector over crawl, extraction or Search Console data; `model` — an LLM synthesis (keyword gaps, content gaps, positioning, invented keywords); `agent` — written through `ingest_insight` |
-| `model` | model id, or agent name, behind a model or agent finding; `null` for rules |
-| `prompt_version` | version tag of the prompt that produced a model finding (`PROMPT_VERSION` in `analysis/prompt-builder.js`); `null` otherwise |
+| `source_kind` | `rule` — a deterministic detector over crawl, extraction or Search Console data, including the computed sections of `analyze` (quick wins and long tails from Search Console, technical gaps, and every section of a `--no-model` run); `model` — a judgment a model produced (keyword-gap labels, content-gap naming, new pages, positioning, model-invented long tails, invented keywords); `agent` — written through `ingest_insight` |
+| `model` | `provider:model` that answered (`anthropic:claude-opus-5`, `ollama:gemma4:26b`), or agent name, behind a model or agent finding; `null` for rules |
+| `prompt_version` | version tag of the judgment prompt that produced a model finding (`JUDGMENT_VERSION` in `analysis/judgments.js`); `null` otherwise |
 | `rule_version` | version tag of the detector behind a rule finding (`1` today); `null` otherwise |
 | `confidence` | 0..1. Rules write `1.0`; models and agents write what they were given, `null` when unknown — never invented |
 | `expires_at` | epoch ms. `null` for rule findings, which clear when the rule stops firing; model and agent findings expire 90 days after `last_seen` unless re-emitted |

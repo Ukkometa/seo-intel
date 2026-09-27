@@ -2,7 +2,7 @@
 
 Local-first competitive SEO intelligence. Point it at your site + competitors, get keyword gaps, content audits, and visual dashboards. All data stays on your machine.
 
-**Crawl → Extract (local AI) → Analyze (cloud AI) → Dashboard**
+**Crawl → Extract (local AI) → Analyze (computed facts + narrow model judgments) → Dashboard**
 
 ```
 Your site + competitors (Playwright crawler)
@@ -10,8 +10,10 @@ Your site + competitors (Playwright crawler)
 Qwen 3.5 via Ollama (local, free)
     ↓ stored in
 SQLite database (WAL mode)
-    ↓ competitive analysis
-Gemini / Claude / GPT (your API key)
+    ↓ competitive analysis: gaps counted from the rows, quick wins and long
+    ↓ tails from Search Console, technical gaps from the audit; a model is
+    ↓ asked only narrow, schema-validated questions
+Anthropic / OpenAI / Gemini / DeepSeek (your key) · Ollama (local) · Agent Harness or Gemini CLI (fallbacks)
     ↓ visual reports
 Self-contained HTML dashboards (Chart.js)
 ```
@@ -32,7 +34,7 @@ The setup wizard handles everything: dependency checks, model selection, API key
 
 - **Node.js 22.5+** (uses built-in SQLite)
 - **Ollama** with a Qwen model (for local extraction)
-- **One API key** for analysis: Gemini (recommended), Claude, OpenAI, or DeepSeek
+- **One API key** for analysis — Anthropic, OpenAI, Gemini or DeepSeek, each called over its own API with the key in `.env` — or none: a local Ollama model, the Agent Harness gateway or the Gemini CLI also work. `ANALYSIS_PROVIDER` (and `ANALYSIS_MODEL`) in `.env` say which one answers when more than one is available; the setup wizard writes both
 
 ### Manual Setup
 
@@ -49,7 +51,7 @@ seo-intel setup              # agent-powered if the Agent Harness is running
 # Full pipeline
 seo-intel crawl myproject       # crawl target + competitors
 seo-intel extract myproject     # local AI extraction (Ollama)
-seo-intel analyze myproject     # competitive gap analysis
+seo-intel analyze myproject     # competitive gap analysis (--provider / --model pick the judge, --no-model asks none)
 seo-intel html myproject        # generate dashboard
 seo-intel serve                 # open dashboard at localhost:3000
 
@@ -108,7 +110,7 @@ Every finding carries its provenance, whether a crawl rule, the competitor-analy
 | Command | Description |
 |---------|-------------|
 | **Competitors** | |
-| `analyze <project>` | Full competitive gap analysis |
+| `analyze <project>` | Competitive gap analysis, assembled section by section: keyword gaps and content-gap clusters are counted from the crawl, quick wins and long tails come from your Search Console rows (`demand`), technical gaps from the audit; a model is asked only narrow schema-validated questions — the intent and priority of each gap, the name of each cluster, pages to create, positioning. `--provider` / `--model` choose the judge (Anthropic, OpenAI, Gemini, DeepSeek with your key; Ollama locally; the Agent Harness or Gemini CLI as fallbacks), `--no-model` writes the computed sections alone. Every section carries its provenance into the Ledger |
 | `gap-intel <project>` | Topic/content gaps vs competitors |
 | `shallow <project>` | Find "shallow champion" pages to outrank |
 | `decay <project>` | Find stale, decaying competitor content |
@@ -199,19 +201,23 @@ Model recommendations by VRAM:
 - **12+ GB** → `gemma4:26b` (MoE, frontier quality)
 - Also supported: `qwen3.5:4b`, `qwen3.5:9b`, `qwen3.5:27b`
 
-### Analysis (cloud, user's API key)
+### Analysis (your API key, a local model, or the Agent Harness)
 
-You need at least one API key in `.env`:
+The analysis (`analyze`, `keywords`, `scan`, `blog-draft`, `loop`) does not hand a model the whole dataset and hope. `analyze` counts what the rows can prove — keyword gaps and content-gap clusters from the crawl, quick wins and long tails from your Search Console rows, technical gaps from the audit — and asks a model only narrow questions with a closed JSON schema each (classify these forty gaps, name these clusters, propose pages, write the positioning). Every answer is validated against its schema and repaired once when it does not match; the provider's JSON mode is used where it has one. Each provider is called over its own API with the key in `.env`:
 
 ```bash
-GEMINI_API_KEY=your-key          # recommended (~$0.01/analysis)
-# or
-ANTHROPIC_API_KEY=your-key       # highest quality
+ANTHROPIC_API_KEY=your-key       # highest quality; ANTHROPIC_FALLBACKS=off keeps every answer on the exact model named
 # or
 OPENAI_API_KEY=your-key          # solid all-around
 # or
+GEMINI_API_KEY=your-key          # best value (~$0.01/analysis); without a key, gemini-* models go to the Gemini CLI
+# or
 DEEPSEEK_API_KEY=your-key        # budget option
+# or none of the above:
+ANALYSIS_PROVIDER=ollama         # a local model; OLLAMA_ANALYSIS_MODEL picks the tag (the judgments are small enough)
 ```
+
+Which one answers: `--provider`; then a `--model` whose name points at a provider (`claude-*`, `gpt-*`, `gemini-*`, `deepseek-*`, an Ollama tag such as `deepseek-r1:14b` — the colon keeps it local — or the aliases `claude`, `gpt`, `gemini`, `deepseek`, `ollama`, `harness`, which mean a provider's default), so `--model claude` asks Claude this once even when `.env` names another provider; then `ANALYSIS_PROVIDER`; then the shape of `ANALYSIS_MODEL`; then the first key in `.env` in the order Anthropic, OpenAI, Gemini, DeepSeek; then the Agent Harness gateway if its token is found; then the Gemini CLI if it is installed. `ANALYSIS_TIMEOUT_MS` sets how long one request may take (two minutes by default; raise it for a large local model). The setup wizard writes `ANALYSIS_PROVIDER` and `ANALYSIS_MODEL`. `analyze --no-model` skips the model entirely and writes the computed sections as rule findings.
 
 ## Google Search Console
 

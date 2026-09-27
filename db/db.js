@@ -505,14 +505,39 @@ function _migrateAnalysesToInsights(db) {
 // ── Insight upsert (called after each analyze/keywords run) ─────────────────
 
 /**
- * Write one analyze run's findings. Every row is the model's: source_kind
- * 'model', the model id (from `meta.model`, else from the analyses row the
- * findings came from, so provenance never depends on which caller ran the
- * analysis), the prompt version when the caller knows it, and an expiry
- * `ttlDays` out — a keyword gap the model never repeats retires on its own.
- * Items carry no confidence today, so that column is NULL unless an item says.
+ * Write one analyze run's findings. By default every row is the model's:
+ * source_kind 'model', the model id (from `meta.model`, else from the
+ * analyses row the findings came from, so provenance never depends on which
+ * caller ran the analysis), the prompt version when the caller knows it, and
+ * an expiry `ttlDays` out — a keyword gap the model never repeats retires on
+ * its own. Items carry no confidence today, so that column is NULL unless an
+ * item says.
  *
- * @param {{ model?: string, promptVersion?: string, ttlDays?: number }} [meta]
+ * One analysis is no longer one model call, though. analysis/run-analysis.js
+ * reads quick wins and long tails from Search Console findings, counts
+ * technical gaps from the crawl, and can run with no model at all — and a
+ * measured row stamped 'model' would be a lie the Ledger acts on: the review
+ * would send a fact to a person for verification, and the sweep would expire
+ * it 90 days later as if nobody had re-checked it. `meta.sections` says, per
+ * analysis field, what actually produced that section:
+ *
+ *   sections: {
+ *     quick_wins:   { sourceKind: 'rule', ruleVersion: '1' },
+ *     content_gaps: { sourceKind: 'model', promptVersion: '2026-09-26.1' },
+ *   }
+ *
+ * A section's keys override the run-level ones (through the same
+ * resolveProvenance, so a rule section gets confidence 1 and no expiry and a
+ * model section gets the run's model unless it names its own); a field not
+ * named keeps the run-level provenance, so a caller that knows nothing about
+ * sections gets exactly what it always got.
+ *
+ * An empty positioning object writes nothing: a rules-only run has no
+ * positioning to offer, and a blank row would only push the real one down.
+ *
+ * @param {{ model?: string, promptVersion?: string, ttlDays?: number,
+ *           sections?: Record<string, { sourceKind?: 'rule'|'model'|'agent', ruleVersion?: string, model?: string,
+ *                                       promptVersion?: string, confidence?: number, ttlDays?: number }> }} [meta]
  */
 export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, timestamp, meta = {}) {
   const ts = timestamp || Date.now();
@@ -520,7 +545,19 @@ export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, ti
   if (!model && analysisId != null) {
     try { model = db.prepare('SELECT model FROM analyses WHERE id = ?').get(analysisId)?.model || null; } catch { /* no analyses table */ }
   }
-  const prov = resolveProvenance(null, { ...meta, sourceKind: 'model', model }, ts);
+  const { sections, ...runMeta } = meta;
+  const runLevel = { ...runMeta, sourceKind: 'model', model };
+  const runProv = resolveProvenance(null, runLevel, ts);
+  // The section's provenance when the caller described one, the run's otherwise.
+  // Only defined keys override: a section written as { sourceKind: undefined }
+  // must not erase the run-level kind.
+  const provFor = (type, field) => {
+    const section = sections?.[field];
+    if (!section || typeof section !== 'object') return runProv;
+    const merged = { ...runLevel };
+    for (const [k, v] of Object.entries(section)) if (v !== undefined) merged[k] = v;
+    return resolveProvenance(type, merged, ts);
+  };
   const upsertStmt = db.prepare(`
     INSERT INTO insights (project, type, status, fingerprint, first_seen, last_seen, source_analysis_id, data, ${PROVENANCE_COLS})
     VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -530,25 +567,29 @@ export function upsertInsightsFromAnalysis(db, project, analysisId, analysis, ti
   db.exec('BEGIN');
   try {
     const fields = [
-      ['keyword_gap',   analysis.keyword_gaps],
-      ['long_tail',     analysis.long_tails],
-      ['quick_win',     analysis.quick_wins],
-      ['new_page',      analysis.new_pages],
-      ['content_gap',   analysis.content_gaps],
-      ['technical_gap', analysis.technical_gaps],
+      ['keyword_gap',   'keyword_gaps'],
+      ['long_tail',     'long_tails'],
+      ['quick_win',     'quick_wins'],
+      ['new_page',      'new_pages'],
+      ['content_gap',   'content_gaps'],
+      ['technical_gap', 'technical_gaps'],
     ];
-    for (const [type, items] of fields) {
+    for (const [type, field] of fields) {
+      const items = analysis[field];
       if (!Array.isArray(items)) continue;
+      const prov = provFor(type, field);
       for (const item of items) {
         const fp = _insightFingerprint(type, item);
         if (!fp) continue;
         upsertStmt.run(project, type, fp, ts, ts, analysisId, JSON.stringify(item), ...prov.bind(item?.confidence));
       }
     }
-    if (analysis.positioning && typeof analysis.positioning === 'object') {
-      const fp = _insightFingerprint('positioning', analysis.positioning);
-      upsertStmt.run(project, 'positioning', fp, ts, ts, analysisId, JSON.stringify(analysis.positioning),
-        ...prov.bind(analysis.positioning.confidence));
+    const positioning = analysis.positioning;
+    if (positioning && typeof positioning === 'object' && Object.keys(positioning).length) {
+      const prov = provFor('positioning', 'positioning');
+      const fp = _insightFingerprint('positioning', positioning);
+      upsertStmt.run(project, 'positioning', fp, ts, ts, analysisId, JSON.stringify(positioning),
+        ...prov.bind(positioning.confidence));
     }
     db.exec('COMMIT');
   } catch (e) {

@@ -115,7 +115,7 @@
     "test:ledger": "node test/ledger.test.js",
     "test:page-contract": "node test/page-contract.test.js",
     "test:backlinks": "node test/backlinks.test.js",
-    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js && node test/gsc-api.test.js && node test/gsc-fetch.test.js && node test/gsc-inspect.test.js && node test/demand.test.js && node test/analysis-parts.test.js && node test/schema-check.test.js && node test/providers.test.js && node test/run-analysis.test.js && node test/bing-links.test.js",
+    "test": "node test/modern-seo.test.js && node test/ledger.test.js && node test/page-contract.test.js && node test/backlinks.test.js && node test/review.test.js && node test/oauth.test.js && node test/gsc-api.test.js && node test/gsc-fetch.test.js && node test/gsc-inspect.test.js && node test/demand.test.js && node test/analysis-parts.test.js && node test/schema-check.test.js && node test/providers.test.js && node test/run-analysis.test.js && node test/bing-links.test.js && node test/competitor-pages.test.js && node test/shared-lib.test.js && node test/coverage.test.js && node test/history.test.js",
     "postinstall": "echo '\\n  SEO Intel installed.\\n  Run: seo-intel setup\\n  Or: seo-intel serve (opens dashboard)\\n'"
   },
   "dependencies": {

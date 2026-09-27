@@ -9,6 +9,8 @@ import { chromium } from 'playwright';
 import fetch from 'node-fetch';
 import chalk from 'chalk';
 
+console.error('seo-audit.js is superseded by `seo-intel crawl-url <url>` and will be removed in a future release.');
+
 const url = process.argv[2];
 const jsonMode = process.argv.includes("--json");
 const reportMode = process.argv.includes("--report");

@@ -17,59 +17,39 @@
  * Back-compat: the legacy `seo-intel/froggo` export still resolves here.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { getDb, getActiveInsights, getSchemasByProject } from './db/db.js';
+import { readFileSync } from 'fs';
+import { getDb, getActiveInsights } from './db/db.js';
 import { DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 import { DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
 import { DEFAULTS as DEMAND_DEFAULTS } from './analyses/demand/index.js';
 import { URL_INSPECTION_QUOTA } from './lib/gsc-api.js';
 import { DEFAULTS as BING_LINKS_DEFAULTS } from './analyses/bing-links/index.js';
 import { BING_API } from './lib/bing-api.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { readProjectConfig, listProjectConfigs } from './lib/project-config.js';
+import { findFriction } from './lib/friction.js';
+import { findShallowPages, findDecayingPages, auditCompetitorHeadings } from './analyses/competitor-pages/index.js';
+import { findOrphanEntities, getEntityCoverage } from './analyses/entity-coverage/index.js';
+import { getSchemaCoverage } from './analyses/schema-coverage/index.js';
+import { getCrawlBrief, briefForHarness, getPublishingVelocity, velocityForHarness } from './analyses/history/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPERS (extracted from cli.js for agent use)
+// HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
+//
+// These three names have been part of this module's public surface since the
+// harness carried its own copies of them. The copies are gone — cli.js, this
+// file and the dashboard now share one implementation each — and the names
+// stay as re-exports so an integrator importing them keeps working:
+//   loadConfig(project)  → lib/project-config readProjectConfig: the parsed
+//                          config, or null for a missing file, bad JSON or a
+//                          name outside [a-z0-9_-]
+//   listProjects()       → lib/project-config listProjectConfigs:
+//                          [{ name, targetDomain, competitors }], sorted by name
+//   isContentPage(url)   → lib/content-pages: false for app routes, auth pages
+//                          and query-string URLs
 
-/** Load project config by name. Returns null if not found. */
-export function loadConfig(project) {
-  if (!project || !/^[a-z0-9_-]+$/i.test(project)) return null;
-  const path = join(__dirname, 'config', `${project}.json`);
-  try { return JSON.parse(readFileSync(path, 'utf8')); }
-  catch { return null; }
-}
-
-/** List all configured projects. */
-export function listProjects() {
-  const dir = join(__dirname, 'config');
-  try {
-    return readdirSync(dir)
-      .filter(f => f.endsWith('.json') && f !== 'example.json')
-      .map(f => {
-        const name = f.replace('.json', '');
-        const config = loadConfig(name);
-        return {
-          name,
-          targetDomain: config?.target?.domain || null,
-          competitors: (config?.competitors || []).map(c => c.domain),
-        };
-      });
-  } catch { return []; }
-}
-
-/** Filter content pages (exclude app/dashboard URLs). */
-export function isContentPage(url) {
-  if (url.includes('?')) return false;
-  const appPaths = ['/signup', '/login', '/register', '/onboarding', '/dashboard',
-    '/app/', '/swap', '/portfolio', '/send', '/rewards', '/perps', '/vaults'];
-  const appSubdomains = ['dashboard.', 'app.', 'customers.', 'console.'];
-  if (appPaths.some(p => url.includes(p))) return false;
-  if (appSubdomains.some(s => url.includes(s))) return false;
-  return true;
-}
+export { readProjectConfig as loadConfig, listProjectConfigs as listProjects };
+export { isContentPage } from './lib/content-pages.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ANALYSIS MODULES (direct exports)
@@ -111,7 +91,7 @@ export { generateMultiDashboard, generateHtmlDashboard } from './reports/generat
  */
 export async function getDashboardHtml(project) {
   const db = getDb();
-  const config = loadConfig(project);
+  const config = readProjectConfig(project);
   if (!config) return { error: `Project "${project}" not found` };
 
   const { generateHtmlDashboard } = await import('./reports/generate-html.js');
@@ -486,9 +466,9 @@ export async function run(command, project, opts = {}) {
 
   try {
     const db = getDb();
-    const config = loadConfig(project);
+    const config = readProjectConfig(project);
     if (!config && !['status'].includes(command)) {
-      return fail(`Project "${project}" not configured. Available: ${listProjects().map(p => p.name).join(', ')}`);
+      return fail(`Project "${project}" not configured. Available: ${listProjectConfigs().map(p => p.name).join(', ')}`);
     }
 
     switch (command) {
@@ -674,239 +654,61 @@ export async function run(command, project, opts = {}) {
         return wrap({ report });
       }
 
-      case 'shallow': {
-        const maxWords = parseInt(opts.maxWords) || 700;
-        const maxDepth = parseInt(opts.maxDepth) || 2;
-        const rows = db.prepare(`
-          SELECT p.url, p.click_depth, p.word_count, d.domain
-          FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-            AND p.click_depth <= ? AND p.word_count <= ? AND p.word_count > 80
-            AND p.is_indexable = 1
-          ORDER BY p.click_depth ASC, p.word_count ASC
-        `).all(project, maxDepth, maxWords).filter(r => isContentPage(r.url));
+      // ── Competitor attacks ──
+      //
+      // Each of these computes through the same module the CLI command and
+      // the dashboard card use, so an agent over MCP and a person at the
+      // terminal get the same rows in the same order. The modules return a
+      // superset (the CLI's byDomain, thresholds, cutoffs, example pages);
+      // each case projects it to exactly the fields it has always returned,
+      // because that shape is what the MCP tools promise.
 
-        return wrap({
-          targets: rows.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, clickDepth: r.click_depth })),
-          totalTargets: rows.length,
-        });
+      case 'shallow': {
+        const { targets, totalTargets } = findShallowPages(db, project, opts);
+        return wrap({ targets, totalTargets });
       }
 
       case 'decay': {
-        const monthsAgo = parseInt(opts.months) || 18;
-        const cutoffDate = new Date();
-        cutoffDate.setMonth(cutoffDate.getMonth() - monthsAgo);
-        const cutoff = cutoffDate.toISOString().split('T')[0];
-
-        const staleKnown = db.prepare(`
-          SELECT p.url, p.click_depth, p.word_count, p.modified_date, d.domain
-          FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-            AND p.click_depth <= 2 AND p.word_count > 100
-            AND p.modified_date IS NOT NULL AND p.modified_date < ?
-            AND p.is_indexable = 1
-          ORDER BY p.modified_date ASC
-        `).all(project, cutoff).filter(r => isContentPage(r.url));
-
-        const staleUnknown = db.prepare(`
-          SELECT p.url, p.click_depth, p.word_count, d.domain
-          FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-            AND p.click_depth <= 2 AND p.word_count BETWEEN 300 AND 1500
-            AND p.modified_date IS NULL AND p.published_date IS NULL
-            AND p.is_indexable = 1
-          ORDER BY p.word_count ASC LIMIT 20
-        `).all(project).filter(r => isContentPage(r.url));
-
-        return wrap({
-          confirmedStale: staleKnown.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, modifiedDate: r.modified_date, clickDepth: r.click_depth })),
-          unknownFreshness: staleUnknown.map(r => ({ url: r.url, domain: r.domain, wordCount: r.word_count, clickDepth: r.click_depth })),
-          monthsThreshold: monthsAgo,
-        });
+        const { confirmedStale, unknownFreshness, monthsThreshold } = findDecayingPages(db, project, opts);
+        return wrap({ confirmedStale, unknownFreshness, monthsThreshold });
       }
 
       case 'orphans': {
-        const extractions = db.prepare(`
-          SELECT e.primary_entities, p.url, d.domain
-          FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-            AND e.primary_entities IS NOT NULL AND e.primary_entities != ''
-        `).all(project);
-
-        const entityMap = new Map();
-        for (const row of extractions) {
-          let entities = [];
-          try { entities = JSON.parse(row.primary_entities); } catch {}
-          for (const entity of entities) {
-            const key = entity.toLowerCase().trim();
-            if (!entityMap.has(key)) entityMap.set(key, new Set());
-            entityMap.get(key).add(row.domain);
-          }
-        }
-
-        const allUrls = db.prepare(`
-          SELECT p.url FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-        `).all(project).map(r => r.url.toLowerCase());
-
-        const orphans = [];
-        for (const [entity, domains] of entityMap.entries()) {
-          if (domains.size < 2) continue;
-          const slug = entity.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-          const hasDedicatedPage = allUrls.some(u => u.includes(slug));
-          if (!hasDedicatedPage) {
-            orphans.push({ entity, domains: [...domains], domainCount: domains.size, suggestedUrl: '/solutions/' + slug });
-          }
-        }
-        orphans.sort((a, b) => b.domainCount - a.domainCount);
-
-        return wrap({ orphans, totalOrphans: orphans.length });
+        const { orphans, totalOrphans } = findOrphanEntities(db, project);
+        return wrap({ orphans, totalOrphans });
       }
 
       case 'entities': {
-        const minMentions = parseInt(opts.minMentions) || 2;
-        const allExtractions = db.prepare(`
-          SELECT e.primary_entities, d.domain, d.role, p.url
-          FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND e.primary_entities IS NOT NULL AND e.primary_entities != '[]' AND e.primary_entities != ''
-        `).all(project);
-
-        const entityMap = new Map();
-        for (const row of allExtractions) {
-          let entities = [];
-          try { entities = JSON.parse(row.primary_entities); } catch { continue; }
-          for (const entity of entities) {
-            const key = entity.toLowerCase().trim();
-            if (key.length < 2) continue;
-            if (!entityMap.has(key)) entityMap.set(key, { target: new Set(), competitor: new Set(), owned: new Set() });
-            const e = entityMap.get(key);
-            if (row.role === 'target') e.target.add(row.domain);
-            else if (row.role === 'owned') e.owned.add(row.domain);
-            else e.competitor.add(row.domain);
-          }
-        }
-
-        const gaps = [], shared = [], unique = [];
-        for (const [entity, data] of entityMap) {
-          const compCount = data.competitor.size;
-          const hasTarget = data.target.size > 0 || data.owned.size > 0;
-          if (compCount >= minMentions && !hasTarget) gaps.push({ entity, competitorCount: compCount, domains: [...data.competitor] });
-          else if (compCount > 0 && hasTarget) shared.push({ entity, competitorCount: compCount, targetDomains: [...data.target, ...data.owned], competitorDomains: [...data.competitor] });
-          else if (compCount === 0 && hasTarget) unique.push({ entity, targetDomains: [...data.target, ...data.owned] });
-        }
-        gaps.sort((a, b) => b.competitorCount - a.competitorCount);
-
-        return wrap({ gaps, shared, unique, summary: { totalEntities: entityMap.size, gapCount: gaps.length, sharedCount: shared.length, uniqueCount: unique.length } });
+        const { gaps, shared, unique, summary } = getEntityCoverage(db, project, { minMentions: opts.minMentions });
+        return wrap({ gaps, shared, unique, summary });
       }
 
       case 'schemas': {
-        const rows = getSchemasByProject(db, project);
-        const byDomain = new Map();
-        for (const row of rows) {
-          if (!byDomain.has(row.domain)) byDomain.set(row.domain, []);
-          byDomain.get(row.domain).push(row);
-        }
-        const allTypes = [...new Set(rows.map(r => r.schema_type))].sort();
-
-        let targetDomain = null;
-        try { targetDomain = config?.target?.domain; } catch {}
-        const targetTypes = new Set((byDomain.get(targetDomain) || []).map(s => s.schema_type));
-        const compTypes = new Set(rows.filter(r => r.domain !== targetDomain).map(r => r.schema_type));
-        const schemaGaps = [...compTypes].filter(t => !targetTypes.has(t));
-        const exclusives = [...targetTypes].filter(t => !compTypes.has(t));
-
+        // The CLI's JSON carries more per row (the schema name on ratings and
+        // pricing, rating count and currency in the matrix) and the actions;
+        // this case has always returned the narrower rows and no actions.
+        const r = getSchemaCoverage(db, project, { config });
         return wrap({
-          coverageMatrix: Object.fromEntries([...byDomain.entries()].map(([dom, schemas]) => [dom, schemas.map(s => ({ type: s.schema_type, url: s.url, name: s.name, rating: s.rating, price: s.price }))])),
-          gaps: schemaGaps,
-          exclusives,
-          ratings: rows.filter(r => r.rating !== null).map(r => ({ domain: r.domain, url: r.url, rating: r.rating, ratingCount: r.rating_count })),
-          pricing: rows.filter(r => r.price !== null).map(r => ({ domain: r.domain, url: r.url, price: r.price, currency: r.currency })),
-          summary: { totalSchemas: rows.length, uniqueTypes: allTypes.length, domainsWithSchemas: byDomain.size, gapCount: schemaGaps.length },
+          coverageMatrix: Object.fromEntries(Object.entries(r.coverageMatrix).map(([domain, list]) => [
+            domain,
+            list.map(({ type, url, name, rating, price }) => ({ type, url, name, rating, price })),
+          ])),
+          gaps: r.gaps,
+          exclusives: r.exclusives,
+          ratings: r.ratings.map(({ domain, url, rating, ratingCount }) => ({ domain, url, rating, ratingCount })),
+          pricing: r.pricing.map(({ domain, url, price, currency }) => ({ domain, url, price, currency })),
+          summary: r.summary,
         });
       }
 
-      case 'friction': {
-        const rows = db.prepare(`
-          SELECT e.search_intent, e.cta_primary, e.pricing_tier, p.url, p.word_count, d.domain
-          FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-            AND e.search_intent IS NOT NULL AND e.cta_primary IS NOT NULL
-          ORDER BY d.domain
-        `).all(project).filter(r => isContentPage(r.url));
+      case 'friction':
+        return wrap(findFriction(db, project, opts));
 
-        const highFrictionCTAs = ['enterprise', 'sales', 'contact', 'book a demo', 'request', 'talk to'];
-        const targets = rows.filter(r => {
-          const cta = (r.cta_primary || '').toLowerCase();
-          const intent = (r.search_intent || '').toLowerCase();
-          return highFrictionCTAs.some(f => cta.includes(f)) && (intent.includes('informational') || intent.includes('commercial'));
-        });
+      case 'velocity':
+        return wrap(velocityForHarness(getPublishingVelocity(db, project, opts)));
 
-        return wrap({
-          targets: targets.map(t => ({ url: t.url, domain: t.domain, searchIntent: t.search_intent, ctaPrimary: t.cta_primary, pricingTier: t.pricing_tier, wordCount: t.word_count })),
-          totalAnalyzed: rows.length,
-          totalHighFriction: targets.length,
-        });
-      }
-
-      case 'velocity': {
-        const days = parseInt(opts.days) || 30;
-        const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
-
-        const newPages = db.prepare(`
-          SELECT d.domain, d.role, p.url, p.first_seen_at, p.published_date, p.word_count
-          FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND p.first_seen_at > ? AND p.is_indexable = 1
-          ORDER BY p.first_seen_at DESC
-        `).all(project, cutoff).filter(r => isContentPage(r.url));
-
-        const totals = db.prepare(`
-          SELECT d.domain, d.role, COUNT(*) as total_pages
-          FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND p.is_indexable = 1
-          GROUP BY d.domain
-        `).all(project);
-
-        const domainNewMap = {};
-        for (const np of newPages) {
-          if (!domainNewMap[np.domain]) domainNewMap[np.domain] = [];
-          domainNewMap[np.domain].push(np);
-        }
-
-        const velocities = totals.map(t => {
-          const newCount = (domainNewMap[t.domain] || []).length;
-          const ratePerWeek = days > 0 ? +(newCount / (days / 7)).toFixed(1) : 0;
-          return { domain: t.domain, role: t.role, totalPages: t.total_pages, newPages: newCount, ratePerWeek };
-        });
-
-        return wrap({ velocities, period: { days, cutoff: new Date(cutoff).toISOString() } });
-      }
-
-      case 'brief': {
-        const days = parseInt(opts.days) || 7;
-        const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
-        const compDomains = (config?.competitors || []).map(c => c.domain);
-
-        const competitorMoves = [];
-        for (const comp of compDomains) {
-          const newPages = db.prepare(`
-            SELECT p.url, p.word_count FROM pages p JOIN domains d ON d.id = p.domain_id
-            WHERE d.domain = ? AND d.project = ? AND p.first_seen_at > ? AND p.is_indexable = 1
-          `).all(comp, project, cutoff).filter(r => isContentPage(r.url));
-
-          const changedPages = db.prepare(`
-            SELECT p.url, p.word_count FROM pages p JOIN domains d ON d.id = p.domain_id
-            WHERE d.domain = ? AND d.project = ? AND p.crawled_at > ? AND p.first_seen_at < ? AND p.is_indexable = 1
-          `).all(comp, project, cutoff, cutoff).filter(r => isContentPage(r.url));
-
-          competitorMoves.push({
-            domain: comp,
-            newPages: newPages.map(p => ({ url: p.url, wordCount: p.word_count })),
-            changedPages: changedPages.map(p => ({ url: p.url, wordCount: p.word_count })),
-          });
-        }
-
-        return wrap({ competitorMoves, period: { days, weekOf: new Date().toISOString().slice(0, 10) } });
-      }
+      case 'brief':
+        return wrap(briefForHarness(getCrawlBrief(db, project, { ...opts, config })));
 
       // ── Export commands ──
 
@@ -944,26 +746,8 @@ export async function run(command, project, opts = {}) {
       // ── Headings Audit ──
 
       case 'headings-audit': {
-        const maxDepth = parseInt(opts.depth) || 2;
-        const domainFilter = opts.domain ? 'AND d.domain = ?' : '';
-        const params = opts.domain ? [project, maxDepth, opts.domain] : [project, maxDepth];
-
-        const pages = db.prepare(`
-          SELECT p.id, p.url, p.word_count, p.click_depth, d.domain
-          FROM pages p JOIN domains d ON d.id = p.domain_id
-          WHERE d.project = ? AND d.role = 'competitor'
-            AND p.click_depth <= ? AND p.word_count > 200 ${domainFilter}
-            AND p.is_indexable = 1
-          ORDER BY d.domain, p.click_depth ASC
-        `).all(...params).filter(r => isContentPage(r.url));
-
-        const results = [];
-        for (const page of pages.slice(0, 30)) {
-          const headings = db.prepare('SELECT level, text FROM headings WHERE page_id = ? ORDER BY rowid ASC').all(page.id);
-          if (!headings.length) continue;
-          results.push({ url: page.url, domain: page.domain, wordCount: page.word_count, clickDepth: page.click_depth, headings: headings.map(h => ({ level: h.level, text: h.text })) });
-        }
-        return wrap({ pages: results, totalPages: results.length });
+        const { pages, totalPages } = auditCompetitorHeadings(db, project, opts);
+        return wrap({ pages, totalPages });
       }
 
       // ── JS Rendering Delta ──
@@ -989,7 +773,7 @@ export async function run(command, project, opts = {}) {
 
       case 'crawl': {
         const { crawlDomain } = await import('./crawler/index.js');
-        const config_ = loadConfig(project);
+        const config_ = readProjectConfig(project);
         if (!config_) return fail(`Project "${project}" not configured`);
 
         const targetUrl = config_.target.url || `https://${config_.target.domain}`;
@@ -1063,7 +847,7 @@ export async function run(command, project, opts = {}) {
       // ── Status ──
 
       case 'status': {
-        const projects = listProjects();
+        const projects = listProjectConfigs();
         return wrap({ projects, totalProjects: projects.length });
       }
 

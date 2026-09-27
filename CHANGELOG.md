@@ -127,6 +127,31 @@ The MCP surface goes from 38 tools to 39; 27 are free.
 
 `--api` demanded `GSC_ACCESS_TOKEN` even when the account was already connected, which made the OAuth connection worthless for the one command that talks to the Search Console API. It now uses the connected account, refreshing the token as needed. `GSC_ACCESS_TOKEN` still wins when set — that is the override for CI and hand-issued short-lived tokens — and when neither exists the error names the command that fixes it.
 
+### Changed: one implementation per question
+
+Nine questions had two or three answers. `shallow`, `decay`, `headings-audit`, `orphans`, `entities`, `schemas`, `friction`, `brief` and `velocity` each ran their own SQL inline in `cli.js`, and the Agent Harness capability behind the same name ran a second copy in `agent-harness.js`, and the HTML dashboard a third for the four it shows. The copies had drifted: the harness and the CLI filtered competitors differently, sorted differently, and parsed their options differently, so an agent and a person asking the same question of the same database could get different answers and neither could tell. Each question now has one implementation, and the CLI, the harness and the dashboard call it:
+
+- `analyses/competitor-pages/` — `findShallowPages`, `findDecayingPages`, `auditCompetitorHeadings`
+- `analyses/entity-coverage/` — `findOrphanEntities`, `getEntityCoverage`
+- `analyses/schema-coverage/` — `getSchemaCoverage`
+- `analyses/history/` — `getCrawlBrief`, `getPublishingVelocity`
+- `lib/friction.js` — `findFriction`
+- `lib/content-pages.js` — `isContentPage`, the one filter for app routes, auth pages and other non-content URLs
+- `lib/project-config.js` — `readProjectConfig`, `listProjectConfigs`, `findProjectByDomain`, reading `config/` from the package directory rather than the working directory
+
+`agent-harness.js` still exports `loadConfig`, `listProjects` and `isContentPage` under their old names, and every harness capability returns the shape it returned before. `cli.js` shrinks by about 490 lines and `agent-harness.js` by about 220. Every command's output was compared before and after on two seeded databases, and all of it is byte-identical except where the list below says otherwise; four new test suites (`competitor-pages`, `coverage`, `history`, `shared-lib`) pin the modules.
+
+Where the copies disagreed, one answer had to win. These are the places the output changes:
+
+- The harness `decay` and `velocity` capabilities now order their results the way the CLI always has.
+- An option given as `0` is honoured (`--max-depth 0`, `--depth 0`, `--months 0`, `--min-mentions 0`) instead of being read as "not given"; a non-numeric value, and a negative `--days`, fall back to the default instead of producing `NaN` in a query.
+- The project-name guard (letters, digits, `-` and `_`) the harness applied now applies to the CLI too, so a config name that could reach outside `config/` is refused everywhere; `schemas` says so and names the rename rather than reporting a missing config.
+- `brief --format json` and the harness `brief` capability list each competitor's new pages newest first and its changed pages most recently crawled first, and the JSON's keyword and schema gaps come from each competitor's ten newest pages, as the text brief's always did.
+- `friction` filters and orders one way on every surface, the CLI's.
+- `listProjectConfigs` returns projects sorted by name, and `config/example.json` is no longer offered as a project when a domain is matched.
+
+`seo-audit.js`, the original single-page audit script, now prints a notice on stderr that `seo-intel crawl-url <url>` supersedes it and that it will be removed in a future release; it still runs.
+
 ### Fixed
 
 - `page_contract` summed overlapping CSV exports for one page. A "Last 28 days" export and a "Last 3 months" export of the same URL both counted, so the page was credited with the same impressions twice and could clear the demand floor on duplicated data. Page-level evidence now comes from one window only, the freshest declared — the rule the property-wide context already followed.

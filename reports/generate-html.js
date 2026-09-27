@@ -24,6 +24,10 @@ import { getCitabilityScores } from '../analyses/aeo/index.js';
 import { getWatchData } from '../analyses/watch/index.js';
 import { getProblems, getProblemCounts } from '../lib/problems.js';
 import { runReview } from '../analyses/review/index.js';
+import { isContentPage } from '../lib/content-pages.js';
+import { findFriction } from '../lib/friction.js';
+import { findShallowPages, findDecayingPages } from '../analyses/competitor-pages/index.js';
+import { findOrphanEntities } from '../analyses/entity-coverage/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -3516,8 +3520,8 @@ function buildHtmlTemplate(data, opts = {}) {
             <tr>
               <td class="mono">${escapeHtml(getDomainShortName(domain))}</td>
               <td style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.url.replace(/https?:\/\/[^/]+/, '') || '/')}</td>
-              <td style="color: ${p.word_count < 300 ? 'var(--color-danger)' : 'var(--accent-gold)'};">${p.word_count}</td>
-              <td>${p.click_depth}</td>
+              <td style="color: ${p.wordCount < 300 ? 'var(--color-danger)' : 'var(--accent-gold)'};">${p.wordCount}</td>
+              <td>${p.clickDepth}</td>
             </tr>`)
             ).join('')}
           </tbody>
@@ -3538,14 +3542,14 @@ function buildHtmlTemplate(data, opts = {}) {
             <tr>
               <td class="mono">${escapeHtml(getDomainShortName(r.domain))}</td>
               <td style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(r.url.replace(/https?:\/\/[^/]+/, '') || '/')}</td>
-              <td>${r.word_count}</td>
-              <td><span class="badge badge-high">Stale: ${escapeHtml(r.modified_date || '?')}</span></td>
+              <td>${r.wordCount}</td>
+              <td><span class="badge badge-high">Stale: ${escapeHtml(r.modifiedDate || '?')}</span></td>
             </tr>`).join('')}
             ${decayTargets.staleUnknown.slice(0, 10).map(r => `
             <tr>
               <td class="mono">${escapeHtml(getDomainShortName(r.domain))}</td>
               <td style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(r.url.replace(/https?:\/\/[^/]+/, '') || '/')}</td>
-              <td>${r.word_count}</td>
+              <td>${r.wordCount}</td>
               <td><span class="badge badge-medium">No date</span></td>
             </tr>`).join('')}
           </tbody>
@@ -3563,7 +3567,7 @@ function buildHtmlTemplate(data, opts = {}) {
         <div class="orphan-card">
           <div class="orphan-entity">${escapeHtml(o.entity)}</div>
           <div class="orphan-domains">${o.domains.map(d => `<span class="comp-tag">${escapeHtml(getDomainShortName(d))}</span>`).join(' ')}</div>
-          <div class="orphan-suggestion">/solutions/${o.entity.replace(/\s+/g, '-').toLowerCase()}</div>
+          <div class="orphan-suggestion">${escapeHtml(o.suggestedUrl)}</div>
         </div>`).join('')}
       </div>` : `<p class="empty-hint">${orphanEntities.hasData ? 'No orphan entities found — competitors have dedicated pages for all major entities.' : 'Needs Qwen extraction. Run: node cli.js extract'}</p>`}
     </div>
@@ -3581,8 +3585,8 @@ function buildHtmlTemplate(data, opts = {}) {
             <tr>
               <td class="mono">${escapeHtml(getDomainShortName(t.domain))}</td>
               <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(t.url.replace(/https?:\/\/[^/]+/, '') || '/')}</td>
-              <td><span class="badge badge-medium">${escapeHtml(t.search_intent)}</span></td>
-              <td style="color: var(--color-danger);">${escapeHtml(t.cta_primary)}</td>
+              <td><span class="badge badge-medium">${escapeHtml(t.searchIntent)}</span></td>
+              <td style="color: var(--color-danger);">${escapeHtml(t.ctaPrimary)}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -6818,129 +6822,42 @@ function getRelativeTime(isoString) {
   return formatDate(isoString);
 }
 
-// ─── Content Page Filter ────────────────────────────────────────────────────
-
-function isContentPage(url) {
-  if (url.includes('?')) return false;
-  const appPaths = ['/signup', '/login', '/register', '/onboarding', '/dashboard',
-    '/app/', '/swap', '/portfolio', '/send', '/rewards', '/perps', '/vaults'];
-  const appSubdomains = ['dashboard.', 'app.', 'customers.', 'console.'];
-  if (appPaths.some(p => url.includes(p))) return false;
-  if (appSubdomains.some(s => url.includes(s))) return false;
-  return true;
-}
-
 // ─── Attack Strategy Data Functions ─────────────────────────────────────────
+//
+// The four attack cards compute through the same functions as the shallow,
+// decay, orphans and friction commands and the MCP tools behind them
+// (analyses/competitor-pages, analyses/entity-coverage, lib/friction), so the
+// dashboard cannot drift from the terminal again. These adapters only
+// reshape the result for the card templates; the rows come back camelCase
+// (wordCount, clickDepth, modifiedDate, searchIntent, ctaPrimary).
+// isContentPage (imported above) still filters the CTA landscape below.
 
-function getShallowChampions(db, project, maxDepth = 2, maxWords = 700) {
-  const rows = db.prepare(`
-    SELECT p.url, p.click_depth, p.word_count, d.domain
-    FROM pages p JOIN domains d ON d.id = p.domain_id
-    WHERE d.project = ? AND d.role = 'competitor'
-      AND p.click_depth <= ? AND p.word_count <= ? AND p.word_count > 80
-      AND p.is_indexable = 1
-    ORDER BY p.click_depth ASC, p.word_count ASC
-  `).all(project, maxDepth, maxWords).filter(r => isContentPage(r.url));
-
-  const byDomain = {};
-  for (const r of rows) {
-    if (!byDomain[r.domain]) byDomain[r.domain] = [];
-    byDomain[r.domain].push(r);
-  }
-  return { total: rows.length, byDomain };
+function getShallowChampions(db, project) {
+  const r = findShallowPages(db, project);
+  return { total: r.totalTargets, byDomain: r.byDomain };
 }
 
-function getDecayTargets(db, project, monthsAgo = 18) {
-  const cutoffDate = new Date();
-  cutoffDate.setMonth(cutoffDate.getMonth() - monthsAgo);
-  const cutoff = cutoffDate.toISOString().split('T')[0];
-
-  const staleKnown = db.prepare(`
-    SELECT p.url, p.click_depth, p.word_count, p.modified_date, d.domain
-    FROM pages p JOIN domains d ON d.id = p.domain_id
-    WHERE d.project = ? AND d.role = 'competitor'
-      AND p.click_depth <= 2 AND p.word_count > 100
-      AND p.modified_date IS NOT NULL AND p.modified_date < ?
-      AND p.is_indexable = 1
-    ORDER BY p.click_depth ASC, p.modified_date ASC
-  `).all(project, cutoff).filter(r => isContentPage(r.url));
-
-  const staleUnknown = db.prepare(`
-    SELECT p.url, p.click_depth, p.word_count, d.domain
-    FROM pages p JOIN domains d ON d.id = p.domain_id
-    WHERE d.project = ? AND d.role = 'competitor'
-      AND p.click_depth <= 2 AND p.word_count BETWEEN 300 AND 1500
-      AND p.modified_date IS NULL AND p.published_date IS NULL
-      AND p.is_indexable = 1
-    ORDER BY p.click_depth ASC, p.word_count ASC
-    LIMIT 20
-  `).all(project).filter(r => isContentPage(r.url));
-
-  return { staleKnown, staleUnknown, total: staleKnown.length + staleUnknown.length };
+function getDecayTargets(db, project) {
+  const r = findDecayingPages(db, project);
+  return {
+    staleKnown: r.confirmedStale,
+    staleUnknown: r.unknownFreshness,
+    total: r.confirmedStale.length + r.unknownFreshness.length,
+  };
 }
 
+// hasData: some competitor page was extracted to at least one entity. False
+// is the card's "run extract" hint, which is what the card has always meant.
 function getOrphanEntities(db, project) {
-  const extractions = db.prepare(`
-    SELECT e.primary_entities, p.url, d.domain
-    FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id
-    WHERE d.project = ? AND d.role = 'competitor'
-      AND e.primary_entities IS NOT NULL AND e.primary_entities != '' AND e.primary_entities != '[]'
-  `).all(project);
-
-  if (!extractions.length) return { orphans: [], hasData: false };
-
-  const entityMap = new Map();
-  for (const row of extractions) {
-    let entities = [];
-    try { entities = JSON.parse(row.primary_entities); } catch {}
-    for (const entity of entities) {
-      const key = entity.toLowerCase().trim();
-      if (!key || key.length < 2) continue;
-      if (!entityMap.has(key)) entityMap.set(key, new Set());
-      entityMap.get(key).add(row.domain);
-    }
-  }
-
-  const allUrls = db.prepare(`
-    SELECT p.url FROM pages p JOIN domains d ON d.id = p.domain_id
-    WHERE d.project = ? AND d.role = 'competitor'
-  `).all(project).map(r => r.url.toLowerCase());
-
-  const orphans = [];
-  for (const [entity, domains] of entityMap.entries()) {
-    if (domains.size < 2) continue;
-    const slug = entity.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    const hasDedicatedPage = allUrls.some(u => u.includes(slug) || u.includes(entity.replace(/\s+/g, '/')));
-    if (!hasDedicatedPage) {
-      orphans.push({ entity, domains: [...domains], domainCount: domains.size });
-    }
-  }
-
-  orphans.sort((a, b) => b.domainCount - a.domainCount);
-  return { orphans, hasData: true };
+  const r = findOrphanEntities(db, project);
+  return { orphans: r.orphans, hasData: r.entityCount > 0 };
 }
 
+// hasData: at least one competitor content page carries both an intent and a
+// CTA label; with none, extraction has not run and the card says so.
 function getFrictionTargets(db, project) {
-  const rows = db.prepare(`
-    SELECT e.search_intent, e.cta_primary, p.url, p.word_count, d.domain
-    FROM extractions e JOIN pages p ON p.id = e.page_id JOIN domains d ON d.id = p.domain_id
-    WHERE d.project = ? AND d.role = 'competitor'
-      AND e.search_intent IS NOT NULL AND e.search_intent != ''
-      AND e.cta_primary IS NOT NULL AND e.cta_primary != ''
-    ORDER BY d.domain, p.click_depth ASC
-  `).all(project).filter(r => isContentPage(r.url));
-
-  if (!rows.length) return { targets: [], hasData: false };
-
-  const highFrictionCTAs = ['enterprise', 'sales', 'contact', 'book a demo', 'request', 'talk to'];
-  const targets = rows.filter(r => {
-    const cta = (r.cta_primary || '').toLowerCase();
-    const intent = (r.search_intent || '').toLowerCase();
-    return highFrictionCTAs.some(f => cta.includes(f)) &&
-           (intent.includes('informational') || intent.includes('commercial'));
-  });
-
-  return { targets, hasData: true };
+  const r = findFriction(db, project);
+  return { targets: r.targets, hasData: r.totalAnalyzed > 0 };
 }
 
 // ─── Extended Intelligence Data Functions ────────────────────────────────────

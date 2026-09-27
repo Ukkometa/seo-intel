@@ -97,7 +97,8 @@ the free audit has shown its worth.
 | `demand <project>` | Quick wins and long tails computed from your own Search Console rows — striking-distance queries with a CTR below the baseline, page-two queries, unserved long-tail demand; rule-sourced, so `review` lists them as opportunities; needs `gsc-fetch` |
 | `geo <project>` | LLM retrieval audit for definitions, flat lists, typed code blocks, and optional live copy-control checks |
 | `schema-audit <project>` | Schema type specificity: `Product` vs `SoftwareApplication`, and the `offers`/`price` fields Google actually requires |
-| `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages. `--live` recovers target URL and anchor text |
+| `backlink-import` / `backlink-audit <project>` | Import your Search Console links export; audit brand reclamation, followed vs nofollow, concentration, and unlinked pages, and say which source reported each link. `--live` recovers target URL and anchor text |
+| `bing-links <project>` | Fetch the inbound links Bing Webmaster Tools reports into the same backlinks table, each with the page of yours it points at and its anchor text, which the Search Console export does not have. A link both sources report counts as corroborated. It is a sample of Bing's index, not a complete link profile. Quota-aware; needs `BING_WEBMASTER_API_KEY` |
 | `review <project>` | Search Review — what needs your decision, what an agent may fix now, and what already works; `--url` folds per-page decisions in |
 | `intel <project> --for raw\|audit\|blog\|graph` | Agent-ready intelligence slices |
 | `export` / `export-actions --scope technical` | Raw data and technical action exports |
@@ -227,7 +228,7 @@ Upload your GSC data for ranking insights:
 2. Export Performance data as CSV
 3. Upload via the web wizard or place CSVs in `gsc/<project>/`
 
-Query data no longer needs the export: connect your Google account with `seo-intel auth google` and run `seo-intel gsc-fetch <project>`, which pulls page×query, page and query rows straight from the Search Analytics API — every page at once, with real dates — and `page-contract` reads those first. Links still come from the CSV export (`backlink-import`), because the Search Console API has no Links endpoint. And `seo-intel gsc-inspect <project>` asks Google the question no crawl can answer — has it indexed this page? — storing the URL Inspection verdict, coverage state and chosen canonical for your busiest pages first, within the API's 2,000-a-day quota, so `review` and `list_problems` show Google's fact rather than the crawl's inference. And `seo-intel demand <project>` turns the fetched rows into quick wins and long tails — the queries already within reach whose snippet or page-two position is leaving clicks behind, and the phrases people search that no page of yours answers — replacing the keyword-volume estimates a paid index sells with the demand Google actually measured for your site; `review` lists them under opportunities.
+Query data no longer needs the export: connect your Google account with `seo-intel auth google` and run `seo-intel gsc-fetch <project>`, which pulls page×query, page and query rows straight from the Search Analytics API — every page at once, with real dates — and `page-contract` reads those first. Search Console links still come from the CSV export (`backlink-import`), because the Search Console API has no Links endpoint. The automated alternative is Bing Webmaster Tools' API: `seo-intel bing-links <project>` fetches the inbound links Bing reports, each with the target page and the anchor text the export never had. Bing's links come from Bing's own index, so they are a different sample from Google's and just as partial. `backlink-audit` reads rows from both sources, and a link both report is corroborated. And `seo-intel gsc-inspect <project>` asks Google the question no crawl can answer — has it indexed this page? — storing the URL Inspection verdict, coverage state and chosen canonical for your busiest pages first, within the API's 2,000-a-day quota, so `review` and `list_problems` show Google's fact rather than the crawl's inference. And `seo-intel demand <project>` turns the fetched rows into quick wins and long tails — the queries already within reach whose snippet or page-two position is leaving clicks behind, and the phrases people search that no page of yours answers — replacing the keyword-volume estimates a paid index sells with the demand Google actually measured for your site; `review` lists them under opportunities.
 
 ## License
 
@@ -235,7 +236,7 @@ Query data no longer needs the export: connect your Google account with `seo-int
 - **Unlimited projects and unlimited pages per domain** — no caps
 - Everything about your own site: crawl, local AI extraction, AI Citability Audit
   (AEO), keyword intelligence, dashboards, site graph, Site Watch,
-  technical audit, Search Console insights, demand quick wins, and 26 of the 38 MCP tools
+  technical audit, Search Console insights, demand quick wins, backlink audit from Search Console and Bing, and 27 of the 39 MCP tools
 
 ### Solo (€19.99/mo · €199.99/yr · 14-day free trial)
 - Competitor synthesis — gap analysis, positioning, keyword battleground,

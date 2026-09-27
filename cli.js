@@ -14,7 +14,7 @@ if (major < 22 || (major === 22 && minor < 5)) {
 import 'dotenv/config';
 import { program, InvalidArgumentError } from 'commander';
 import { spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, unlinkSync, existsSync, mkdirSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import { totalmem, homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -64,6 +64,8 @@ import { GscApiError } from './lib/gsc-api.js';
 import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 import { runGscInspect, DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
 import { runDemand, DEFAULTS as DEMAND_DEFAULTS } from './analyses/demand/index.js';
+import { BING_API, BingApiError } from './lib/bing-api.js';
+import { runBingLinks, DEFAULTS as BING_LINKS_DEFAULTS } from './analyses/bing-links/index.js';
 import { getCurrentVersion, checkForUpdates, printUpdateNotice, forceUpdateCheck } from './lib/updater.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1425,6 +1427,23 @@ program
       }
     } catch (err) {
       console.log(chalk.dim(`  Demand skipped: ${err.message}`));
+    }
+
+    // Bing's link reports ride along when a key is set, so the backlinks
+    // table keeps a second, independent sample current without a second cron
+    // entry. The 20 most-linked pages, not the interactive 50: the key's quota
+    // is daily and a 6-hourly cron would otherwise spend it on re-reports the
+    // upsert only confirms. Best-effort like the three above; one line either
+    // way, and a quota stop keeps what was stored.
+    if (process.env[BING_API.keyEnv]) {
+      try {
+        const bing = await runBingLinks(db, next.project, loadConfig(next.project), { maxTargetPages: 20 });
+        const stop = bing.stopped_reason === 'quota' ? chalk.yellow(' — quota reached, what was fetched is kept')
+          : bing.truncated ? chalk.yellow(' — truncated') : '';
+        console.log(chalk.green(`  🔗 Bing links: +${bing.inserted} new · ${bing.updated} known · ${bing.linking_domains} domains from ${bing.target_pages.length} page(s) (${bing.site})${stop}`));
+      } catch (err) {
+        console.log(chalk.dim(`  Bing links skipped: ${err.message}`));
+      }
     }
 
     // Check if analysis needed for this project
@@ -6359,6 +6378,129 @@ program
   });
 
 program
+  .command('bing-links <project>')
+  .description("Fetch the inbound links Bing Webmaster Tools reports for your site, with the linked page and anchor text, into the backlinks table")
+  .option('--site-url <url>', 'Bing Webmaster site to read (https://www.example.com/), overriding bing.siteUrl and auto-detection')
+  // Refused before a request is made, like gsc-inspect's: runBingLinks
+  // quietly replaces 0 or NaN with its defaults, so `--max-requests 0` would
+  // spend the full budget of the key's daily quota the person meant to spare.
+  .option('--max-targets <n>', `Your most-linked pages whose linking pages are listed (default: ${BING_LINKS_DEFAULTS.maxTargetPages})`, wholeNumberAtLeast(1))
+  .option('--max-requests <n>', `Requests this run may make, GetUserSites included (default: ${BING_LINKS_DEFAULTS.maxRequests})`, wholeNumberAtLeast(1))
+  .option('--dry-run', 'Resolve the site and show the plan without making any link request')
+  .option('--debug', 'Write the first raw body of each Bing method called (GetUserSites when the site is matched, GetLinkCounts, GetUrlLinks) to reports/, key redacted, to check the unverified field names')
+  .option('--format <type>', 'Output format: brief or json', 'brief')
+  .action(async (project, opts) => {
+    if (!requirePro('bing-links')) return;
+    const config = loadConfig(project);
+    const brief = opts.format !== 'json';
+    // --debug: the module writes <project>-bing-<Method>.json into reports/
+    // (gitignored). Only files written by THIS run are named back, so a stale
+    // body from last week is never passed off as today's answer.
+    const debugDir = opts.debug ? join(__dirname, 'reports') : undefined;
+    const startedAt = Date.now();
+    const debugFiles = () => {
+      if (!debugDir) return [];
+      const stem = String(project).replace(/[^\w.-]+/g, '_') || 'project';
+      return Object.values(BING_API.methods)
+        .map(m => join(debugDir, `${stem}-bing-${m}.json`))
+        .filter(p => { try { return statSync(p).mtimeMs >= startedAt - 1000; } catch { return false; } });
+    };
+    const printDebugFiles = (print) => {
+      const files = debugFiles();
+      if (!files.length) return;
+      print(chalk.gray(`\n  Raw responses, to compare with BING_API.fields in lib/bing-api.js:`));
+      for (const f of files) print(chalk.gray(`    ${f.replace(__dirname + '/', '')}`));
+    };
+
+    if (brief) console.log(`\n  ${chalk.bold('Bing Webmaster Links')}  ${chalk.gray(project)}${opts.dryRun ? chalk.yellow('  (dry run — no link requests made)') : ''}`);
+    // A live counter only where a person is watching: fifty targets at two
+    // at a time take a while, and a silent while looks like a stall.
+    const live = brief && process.stdout.isTTY;
+    let result;
+    try {
+      result = await runBingLinks(getDb(), project, config, {
+        siteUrl: opts.siteUrl, maxTargetPages: opts.maxTargets, maxRequests: opts.maxRequests,
+        dryRun: !!opts.dryRun, debugDir,
+        onProgress: live ? ({ phase, done, total, targets, requests }) => {
+          if (phase === 'targets') process.stdout.write(`\r  0/${targets} target pages walked`);
+          else process.stdout.write(`\r  ${done}/${total} target pages walked · ${requests} requests`);
+        } : undefined,
+      });
+      if (live && result.target_pages.length) process.stdout.write('\n');
+    } catch (err) {
+      // BingApiError carries the fix in `hint`: set or check the key (config,
+      // auth), wait for the daily quota, or report a shape the unverified
+      // field names missed. A site miss carries it in the message itself: it
+      // lists the account's sites and names the bing.siteUrl fix.
+      const hint = err instanceof BingApiError ? err.hint || null : null;
+      const kind = err instanceof BingApiError ? err.kind : null;
+      if (!brief) {
+        console.log(JSON.stringify({ command: 'bing-links', project, error: err.message, kind, hint, ...(debugDir ? { debug_files: debugFiles() } : {}) }));
+        process.exitCode = 1;
+        return;
+      }
+      console.error(chalk.red(`\n  ✗ ${err.message}`));
+      if (hint) console.error(chalk.dim(`  ${hint}`));
+      printDebugFiles(console.error);
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+    if (!brief) {
+      console.log(JSON.stringify({ command: 'bing-links', ...result, ...(debugDir ? { debug_files: debugFiles() } : {}) }, null, 2));
+      return;
+    }
+
+    const chosen = result.site_reason === 'configured' ? 'configured (bing.siteUrl or --site-url)' : `auto-matched: ${result.site_reason}`;
+    console.log(`  Site: ${chalk.cyan(result.site)}  ${chalk.gray(chosen)}\n`);
+    if (result.dry_run) {
+      console.log(`  Would list your pages with inbound links (GetLinkCounts, up to ${result.max_pages_per_list} API pages),`);
+      console.log(`  then the linking pages of the ${result.max_target_pages} most-linked (GetUrlLinks), ${result.concurrency} at a time,`);
+      console.log(`  within ${result.max_requests} requests${result.requests ? chalk.gray(` (${result.requests} spent finding the site)`) : ''}.`);
+      console.log(chalk.gray(`\n  Nothing fetched. Drop --dry-run to fetch: seo-intel bing-links ${project}\n`));
+      return;
+    }
+
+    const SHOW = 15;
+    const walked = result.target_pages;
+    const incomplete = walked.filter(t => !t.complete).length;
+    console.log(`  ${result.target_pages_available} of your pages have inbound links Bing reports; walked the ${walked.length} most-linked`);
+    if (walked.length) {
+      console.log(chalk.gray(`      ${'inbound'.padStart(7)} ${'stored'.padStart(7)}  page`));
+      for (const t of walked.slice(0, SHOW)) {
+        const count = t.count === null || t.count === undefined ? '—' : String(t.count);
+        console.log(`      ${count.padStart(7)} ${String(t.linking_pages_stored).padStart(7)}  ${demandClip(demandPath(t.url), 60)}${t.complete ? '' : chalk.yellow('  incomplete')}`);
+      }
+      if (walked.length > SHOW) console.log(chalk.gray(`      … and ${walked.length - SHOW} more (--format json for all)`));
+    }
+    const notWalked = result.target_pages_available - walked.length;
+    if (notWalked > 0) console.log(chalk.gray(`  ${notWalked} less-linked page(s) not walked; --max-targets walks more of them.`));
+
+    console.log(`\n  Stored: ${chalk.green(`${result.inserted} new`)} · ${result.updated} already known (updated) · ${result.linking_domains} linking domains  ${chalk.gray(`${result.requests} request(s)`)}`);
+    const unfinished = incomplete ? ` ${incomplete} target page(s) not read to the end.` : '';
+    if (result.stopped_reason === 'quota') {
+      console.log(chalk.yellow(`  Stopped: Bing says this key's quota is spent.${unfinished} What was fetched is stored; run again after the daily quota resets — re-reporting stored links is harmless.`));
+    } else if (result.truncated) {
+      const why = result.stopped_reason === 'max_requests'
+        ? `the ${result.max_requests}-request budget ran out (--max-requests)`
+        : `a paged list ran past ${result.max_pages_per_list} API pages and its tail was not read`;
+      console.log(chalk.yellow(`  Truncated: ${why}.${unfinished} What was fetched is stored.`));
+    }
+    if (result.errors.length) {
+      const LIST_CAP = 10;
+      console.log(chalk.red(`\n  ${result.errors.length} request(s) Bing did not answer (the run went on without them):`));
+      for (const e of result.errors.slice(0, LIST_CAP)) {
+        const where = `${e.method}${e.target ? ` ${demandClip(demandPath(e.target), 40)}` : ''} page ${e.page}`;
+        console.log(`    ${where} — ${chalk.red(e.message)}`);
+      }
+      if (result.errors.length > LIST_CAP) console.log(chalk.gray(`    … and ${result.errors.length - LIST_CAP} more (--format json for all)`));
+    }
+    printDebugFiles(console.log);
+    console.log(chalk.gray("\n  A sample of the links Bing's own index has seen — different from Google's, also capped and lagging. Not a complete link profile."));
+    console.log(chalk.gray(`  seo-intel backlink-audit ${project} now reads these rows (origin bing).\n`));
+  });
+
+program
   .command('backlink-audit <project>')
   .description('Audit your link profile: brand reclamation, followed vs nofollow, concentration, and which pages get no links')
   .option('--live', 'Fetch linking pages to recover target URL and anchor text, and check the link is still there')
@@ -6382,6 +6524,12 @@ program
     }
     const s = r.summary;
     console.log(`  ${s.linkingPages} linking pages · ${s.referringDomains} referring domains · top domain is ${s.topDomainSharePct}% of the profile`);
+    // Which source reported what, only once Bing rows exist: a Search-Console-
+    // only audit reads exactly as it did before Bing was a source.
+    const byOrigin = s.by_origin;
+    if (byOrigin?.bing?.rows) {
+      console.log(`  ${byOrigin.gsc.rows} from Search Console · ${byOrigin.bing.rows} from Bing · ${byOrigin.both.rows} reported by both`);
+    }
     console.log(chalk.gray(`  ${r.sample_note}`));
     if (s.reclamationDomains) {
       console.log(`\n  ${chalk.bold(chalk.cyan('Reclamation'))} ${chalk.gray('— existing relationships pointing at a name you no longer use')}`);
@@ -6392,11 +6540,19 @@ program
       console.log(`\n  ${chalk.bold('Verified')} ${chalk.gray(`${s.verified} checked`)}`);
       console.log(`    ${chalk.green(String(s.followed).padStart(4) + ' followed')}   ${chalk.yellow(String(s.nofollowed) + ' nofollow/ugc')}   ${chalk.red(String(s.gone) + ' gone')}   ${chalk.gray(String(s.unknown) + ' unknown')}`);
       if (s.unknown) console.log(chalk.gray(`    Unknown = ${s.blocked} blocked us, ${s.unrendered} served no links to a bot. Absence there proves nothing.`));
+      if (r.equity?.note) console.log(chalk.gray(`    ${r.equity.note}`));
     } else {
-      console.log(chalk.gray('\n  Not verified. Re-run with --live to recover target URLs and anchor text.'));
+      // Nothing checked, so every known target came from Bing: --live is
+      // still what reads nofollow and proves a link is there, but it is no
+      // longer the only way to learn which page a link points at.
+      console.log(chalk.gray(s.targetsKnown
+        ? `\n  Not verified. Re-run with --live to check the links are still there and read nofollow; Bing already supplied the linked page for ${s.targetsKnown}.`
+        : '\n  Not verified. Re-run with --live to recover target URLs and anchor text.'));
+      if (r.equity?.unknown_bing && r.equity.note) console.log(chalk.gray(`  ${r.equity.note}`));
     }
     if (r.unlinkedHighValuePages.length) {
       console.log(`\n  ${chalk.bold('Pages receiving no links')}`);
+      if (r.targets_note) console.log(chalk.gray(`  ${r.targets_note}`));
       for (const p of r.unlinkedHighValuePages.slice(0, 8))
         console.log(chalk.gray(`    citability ${String(p.citability ?? '—').padStart(3)}  ${p.url}`));
     }

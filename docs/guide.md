@@ -142,6 +142,7 @@ If you have subdomains (blog, docs, etc.) that you also want crawled:
 | `target` | Yes | Your main site (one per project) |
 | `owned` | No | Additional properties you control (subdomains, microsites) |
 | `gsc.property` | No | Search Console property `gsc-fetch` pulls from (`sc-domain:example.com` or `https://www.example.com/`); matched to `target.domain` when omitted |
+| `bing.siteUrl` | No | Bing Webmaster Tools site `bing-links` reads, a URL prefix with a trailing slash (`https://www.example.com/`); matched to `target.domain` among the account's verified sites when omitted |
 | `competitors` | Yes | Sites you're competing against (2-10 recommended) |
 
 ---
@@ -227,6 +228,7 @@ Which model judges: `--provider` wins; then a `--model` whose name points at a p
 | `gsc-inspect <project>` | Ask Google whether it has indexed your pages (URL Inspection API) and store each verdict, coverage state and chosen canonical; demand-first, 2,000 per property per day; `review` and `list_problems` read it | `node cli.js gsc-inspect mysite --url https://example.com/page` |
 | `demand <project>` | Quick wins and long tails from your own Search Console rows (needs `gsc-fetch`): striking-distance queries whose CTR is under the position baseline or that sit on page two, and phrases of 3+ words with no page on page one; rule-sourced, so `review` lists them under opportunities | `node cli.js demand mysite --window 28 --format json` |
 | `trends <project>` | Clicks decay and growth per page between the last two same-length windows of Search Console data; decays are filed as `gsc_decay` (Solo) | `node cli.js trends mysite --format json` |
+| `bing-links <project>` | Fetch the inbound links Bing Webmaster Tools reports into the backlinks table, each with the page of yours it points at and its anchor text (Search Console's Links report has no API, and its export has neither). Rows get origin `bing`, and a link the Search Console export also holds becomes `bing,gsc`, corroborated. The 50 most-linked pages are walked within 300 requests of a daily quota (`--max-targets`, `--max-requests`); a quota stop keeps what was fetched. `--site-url` picks the site, `--dry-run` plans without a link request, `--debug` writes the raw responses to `reports/`, because the response shapes are unverified against Microsoft's docs. A sample of Bing's index, not a complete link profile; `backlink-audit` reads it. Needs `BING_WEBMASTER_API_KEY` | `node cli.js bing-links mysite --dry-run` |
 | `report <project>` | Print latest analysis to terminal | `node cli.js report mysite` |
 | `status` | Show crawl freshness + extraction progress | `node cli.js status` |
 | `run` | Smart cron: crawl next stale domain | `node cli.js run` |
@@ -313,6 +315,7 @@ Shows:
 | `<project>-keywords-<ts>.json` | ~25KB | Keyword cluster matrix (traditional + AI) |
 | `<project>-headings-audit-<ts>.md` | ~10KB | Competitor heading structure analysis |
 | `<project>-judgments-<date>.json` | ~30KB | Every judgment's system prompt, prompt, answer or failure (for auditing what the model was asked and said) |
+| `<project>-bing-GetUserSites.json` / `<project>-bing-GetLinkCounts.json` / `<project>-bing-GetUrlLinks.json` | small | Written only by `bing-links --debug`: the first raw response of each Bing method called (the key redacted), to check against the unverified field names in `BING_API.fields` (`lib/bing-api.js`). Only the response body is written, never the request URL that carries the API key |
 
 ### Database
 
@@ -328,6 +331,7 @@ All data lives in `seo-intel.db` (SQLite). Key tables:
 | `links` | Internal and external links with anchor text |
 | `technical` | Technical SEO signals (canonical, OG, schema, mobile, CWV) |
 | `analyses` | Analysis results per project; `model` records `provider:model` for the provider that answered, or `rules-only` |
+| `backlinks` | Inbound links from the Search Console export (`backlink-import`) and Bing Webmaster Tools (`bing-links`). `origin` says which reported each: `gsc`, `bing`, or `bing,gsc` when both did. The `--live` columns of `backlink-audit` record whether the link is still on the page and whether it is followed |
 
 ---
 
@@ -461,6 +465,7 @@ Only one job runs at a time. If you try to start a second crawl/extract while on
 | `ANALYSIS_TIMEOUT_MS` | `120000` | How long one model request may take, for every provider; raise it for a large local model. Unset, `GEMINI_TIMEOUT_MS` / `OPENCLAW_TIMEOUT_MS` still apply to the Gemini and Agent Harness transports |
 | `OLLAMA_ANALYSIS_MODEL` | `gemma4:26b` | The Ollama tag for analysis judgments (distinct from `OLLAMA_MODEL`, the extraction model) |
 | `OLLAMA_ANALYSIS_CTX` | 16384 | Context window (`num_ctx`) for Ollama analysis calls; the judgments are small |
+| `BING_WEBMASTER_API_KEY` | unset | API key for `bing-links`, from Bing Webmaster Tools → Settings → API access; the site must be verified in the same account. With it set, the scheduled `run` also refreshes Bing's links after each crawl (the 20 most-linked pages) |
 
 Override per-run with flags:
 

@@ -25,6 +25,8 @@ import { DEFAULTS as GSC_FETCH_DEFAULTS } from './analyses/gsc-fetch/index.js';
 import { DEFAULTS as GSC_INSPECT_DEFAULTS } from './analyses/gsc-inspect/index.js';
 import { DEFAULTS as DEMAND_DEFAULTS } from './analyses/demand/index.js';
 import { URL_INSPECTION_QUOTA } from './lib/gsc-api.js';
+import { DEFAULTS as BING_LINKS_DEFAULTS } from './analyses/bing-links/index.js';
+import { BING_API } from './lib/bing-api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -157,6 +159,17 @@ export const capabilities = [
     requires: ['google-oauth'],
     inputs: { project: 'string', options: { urls: 'array<string>|string', limit: 'number', maxAgeDays: 'number', property: 'string', dryRun: 'boolean' } },
     outputs: { property: 'string', inspected: 'number', verdicts: 'object', results: 'array<{url, verdict, coverage_state, google_canonical}>', quota: 'object', stopped_reason: 'string|null' },
+    phase: 'collect',
+    tier: 'free',
+    dependsOn: [],
+  },
+  {
+    id: 'bing-links',
+    name: 'Bing Webmaster Links',
+    description: `Pull the inbound links Bing Webmaster Tools reports for your site into the backlinks table (origin bing), each with the page of yours it points at and its anchor text — what the Search Console export lacks, since that report has no API. The ${BING_LINKS_DEFAULTS.maxTargetPages} most-linked pages are walked within ${BING_LINKS_DEFAULTS.maxRequests} requests of a daily quota. A sample from Bing's own index, different from Google's and also capped: never a complete link profile. backlink-audit reads the rows. Needs ${BING_API.keyEnv}.`,
+    requires: ['bing-api-key'],
+    inputs: { project: 'string', options: { siteUrl: 'string', maxTargetPages: 'number', maxRequests: 'number', dryRun: 'boolean' } },
+    outputs: { site: 'string', target_pages: 'array<{url, count, linking_pages_stored, complete}>', inserted: 'number', updated: 'number', linking_domains: 'number', truncated: 'boolean', stopped_reason: 'string|null', errors: 'array' },
     phase: 'collect',
     tier: 'free',
     dependsOn: [],
@@ -423,6 +436,7 @@ export const pipeline = {
     crawl: [],
     'gsc-fetch': [],
     'gsc-inspect': [],
+    'bing-links': [],
     demand: ['gsc-fetch'],
     trends: ['gsc-fetch'],
     extract: ['crawl'],
@@ -587,6 +601,21 @@ export async function run(command, project, opts = {}) {
       case 'backlink-import': {
         const { importBacklinks } = await import('./lib/backlink-import.js');
         return wrap(importBacklinks(db, project, {}));
+      }
+
+      case 'bing-links': {
+        const { runBingLinks } = await import('./analyses/bing-links/index.js');
+        try {
+          return wrap(await runBingLinks(db, project, config, {
+            siteUrl: opts.siteUrl, maxTargetPages: opts.maxTargetPages, maxRequests: opts.maxRequests,
+            dryRun: !!opts.dryRun, debugDir: opts.debugDir,
+          }));
+        } catch (err) {
+          // Same as gsc-fetch: a BingApiError's hint (set or check the key,
+          // wait for the daily quota, report a shape change) is the
+          // actionable half; keep it in the failure text.
+          return fail(err.hint ? `${err.message} — ${err.hint}` : err.message);
+        }
       }
 
       case 'backlink-audit': {

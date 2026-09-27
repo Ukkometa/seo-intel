@@ -181,6 +181,7 @@ export function getDb(dbPath = resolveDbPath()) {
       anchor_text    TEXT,            -- recovered
       UNIQUE(project, linking_url)
     );
+    -- origin and bing_checked_at are added by migrateBacklinkOrigin() below.
     CREATE INDEX IF NOT EXISTS idx_backlinks_domain ON backlinks(project, linking_domain);
 
     CREATE TABLE IF NOT EXISTS problem_status (
@@ -211,6 +212,10 @@ export function getDb(dbPath = resolveDbPath()) {
         ON gsc_queries(project, COALESCE(page_url, ''), query, date_range);
     `);
   }
+
+  // Which sources reported each backlink (Search Console, Bing), plus the
+  // backfill that marks every older row as Search Console's.
+  migrateBacklinkOrigin(_db);
 
   // Backfill first_seen_at from crawled_at for existing rows
   _db.exec('UPDATE pages SET first_seen_at = crawled_at WHERE first_seen_at IS NULL');
@@ -1542,4 +1547,123 @@ export function countInspectionsSince(db, project, property, sinceMs) {
   } catch {
     return 0;
   }
+}
+
+// ── Backlink sources (backlinks.origin) ──────────────────────────────────
+
+/**
+ * The backlinks table used to hold one source: Search Console's links
+ * export. Bing Webmaster Tools is a second one (analyses/bing-links), and the
+ * two are different samples, Google's index and Bing's, so a row has to say
+ * which of them reported it: a link both report is corroborated by two
+ * independent crawlers. `source` cannot carry that, because for a Search
+ * Console row it names the export file, which the audit shows.
+ *
+ *   origin           the set of sources that reported the link, as a sorted
+ *                    comma list: 'gsc', 'bing' or 'bing,gsc' (mergeOrigin)
+ *   bing_checked_at  when Bing last reported the link; NULL when it never has
+ *
+ * Every row older than the column came from the Search Console export, so
+ * the backfill marks a NULL origin 'gsc'. It runs on every getDb() and is
+ * idempotent: both writers always set origin, so after the first boot it
+ * matches nothing. A database without the table has nothing to migrate.
+ */
+export function migrateBacklinkOrigin(db) {
+  try { db.exec('ALTER TABLE backlinks ADD COLUMN origin TEXT'); } catch { /* already exists, or no table */ }
+  try { db.exec('ALTER TABLE backlinks ADD COLUMN bing_checked_at INTEGER'); } catch { /* already exists, or no table */ }
+  try { db.prepare("UPDATE backlinks SET origin = 'gsc' WHERE origin IS NULL").run(); } catch { /* no table */ }
+}
+
+/**
+ * The sorted union of two origin lists. PURE.
+ *   mergeOrigin('gsc', 'bing') === 'bing,gsc'
+ *   mergeOrigin(null, 'bing')  === 'bing'
+ * Null when both are empty. Sorted so one set is always one string, which a
+ * reader can compare or GROUP BY without parsing it.
+ */
+export function mergeOrigin(existing, added) {
+  const set = new Set();
+  for (const list of [existing, added]) {
+    for (const part of String(list ?? '').split(',')) {
+      const s = part.trim().toLowerCase();
+      if (s) set.add(s);
+    }
+  }
+  return set.size ? [...set].sort().join(',') : null;
+}
+
+/**
+ * Store the links Bing reported (analyses/bing-links), in one transaction.
+ *
+ * Each row is { linking_url, linking_domain, target_url, anchor_text }. A new
+ * linking URL is inserted with source 'bing', origin 'bing', and imported_at
+ * and bing_checked_at both the run stamp. A linking URL already stored,
+ * whichever source put it there, is updated with care:
+ *   origin           merged, so a Search Console row becomes 'bing,gsc'
+ *   bing_checked_at  the run stamp: Bing reported it again
+ *   target_url,      filled only where NULL. A --live pass or an earlier Bing
+ *   anchor_text      run already wrote them, and another of your pages the
+ *                    same linking page links to is not an improvement on it
+ *   source           kept: for a Search Console row it names the export file
+ *   imported_at      kept: when the row first arrived
+ * verify_state, http_status, link_present, rel_nofollow and checked_at are
+ * never touched: they belong to the --live pass, and Bing having seen a link
+ * says nothing about whether it is on the page today.
+ *
+ * The existing origin is read before the write, because a sorted union of
+ * comma lists is not something SQL expresses simply. The transaction is
+ * IMMEDIATE so no other writer (the CLI and the MCP server can share one
+ * database) lands between that read and the write. Any failure rolls the
+ * whole batch back and rethrows. Rows without a linking URL or domain are
+ * skipped: the table requires both.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} project
+ * @param {Array<{ linking_url: string, linking_domain: string, target_url?: string|null, anchor_text?: string|null }>} rows
+ * @param {{ now?: number }} [opts]
+ * @returns {{ inserted: number, updated: number }}
+ */
+export function upsertBingBacklinks(db, project, rows, { now } = {}) {
+  if (!Array.isArray(rows) || !rows.length) return { inserted: 0, updated: 0 };
+  const stamp = now ?? Date.now();
+  const find = db.prepare('SELECT id, origin FROM backlinks WHERE project = ? AND linking_url = ?');
+  const insert = db.prepare(`
+    INSERT INTO backlinks (project, linking_url, linking_domain, source, origin, imported_at, bing_checked_at, target_url, anchor_text)
+    VALUES (?, ?, ?, 'bing', ?, ?, ?, ?, ?)
+  `);
+  const update = db.prepare(`
+    UPDATE backlinks SET
+      origin = ?,
+      bing_checked_at = ?,
+      target_url = COALESCE(target_url, ?),
+      anchor_text = COALESCE(anchor_text, ?)
+    WHERE id = ?
+  `);
+  const text = v => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
+
+  let inserted = 0;
+  let updated = 0;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const r of rows) {
+      const url = text(r?.linking_url);
+      const domain = text(r?.linking_domain);
+      if (!url || !domain) continue;
+      const target = text(r.target_url);
+      const anchor = text(r.anchor_text);
+      const existing = find.get(project, url);
+      if (existing) {
+        update.run(mergeOrigin(existing.origin, 'bing'), stamp, target, anchor, existing.id);
+        updated++;
+      } else {
+        insert.run(project, url, domain, mergeOrigin(null, 'bing'), stamp, stamp, target, anchor);
+        inserted++;
+      }
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return { inserted, updated };
 }

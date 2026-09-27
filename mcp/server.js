@@ -56,6 +56,8 @@ import { runGscFetch, DEFAULTS as GSC_FETCH_DEFAULTS } from '../analyses/gsc-fet
 import { runGscInspect, DEFAULTS as GSC_INSPECT_DEFAULTS } from '../analyses/gsc-inspect/index.js';
 import { runDemand, DEFAULTS as DEMAND_DEFAULTS } from '../analyses/demand/index.js';
 import { GscApiError, URL_INSPECTION_QUOTA } from '../lib/gsc-api.js';
+import { runBingLinks, DEFAULTS as BING_LINKS_DEFAULTS } from '../analyses/bing-links/index.js';
+import { BING_API, BingApiError } from '../lib/bing-api.js';
 import { run } from '../agent-harness.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -617,15 +619,17 @@ server.registerTool(
   'backlink_audit',
   {
     description: [
-      'Audit the link profile Google attributes to this project: brand reclamation, followed vs nofollow, domain concentration, and which of your pages receive no links.',
+      'Audit the links Search Console and Bing report for this project: brand reclamation, followed vs nofollow, domain concentration, and which of your pages receive no links.',
       '',
-      'Not a link index — it will not find links Google has not reported, and it cannot see competitor backlinks. What it does instead is ask what is wrong with the links you already have, and join them to your own crawl and query data.',
+      'Not a link index — it will not find links neither engine has reported, and it cannot see competitor backlinks. What it does instead is ask what is wrong with the links you already have, and join them to your own crawl and query data.',
       '',
       'The single highest-yield output is usually `reclamation`: domains already linking to you under a product or brand name the site no longer uses. Those are existing relationships, far cheaper to correct than new links are to earn, and one outreach fixes every page on that domain.',
       '',
       'Set live:true to fetch the linking pages and recover the target URL and anchor text, which Search Console does not export. Treat `unknown` as unknown: a site that blocks bots or renders its links client-side has told you nothing, and its absence is not a lost link.',
       '',
-      'Requires import_backlinks to have run. Free tier — your own Search Console data.',
+      'Rows from fetch_bing_links already carry the target page and anchor text, and each row\'s origin (gsc, bing, or bing,gsc when both engines report it) says who saw it; sample_note says what the rows are a sample of, and the union of both sources is still a sample, never a complete profile.',
+      '',
+      'Requires import_backlinks or fetch_bing_links to have run. Free tier — your own link data.',
     ].join('\n'),
     inputSchema: {
       project: z.string().describe('Project slug. Use list_projects to discover.'),
@@ -678,22 +682,29 @@ server.registerTool(
       domains = db.prepare('SELECT COUNT(DISTINCT linking_domain) c FROM backlinks WHERE project = ?').get(project).c;
     } catch { /* ignore */ }
 
-    const { runBacklinkAudit } = await import('../analyses/backlinks/index.js');
+    const { runBacklinkAudit, originsOf } = await import('../analyses/backlinks/index.js');
     const audit = await runBacklinkAudit(db, project, { brandTerms: config.brandTerms || [], skipLedger: true });
+    // Which engine reported this domain's links: a link both report is
+    // corroborated, and the caveat below must name the sources actually read.
+    const reportedBy = [...new Set(existing.flatMap(r => originsOf(r)))].sort();
     const reclaim = (audit.reclamation || []).find(d => d.domain === host);
     const followed = existing.filter(r => r.link_present === 1 && r.rel_nofollow === 0).length;
     const nofollowed = existing.filter(r => r.link_present === 1 && r.rel_nofollow === 1).length;
 
+    // nofollow only when --live read the rel. A link nobody has checked — any
+    // Bing row until backlink_audit live:true, and an unchecked Search Console
+    // row — has unknown equity, and calling it nofollow would be a guess.
     const verdict = reclaim
       ? 'update_existing'
       : existing.length
-        ? (followed ? 'already_linked_followed' : 'already_linked_nofollow')
+        ? (followed ? 'already_linked_followed' : nofollowed ? 'already_linked_nofollow' : 'already_linked_unverified')
         : 'new_prospect';
 
     return { content: [{ type: 'text', text: JSON.stringify({
       project, domain: host, verdict,
       already_linking: existing.length > 0,
       linking_pages: existing.length,
+      reported_by: reportedBy,
       followed, nofollowed,
       verified: existing.filter(r => r.verify_state).length,
       brand_reclamation: reclaim
@@ -705,7 +716,9 @@ server.registerTool(
         top_domain_share_pct: audit.summary?.topDomainSharePct ?? null,
       },
       best_target_pages: (audit.unlinkedHighValuePages || []).slice(0, 5),
-      caveat: 'Based on the links Google reports for this site, which is a capped and lagging sample. A domain absent here may still link to you.',
+      caveat: audit.sample_note
+        ? `${audit.sample_note} A domain absent here may still link to you.`
+        : 'No links are stored for this project yet (import_backlinks or fetch_bing_links), so absence here says nothing about whether this domain links to you.',
     }, null, 2) }] };
   },
 );
@@ -714,7 +727,7 @@ server.registerTool(
 server.registerTool(
   'import_backlinks',
   {
-    description: 'Import a Search Console external-links CSV from links/<project>*.csv into the local database. Use the "Latest links" export: on a site under the export cap it holds the same URLs as "More sample links" plus a Last crawled date. Free tier.',
+    description: 'Import a Search Console external-links CSV from links/<project>*.csv into the local database. Use the "Latest links" export: on a site under the export cap it holds the same URLs as "More sample links" plus a Last crawled date. The export carries the linking URL only; fetch_bing_links adds the links Bing\'s own index reports, with the linked page and anchor text, to the same table — a second sample, not a completion. Free tier.',
     inputSchema: { project: z.string().describe('Project slug.') },
   },
   async ({ project }) => {
@@ -728,6 +741,59 @@ server.registerTool(
       hint: r.files.length ? 'Next: backlink_audit(project) — add live:true to recover target URLs and anchor text.'
         : `No export found. Search Console → Links → External links → Export, saved as links/${project}-<label>.csv`,
     }, null, 2) }] };
+  },
+);
+
+// ── Tool: fetch_bing_links (FREE) ─────────────────────────────────────────
+server.registerTool(
+  'fetch_bing_links',
+  {
+    description: [
+      "Fetch the inbound links Bing Webmaster Tools reports for a project's own site into the local backlinks table, each with the page of yours it points at and its anchor text.",
+      '',
+      "Why it exists: Search Console's Links report has no API. Its links arrive only as a CSV a person exports by hand (import_backlinks), and that CSV carries the linking URL and nothing else. Bing's API has the link reports and includes the target page and anchor text, so these rows feed backlink_audit's target-page analysis without a live pass.",
+      '',
+      "What it is: the links BING has seen, from Bing's own index — a different sample from Google's, also capped and lagging. A link both engines report is corroborated (origin bing,gsc); one only Bing reports is seen once, not doubtful. Neither source, nor both together, is a complete link profile; never report it as one.",
+      '',
+      `How: GetLinkCounts lists your pages with inbound links, and the ${BING_LINKS_DEFAULTS.maxTargetPages} most-linked (max_targets) are walked through GetUrlLinks, within ${BING_LINKS_DEFAULTS.maxRequests} requests a call because the key's quota is daily. A quota stop keeps what was stored (stopped_reason 'quota'); truncated means a cap was hit. The site is site_url, else bing.siteUrl in the project config, else matched from target.domain — a miss lists the sites the account has. dry_run resolves the site and returns the plan without a link request.`,
+      '',
+      "Rows land in the same backlinks table as the Search Console export, with origin bing, and backlink_audit reads them next. Bing does not say whether a link is followed, so their equity stays unknown until backlink_audit live:true checks the page.",
+      '',
+      `Needs ${BING_API.keyEnv} in the environment (Bing Webmaster Tools → Settings → API access). Free tier — it is your own site's links.`,
+    ].join('\n'),
+    inputSchema: {
+      project: z.string().describe('Project slug. Use list_projects to discover.'),
+      site_url: z.string().optional().describe('Bing Webmaster site to read, a URL prefix such as https://www.example.com/. Overrides config.bing.siteUrl and auto-detection.'),
+      max_targets: z.number().int().positive().optional().describe(`Your most-linked pages whose linking pages are listed. Default ${BING_LINKS_DEFAULTS.maxTargetPages}.`),
+      dry_run: z.boolean().optional().describe('Resolve the site and return the plan without making any link request.'),
+    },
+  },
+  async ({ project, site_url, max_targets, dry_run }) => {
+    const config = loadProjectConfig(project);
+    if (!config) {
+      return { content: [{ type: 'text', text: `Project "${project}" not found. Use list_projects to discover.` }], isError: true };
+    }
+    try {
+      const result = await runBingLinks(getDb(), project, config, { siteUrl: site_url, maxTargetPages: max_targets, dryRun: !!dry_run });
+      let hint;
+      if (result.dry_run) {
+        hint = `Plan only: site ${result.site} (${result.site_reason}); GetLinkCounts, then up to ${result.max_target_pages} of your most-linked pages through GetUrlLinks, within ${result.max_requests} requests. Call again without dry_run to fetch.`;
+      } else if (!result.target_pages_available && !result.errors.length && !result.stopped_reason) {
+        hint = "Bing reports no page of this site with inbound links. That is Bing's sample, not proof there are none; import_backlinks brings in what Google reports.";
+      } else {
+        hint = `${result.inserted} new and ${result.updated} already-known linking page(s) stored with origin bing, from ${result.target_pages.length} of the ${result.target_pages_available} page(s) Bing reports links to. backlink_audit("${project}") now reads them: target page and anchor text are known; equity stays unknown until live:true checks them. A sample of Bing's index, not a complete link profile.`;
+        if (result.stopped_reason === 'quota') hint += " Bing says the key's quota is spent; what was fetched is kept. Call again tomorrow — the upsert re-reports it harmlessly.";
+        else if (result.truncated) hint += ` Truncated: ${result.stopped_reason === 'max_requests' ? `the ${result.max_requests}-request budget ran out` : 'a paged list ran past its page cap'}; what was fetched is kept.`;
+        if (result.errors.length) hint += ` ${result.errors.length} request(s) failed and were skipped; see errors[].`;
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ ...result, hint }, null, 2) }] };
+    } catch (err) {
+      // BingApiError carries the fix (config/auth → the key or verification,
+      // quota → wait, shape → the unverified field names). The agent needs it
+      // verbatim, not paraphrased.
+      const text = err instanceof BingApiError && err.hint ? `${err.message}\n${err.hint}` : `seo-intel error: ${err.message}`;
+      return { content: [{ type: 'text', text }], isError: true };
+    }
   },
 );
 

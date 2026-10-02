@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "seo-intel",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Local SEO and AEO data layer for AI agents: crawl your site, score AI citability, audit structured data and backlinks, and get a Search Review that says what needs a decision, what an agent may fix now, and what already works. Free for your own site; everything runs locally.",
   "author": {
     "name": "Ukkometa",

@@ -3,6 +3,6 @@
   "label": "SEO Intel",
   "description": "Read-only SEO and AI-citability intelligence from the local seo-intel CLI: Search Review triage, citability, and one-click agent briefs.",
   "icon": "BarChart3",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "api": "plugin_api.py"
 }

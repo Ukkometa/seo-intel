@@ -12,7 +12,7 @@ description: >
   blog-draft, export) and the Intelligence Ledger.
 ---
 
-# SEO Intel (v1.7.1)
+# SEO Intel (v1.8.0)
 
 The local **SEO data layer for AI agents**. Crawl your site + competitors, store structured intelligence in local SQLite, then expose it to any AI agent via Model Context Protocol or call CLI commands directly. No API keys held in seo-intel, no remote servers, all data stays on the user's machine.
 
